@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run kalin-wm (dwl) on TTY with auto-kill after 30 seconds
+
+KALIN_WM="/home/kalin/kalin-wm/dwl"
+LOG="/tmp/kalin-wm-$(date +%s).log"
+
+if [ ! -f "$KALIN_WM" ]; then
+    echo "Error: kalin-wm not found at $KALIN_WM"
+    echo "Build it first: nix develop -c make"
+    exit 1
+fi
+
+echo "============================================"
+echo "kalin-wm TTY Runner (30 sec auto-kill)"
+echo "============================================"
+echo ""
+
+# Check seatd
+if ! pgrep -x seatd > /dev/null; then
+    echo "Starting seatd..."
+    sudo systemctl start seatd 2>/dev/null || true
+fi
+
+echo "Starting kalin-wm..."
+echo "Press Super+Shift+Return to open terminal"
+echo "Press Super+Shift+Q to exit"
+echo ""
+
+# Run with timeout
+timeout --signal=KILL 30s "$KALIN_WM" 2>&1 | tee "$LOG"
+EXIT=${PIPESTATUS[0]}
+
+echo ""
+if [ $EXIT -eq 137 ] || [ $EXIT -eq 124 ]; then
+    echo "[Auto-killed after 30 seconds]"
+elif [ $EXIT -eq 0 ]; then
+    echo "[Exited normally]"
+else
+    echo "[Exit code: $EXIT]"
+fi
