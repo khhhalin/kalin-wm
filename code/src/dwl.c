@@ -809,6 +809,11 @@ static void ftl_destroy(Client *c);
 static void ftl_update_title(Client *c);
 static void ftl_sync_state(void);
 
+/* Shell IPC socket (defined in modules/ipc.c). */
+static void ipc_init(const char *wl_display_name);
+static void ipc_broadcast_state(void);
+static void ipc_finish(void);
+
 /* Hybrid window anchoring system (forward declarations before config.h) */
 static void arrange_columns(Monitor *m);
 static void place_window_column(Client *c, Monitor *m);
@@ -1182,6 +1187,7 @@ checkidleinhibitor(struct wlr_surface *exclude)
 void
 cleanup(void)
 {
+	ipc_finish();
 	cleanuplisteners();
 #ifdef XWAYLAND
 	wlr_xwayland_destroy(xwayland);
@@ -2935,6 +2941,9 @@ printstatus(void)
 
 	/* Mirror focus/fullscreen state to foreign-toplevel handles for shells. */
 	ftl_sync_state();
+
+	/* Push viewport/compositor state to any connected IPC shell clients. */
+	ipc_broadcast_state();
 }
 
 void
@@ -2985,6 +2994,7 @@ quit(const Arg *arg)
 #include "modules/viewport/viewport_ops.c"
 #include "modules/input/resize_actions.c"
 #include "modules/foreign_toplevel.c"
+#include "modules/ipc.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
@@ -3253,6 +3263,7 @@ run(char *startup_cmd)
 	if (!socket)
 		die("startup: display_add_socket_auto");
 	setenv("WAYLAND_DISPLAY", socket, 1);
+	ipc_init(socket);
 
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
 	 * master, etc */

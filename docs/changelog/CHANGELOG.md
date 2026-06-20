@@ -9,6 +9,10 @@
 ## Unreleased
 ### Added
 
+* Shell integration: wlr-foreign-toplevel-management-v1 (window enumeration and
+  activate/close/fullscreen control) plus a unix-domain IPC socket
+  (`$KALIN_IPC_SOCKET`) that broadcasts viewport/compositor state as JSON and
+  accepts camera commands (`pan`, `zoom`, `zoom-reset`, `follow-toggle`).
 * Support for the linux-drm-syncobj-v1 protocol ([wlroots!4715][wlroots!4715], [#685][685])
 * Allow the use of non-system wlroots library ([#646][646])
 

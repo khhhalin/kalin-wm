@@ -108,7 +108,9 @@ These come from the [Stability Audit](docs/obsidian-vault/research/active-design
 - [ ] Structured logging with categories (input, viewport, layout, client)
 - [ ] Debug mode with verbose diagnostics
 - [ ] Core dump / crash recovery guidance
-- [ ] IPC protocol (replace stdout status stream with proper IPC)
+- [x] IPC protocol — wlr-foreign-toplevel-management-v1 for window enumeration/
+  control, plus a unix-domain socket ($KALIN_IPC_SOCKET) broadcasting viewport/
+  compositor state as JSON and accepting camera commands (Claude)
 
 ---
 
