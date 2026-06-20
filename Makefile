@@ -53,6 +53,29 @@ $(BUILD_DIR)/%.o: %.c code/config/config.h $(PROTO_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Protocol header generation (wayland-scanner). System protocols come from the
+# wayland-protocols data dir; wlr-* protocols are vendored under protocols/.
+# These headers are .gitignore'd and regenerated on build, which keeps a clean
+# checkout (and the hermetic `nix build`) self-contained.
+WAYLAND_PROTOCOLS = $(shell pkg-config --variable=pkgdatadir wayland-protocols)
+WAYLAND_SCANNER   = wayland-scanner
+
+code/include/protocols/xdg-shell-protocol.h:
+	@mkdir -p $(dir $@)
+	$(WAYLAND_SCANNER) server-header $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
+
+code/include/protocols/cursor-shape-v1-protocol.h:
+	@mkdir -p $(dir $@)
+	$(WAYLAND_SCANNER) server-header $(WAYLAND_PROTOCOLS)/staging/cursor-shape/cursor-shape-v1.xml $@
+
+code/include/protocols/pointer-constraints-unstable-v1-protocol.h:
+	@mkdir -p $(dir $@)
+	$(WAYLAND_SCANNER) server-header $(WAYLAND_PROTOCOLS)/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml $@
+
+code/include/protocols/%-protocol.h: protocols/%.xml
+	@mkdir -p $(dir $@)
+	$(WAYLAND_SCANNER) server-header $< $@
+
 # Config
 check-config:
 	@-[ -f code/config/config.h ] || cp code/config/config.def.h code/config/config.h
