@@ -6,7 +6,7 @@
 /* appearance */
 static const int sloppyfocus               = 1;  /* focus follows mouse */
 static const int bypass_surface_visibility = 0;  /* 1 means idle inhibitors will disable idle tracking even if it's surface isn't visible  */
-static const unsigned int borderpx         = 1;  /* border pixel of windows */
+static const unsigned int borderpx         = 3;  /* border pixel of windows */
 static const unsigned int focusringpx      = 2;  /* focus ring thickness (0 disables) */
 static const float rootcolor[]             = COLOR(0x222222ff);
 static const float bordercolor[]           = COLOR(0x444444ff);
@@ -33,22 +33,25 @@ static const float overlay_clock_bg[]       = COLOR(0x000000a6);
 /* tagging - TAGCOUNT must be no greater than 31 */
 #define TAGCOUNT (9)
 
+/* exit confirmation - require double-press within this many seconds */
+#define EXIT_CONFIRMATION_SECONDS 2
+
 /* logging */
 static int log_level = WLR_ERROR;
 
 static const Rule rules[] = {
 	/* app_id             title       tags mask     isfloating   monitor */
+	{ "vesktop",          NULL,       0,            1,           -1 }, /* float so client can restore its preferred size */
 	{ "Gimp_EXAMPLE",     NULL,       0,            1,           -1 }, /* Start on currently visible tags floating, not tiled */
 	{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,           -1 }, /* Start on ONLY tag "9" */
     /* default/example rule: can be changed but cannot be eliminated; at least one rule must exist */
 };
 
-/* layout(s) */
+/* layout(s) - only infinite scrolling layout */
 static const Layout layouts[] = {
 	/* symbol     arrange function */
-	{ "[]=",      tile },
-	{ "><>",      NULL },    /* no layout function means floating behavior */
-	{ "[M]",      monocle },
+	{ "[∞]",      infinite }, /* infinite scrollable layout (like Niri but 2D) */
+	{ "><>",      NULL },    /* floating behavior */
 };
 
 /* monitors */
@@ -59,7 +62,7 @@ static const MonitorRule monrules[] = {
    /* name        mfact  nmaster scale layout       rotate/reflect                x    y
     * example of a HiDPI laptop monitor:
     { "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, */
-	{ NULL,       0.55f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
+	{ NULL,       0.55f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, /* infinite layout */
 	/* default monitor rule: can be changed but cannot be eliminated; at least one monitor rule must exist */
 };
 
@@ -118,8 +121,8 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 */
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
-/* If you want to use the windows key for MODKEY, use WLR_MODIFIER_LOGO */
-#define MODKEY WLR_MODIFIER_ALT
+/* Use Super (Windows) key as MODKEY */
+#define MODKEY WLR_MODIFIER_LOGO
 
 #define TAGKEYS(KEY,SKEY,TAG) \
 	{ MODKEY,                    KEY,            view,            {.ui = 1 << TAG} }, \
@@ -131,14 +134,32 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
 /* commands */
+/* Bare command names so the default resolves via $PATH on any distro. Copy
+ * this file to config.h to override with absolute paths if desired. */
 static const char *termcmd[] = { "foot", NULL };
-static const char *menucmd[] = { "wmenu-run", NULL };
+static const char *menucmd[] = { "fuzzel", NULL };
+
+/* Viewport pan direction arrays - passed to viewport_pan */
+static const float pan_left[]  = {-50, 0};
+static const float pan_right[] = {50, 0};
+static const float pan_up[]    = {0, -50};
+static const float pan_down[]  = {0, 50};
+
+/* Keyboard resize deltas: [ ] adjust width, { } adjust height */
+static const int resize_narrow[] = {-40, 0};
+static const int resize_wide[]   = {40, 0};
+static const int resize_short[]  = {0, -40};
+static const int resize_tall[]   = {0, 40};
+
+/* Pan speed configuration */
+#define PAN_SPEED 50.0f
+#define PAN_SPEED_FAST 200.0f
 
 static const Key keys[] = {
 	/* Note that Shift changes certain key codes: 2 -> at, etc. */
 	/* modifier                  key                  function          argument */
 	{ MODKEY,                    XKB_KEY_p,           spawn,            {.v = menucmd} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,      spawn,            {.v = termcmd} },
+	{ MODKEY,                    XKB_KEY_t,           spawn,            {.v = termcmd} }, /* Super+T = terminal */
 	{ MODKEY,                    XKB_KEY_j,           focusstack,       {.i = +1} },
 	{ MODKEY,                    XKB_KEY_k,           focusstack,       {.i = -1} },
 	{ MODKEY,                    XKB_KEY_i,           incnmaster,       {.i = +1} },
@@ -147,10 +168,11 @@ static const Key keys[] = {
 	{ MODKEY,                    XKB_KEY_l,           setmfact,         {.f = +0.05f} },
 	{ MODKEY,                    XKB_KEY_Return,      zoom,             {0} },
 	{ MODKEY,                    XKB_KEY_Tab,         view,             {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_c,           killclient,       {0} },
-	{ MODKEY,                    XKB_KEY_t,           setlayout,        {.v = &layouts[0]} },
-	{ MODKEY,                    XKB_KEY_f,           setlayout,        {.v = &layouts[1]} },
-	{ MODKEY,                    XKB_KEY_m,           setlayout,        {.v = &layouts[2]} },
+	{ MODKEY,                    XKB_KEY_q,           killclient,       {0} }, /* Super+Q = close window */
+	{ MODKEY,                    XKB_KEY_c,           cropbegin,        {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_r,           cropcancel,       {0} },
+	{ MODKEY,                    XKB_KEY_i,           setlayout,        {.v = &layouts[0]} }, /* infinite layout (default) */
+	{ MODKEY,                    XKB_KEY_f,           setlayout,        {.v = &layouts[1]} }, /* floating */
 	{ MODKEY,                    XKB_KEY_space,       setlayout,        {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space,       togglefloating,   {0} },
 	{ MODKEY,                    XKB_KEY_e,           togglefullscreen, {0} },
@@ -160,10 +182,6 @@ static const Key keys[] = {
 	{ MODKEY,                    XKB_KEY_period,      focusmon,         {.i = WLR_DIRECTION_RIGHT} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_less,        tagmon,           {.i = WLR_DIRECTION_LEFT} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_greater,     tagmon,           {.i = WLR_DIRECTION_RIGHT} },
-
-	/* Move focused window between columns (Ctrl+Left/Right, Niri-style) */
-	{ WLR_MODIFIER_CTRL,         XKB_KEY_Left,        move_column,      {.i = -1} },
-	{ WLR_MODIFIER_CTRL,         XKB_KEY_Right,       move_column,      {.i = +1} },
 	TAGKEYS(          XKB_KEY_1, XKB_KEY_exclam,                        0),
 	TAGKEYS(          XKB_KEY_2, XKB_KEY_at,                            1),
 	TAGKEYS(          XKB_KEY_3, XKB_KEY_numbersign,                    2),
@@ -173,7 +191,42 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_7, XKB_KEY_ampersand,                     6),
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                      7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                     8),
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_q,           quit,             {0} },
+	{ MODKEY,                    XKB_KEY_Escape,      quit,             {0} }, /* Super+Esc = quit wm */
+	
+	/* Camera pan (Super+Shift+Arrows) */
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Left,        viewport_pan,     {.v = pan_left} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Right,       viewport_pan,     {.v = pan_right} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Up,          viewport_pan,     {.v = pan_up} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Down,        viewport_pan,     {.v = pan_down} },
+
+	/* Camera pan Vim keys (Super+Shift+H/J/K/L) */
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_H,           viewport_pan,     {.v = pan_left} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_L,           viewport_pan,     {.v = pan_right} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_K,           viewport_pan,     {.v = pan_up} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_J,           viewport_pan,     {.v = pan_down} },
+	{ MODKEY,                    XKB_KEY_equal,       viewport_zoom,    {.f = 1.1f} },
+	{ MODKEY,                    XKB_KEY_minus,       viewport_zoom,    {.f = 0.9f} },
+	{ MODKEY,                    XKB_KEY_BackSpace,   viewport_reset,   {0} },
+	{ MODKEY,                    XKB_KEY_z,           viewport_toggle_follow, {0} }, /* toggle camera follow */
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Z,           viewport_toggle_follow_new, {0} }, /* toggle auto-pan to new windows */
+	
+	/* Move focused window between columns (Ctrl+Left/Right, Niri-style) */
+	{ WLR_MODIFIER_CTRL,         XKB_KEY_Left,        move_column,      {.i = -1} },
+	{ WLR_MODIFIER_CTRL,         XKB_KEY_Right,       move_column,      {.i = +1} },
+	
+	/* Directional focus navigation (Super + Arrow Keys) */
+	{ MODKEY,                    XKB_KEY_Left,        focus_directional, {.i = DIR_LEFT} },
+	{ MODKEY,                    XKB_KEY_Right,       focus_directional, {.i = DIR_RIGHT} },
+	{ MODKEY,                    XKB_KEY_Up,          focus_directional, {.i = DIR_UP} },
+	{ MODKEY,                    XKB_KEY_Down,        focus_directional, {.i = DIR_DOWN} },
+
+
+
+	/* Resize focused window (Super+[ / Super+] / Super+{ / Super+}) */
+	{ MODKEY,                    XKB_KEY_bracketleft, resizefocused,    {.v = resize_narrow} },
+	{ MODKEY,                    XKB_KEY_bracketright,resizefocused,    {.v = resize_wide} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft,   resizefocused,    {.v = resize_short} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceright,  resizefocused,    {.v = resize_tall} },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
@@ -189,4 +242,5 @@ static const Button buttons[] = {
 	{ MODKEY, BTN_LEFT,   moveresize,     {.ui = CurMove} },
 	{ MODKEY, BTN_MIDDLE, togglefloating, {0} },
 	{ MODKEY, BTN_RIGHT,  moveresize,     {.ui = CurResize} },
+	{ MODKEY|WLR_MODIFIER_CTRL, BTN_RIGHT, moveresize, {.ui = CurResize} },
 };
