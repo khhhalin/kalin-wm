@@ -1,0 +1,123 @@
+Add this debug logging to dwl.c to trace the exact crash location:
+
+--- a/dwl.c
++++ b/dwl.c
+@@ -2060,6 +2060,8 @@ createnotify(struct wl_listener *listener, void *data)
+ 	struct wlr_xdg_toplevel *toplevel = data;
+ 	Client *c;
+ 
++	wlr_log(WLR_ERROR, "DEBUG: createnotify START");
++
+ 	/* Allocate and initialize client structure early */
+ 	c = toplevel->base->data = ecalloc(1, sizeof(*c));
+ 	c->type = XDGShell;  /* CRITICAL: Initialize type before anything uses it */
+@@ -2070,11 +2072,13 @@ createnotify(struct wl_listener *listener, void *data)
+ 	c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
+ 			c->type == XDGShell ? &config::root_border : &config::floating_border);
+ 	c->border[i]->node.data = c;
+ 	}
+ 
++	wlr_log(WLR_ERROR, "DEBUG: createnotify borders created");
++
+ 	/* Map the surface to the scene tree */
+ 	c->scene_surface = c->type == XDGShell
+ 		? wlr_scene_xdg_surface_create(c->scene, toplevel->base)
+ 		: wlr_scene_subsurface_tree_create(c->scene, toplevel->base->surface);
+ 	c->scene->node.data = c->scene_surface->node.data = c;
+ 
++	wlr_log(WLR_ERROR, "DEBUG: createnotify scene_surface created: %p", (void*)c->scene_surface);
++
+ 	/* Initialize client geometry with room for border */
+ 	client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
+ 	c->geom.width += 2 * c->bw;
+@@ -2094,6 +2098,8 @@ createnotify(struct wl_listener *listener, void *data)
+ 	} else {
+ 		applyrules(c);
+ 	}
++	wlr_log(WLR_ERROR, "DEBUG: createnotify rules applied, mon=%p", (void*)c->mon);
++
+ 	printstatus();
+ 
+ unset_fullscreen:
+@@ -2101,6 +2107,8 @@ unset_fullscreen:
+ 	wl_list_for_each(w, &clients, link) {
+ 		if (w != c && w != p && w->isfullscreen && m == w->mon && (w->tags & c->tags))
+ 			setfullscreen(w, 0);
+ 	}
++
++	wlr_log(WLR_ERROR, "DEBUG: createnotify END");
+ }
+ 
+ void
+@@ -3137,6 +3145,8 @@ resize(Client *c, struct wlr_box geo, int interact)
+ 	struct wlr_box *bbox;
+ 	struct wlr_box clip;
+ 	int view_x, view_y;
++
++	wlr_log(WLR_ERROR, "DEBUG: resize START c=%p", (void*)c);
+ 
+ 	if (!c || !c->mon || !client_surface(c)->mapped || !c->scene || !c->scene_surface)
+ 		return;
+@@ -3145,6 +3155,8 @@ resize(Client *c, struct wlr_box geo, int interact)
+ 	if (!c->border[0] || !c->border[1] || !c->border[2] || !c->border[3])
+ 		return;
+ 
++	wlr_log(WLR_ERROR, "DEBUG: resize checks passed, setting geometry");
++
+ 	bbox = interact ? &sgeom : &c->mon->w;
+ 
+ 	client_set_bounds(c, geo.width, geo.height);
+@@ -3389,6 +3401,8 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
+ {
+ 	Monitor *oldmon = c->mon;
+ 
++	wlr_log(WLR_ERROR, "DEBUG: setmon START c=%p, m=%p", (void*)c, (void*)m);
++
+ 	if (oldmon == m)
+ 		return;
+ 	c->mon = m;
+@@ -3397,6 +3411,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
+ 	/* Scene graph sends surface leave/enter events on move and resize */
+ 	if (oldmon)
+ 		arrange(oldmon);
++	wlr_log(WLR_ERROR, "DEBUG: setmon calling resize");
+ 	if (m) {
+ 		/* Make sure window actually overlaps with the monitor */
+ 		resize(c, c->geom, 0);
+@@ -3404,6 +3419,8 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
+ 		setfullscreen(c, c->isfullscreen); /* This will call arrange(c->mon) */
+ 		setfloating(c, c->isfloating);
+ 	}
++
++	wlr_log(WLR_ERROR, "DEBUG: setmon END");
+ 	focusclient(focustop(selmon), 1);
+ }
+ 
+@@ -2840,6 +2857,8 @@ arrange_columns(Monitor *m)
+ 	Client *c;
+ 	struct wlr_box geo;
+ 	unsigned int gap = 10;
++
++	wlr_log(WLR_ERROR, "DEBUG: arrange_columns START");
+ 	
+ 	wl_list_for_each(c, &clients, link) {
+ 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+@@ -2854,12 +2873,18 @@ arrange_columns(Monitor *m)
+ 			c->geom.height = (int)(m->w.height * 0.7f);
+ 		}
+ 		
++		wlr_log(WLR_ERROR, "DEBUG: arrange_columns client c=%p, world.set=%d", 
++			(void*)c, c->world.set);
++
+ 		/* Position the window */
+ 		geo.x = (int)c->world.x + gap;
+ 		geo.y = (int)c->world.y + gap;
+ 		geo.width = c->geom.width;
+ 		geo.height = c->geom.height;
+ 		
++		wlr_log(WLR_ERROR, "DEBUG: arrange_columns calling resize c=%p, geo=%dx%d", 
++			(void*)c, geo.width, geo.height);
++
+ 		/* For anchored windows, we keep their world position
+ 		 * For column windows, they stay in the column strip */
+ 		resize(c, geo, 0);

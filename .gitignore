@@ -4,3 +4,8 @@ dwl
 *-protocol.h
 .ccls-cache
 config.h
+kalin-wm
+tests/test_client_lifecycle
+tests/*.gcda
+tests/*.gcno
+tests/*.gcov

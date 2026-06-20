@@ -1,18 +1,47 @@
 #!/usr/bin/env bash
-# Run kalin-wm (dwl) on TTY with auto-kill after 30 seconds
+# Run kalin-wm on TTY with optional auto-timeout.
+# Usage:
+#   ./scripts/run-tty            # default timeout 30s
+#   ./scripts/run-tty 0          # no timeout
+#   ./scripts/run-tty 120        # timeout after 120s
 
-KALIN_WM="/home/kalin/kalin-wm/dwl"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+KALIN_WM="$ROOT_DIR/build/kalin-wm"
+TIMEOUT_SECS="${1:-30}"
 LOG="/tmp/kalin-wm-$(date +%s).log"
 
-if [ ! -f "$KALIN_WM" ]; then
-    echo "Error: kalin-wm not found at $KALIN_WM"
-    echo "Build it first: nix develop -c make"
-    exit 1
+# Keybinds:
+#   Super+C              - Enter crop mode on focused window
+#   (in crop mode) Click+Drag - Select region to crop to
+#   (in crop mode) Escape     - Cancel crop
+#   Super+Shift+C        - Cancel crop (alternative)
+
+# Keybinds:
+#   Super+Shift+Return  - Open terminal (foot)
+#   Super+Shift+Q       - Exit compositor
+#   Super+j/k           - Focus next/previous window
+#   Super+Return        - Zoom (swap master)
+#   Super+1-9           - Switch to tag (workspace)
+#   Super+Shift+1-9     - Move window to tag
+if [ ! -x "$KALIN_WM" ]; then
+    echo "kalin-wm binary not found. Building first..."
+    (cd "$ROOT_DIR" && nix develop -c make clean all)
 fi
 
 echo "============================================"
-echo "kalin-wm TTY Runner (30 sec auto-kill)"
+echo "kalin-wm TTY Runner"
 echo "============================================"
+echo ""
+echo "Root: $ROOT_DIR"
+echo "Binary: $KALIN_WM"
+echo "Log: $LOG"
+if [ "$TIMEOUT_SECS" = "0" ]; then
+    echo "Timeout: disabled"
+else
+    echo "Timeout: ${TIMEOUT_SECS}s"
+fi
 echo ""
 
 # Check seatd
@@ -26,15 +55,22 @@ echo "Press Super+Shift+Return to open terminal"
 echo "Press Super+Shift+Q to exit"
 echo ""
 
-# Run with timeout
-timeout --signal=KILL 30s "$KALIN_WM" 2>&1 | tee "$LOG"
-EXIT=${PIPESTATUS[0]}
+# Run compositor (with or without timeout)
+if [ "$TIMEOUT_SECS" = "0" ]; then
+    "$KALIN_WM" 2>&1 | tee "$LOG"
+    EXIT=${PIPESTATUS[0]}
+else
+    timeout --signal=KILL "${TIMEOUT_SECS}s" "$KALIN_WM" 2>&1 | tee "$LOG"
+    EXIT=${PIPESTATUS[0]}
+fi
 
 echo ""
 if [ $EXIT -eq 137 ] || [ $EXIT -eq 124 ]; then
-    echo "[Auto-killed after 30 seconds]"
+    echo "[Auto-killed after timeout]"
 elif [ $EXIT -eq 0 ]; then
     echo "[Exited normally]"
 else
     echo "[Exit code: $EXIT]"
 fi
+
+echo "Log saved to: $LOG"

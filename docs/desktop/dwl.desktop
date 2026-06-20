@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=kalin-wm
+Comment=kalin-wm (Wayland compositor)
+Exec=kalin-wm
+Type=Application
+DesktopNames=kalin-wm

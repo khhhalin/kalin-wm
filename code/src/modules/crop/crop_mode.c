@@ -1,0 +1,324 @@
+/* Crop mode operations: enter, draw, apply/cancel. */
+
+/* same_column_x() is defined in modules/layout/layout_world.c and forward
+ * declared in dwl.c. */
+
+static void
+crop_adjust_column_after_height_change(Client *changed, int delta_h)
+{
+	Client *c;
+
+	if (!changed || !changed->mon || delta_h == 0)
+		return;
+	if (changed->isfloating || changed->isfullscreen || !changed->world.set)
+		return;
+
+	wl_list_for_each(c, &clients, link) {
+		if (c == changed)
+			continue;
+		if (!VISIBLEON(c, changed->mon) || c->isfloating || c->isfullscreen)
+			continue;
+		if (!c->world.set)
+			continue;
+		if (!same_column_x(c->world.x, changed->world.x))
+			continue;
+		if (c->world.y > changed->world.y)
+			c->world.y += delta_h;
+	}
+}
+
+void
+cropbegin(const Arg *arg)
+{
+	Client *c;
+	Monitor *m;
+	struct wlr_box resetgeo;
+	int old_h, delta_h;
+	float flash_color[4] = {1.0f, 1.0f, 1.0f, 0.3f};  /* White flash */
+	static struct wlr_scene_rect *flash_rect = NULL;
+	
+	if (!selmon) return;
+	c = focustop(selmon);
+	if (!c || crop_editor.active) return;
+	
+	crop_editor.active = true;
+	crop_editor.target = c;
+	crop_editor.dragging = false;
+
+	/* Entering crop mode resets this window to uncropped/base size first. */
+	if (c->crop.saved_base && c->crop.base_w > 0 && c->crop.base_h > 0) {
+		old_h = c->geom.height;
+		resetgeo.x = c->geom.x;
+		resetgeo.y = c->geom.y;
+		resetgeo.width = c->crop.base_w;
+		resetgeo.height = c->crop.base_h;
+		resize(c, resetgeo, 0);
+		delta_h = resetgeo.height - old_h;
+		crop_adjust_column_after_height_change(c, delta_h);
+		c->crop.active = false;
+		c->crop.x = 0.0f;
+		c->crop.y = 0.0f;
+		c->crop.w = 1.0f;
+		c->crop.h = 1.0f;
+		if (c->mon)
+			arrange(c->mon);
+	}
+	
+	m = selmon;
+	
+	/* Visual feedback: brief white flash on screen to indicate crop mode */
+	flash_rect = wlr_scene_rect_create(layers[LyrOverlay], 
+		m->m.width, m->m.height, flash_color);
+	wlr_scene_node_set_position(&flash_rect->node, m->m.x, m->m.y);
+	
+	/* Create dark overlay covering entire output */
+	crop_editor.overlay = wlr_scene_rect_create(layers[LyrOverlay], 
+		m->m.width, m->m.height, 
+		(float[]){0, 0, 0, CROP_OVERLAY_ALPHA});
+	wlr_scene_node_set_position(&crop_editor.overlay->node, m->m.x, m->m.y);
+	
+	/* Create border lines - bright white outline, no fill */
+	/* Top border */
+	crop_editor.border[0] = wlr_scene_rect_create(layers[LyrOverlay], 0, CROP_BORDER_WIDTH,
+		(float[]){CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, 1.0f});
+	/* Bottom border */
+	crop_editor.border[1] = wlr_scene_rect_create(layers[LyrOverlay], 0, CROP_BORDER_WIDTH,
+		(float[]){CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, 1.0f});
+	/* Left border */
+	crop_editor.border[2] = wlr_scene_rect_create(layers[LyrOverlay], CROP_BORDER_WIDTH, 0,
+		(float[]){CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, 1.0f});
+	/* Right border */
+	crop_editor.border[3] = wlr_scene_rect_create(layers[LyrOverlay], CROP_BORDER_WIDTH, 0,
+		(float[]){CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, CROP_BORDER_BRIGHT, 1.0f});
+	
+	for (int i = 0; i < 4; i++) {
+		wlr_scene_node_set_enabled(&crop_editor.border[i]->node, false);
+	}
+	
+	/* Create corner handles - bright white squares */
+	for (int i = 0; i < 4; i++) {
+		crop_editor.handles[i] = wlr_scene_rect_create(layers[LyrOverlay], 
+			CROP_HANDLE_SIZE, CROP_HANDLE_SIZE,
+			(float[]){1.0f, 1.0f, 1.0f, 1.0f});
+		wlr_scene_node_set_enabled(&crop_editor.handles[i]->node, false);
+	}
+	
+	/* Create crosshair lines for center point - subtle */
+	crop_editor.crosshair_h = wlr_scene_rect_create(layers[LyrOverlay], 0, 1,
+		(float[]){1.0f, 1.0f, 1.0f, 0.5f});
+	crop_editor.crosshair_v = wlr_scene_rect_create(layers[LyrOverlay], 1, 0,
+		(float[]){1.0f, 1.0f, 1.0f, 0.5f});
+	wlr_scene_node_set_enabled(&crop_editor.crosshair_h->node, false);
+	wlr_scene_node_set_enabled(&crop_editor.crosshair_v->node, false);
+	
+	/* Set crosshair cursor for precision selection */
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, "crosshair");
+	
+	/* Remove flash after a brief moment - it served its purpose */
+	wlr_scene_node_destroy(&flash_rect->node);
+	flash_rect = NULL;
+	
+	wlr_log(WLR_INFO, "Crop mode started - drag to select region, press Super+Shift+R to cancel");
+	printstatus();
+}
+
+void
+cropcancel(const Arg *arg)
+{
+	if (!crop_editor.active) return;
+	
+	if (crop_editor.overlay)
+		wlr_scene_node_destroy(&crop_editor.overlay->node);
+	crop_editor.overlay = NULL;
+	
+	/* Destroy border lines */
+	for (int i = 0; i < 4; i++) {
+		if (crop_editor.border[i])
+			wlr_scene_node_destroy(&crop_editor.border[i]->node);
+		crop_editor.border[i] = NULL;
+	}
+	
+	/* Destroy corner handles */
+	for (int i = 0; i < 4; i++) {
+		if (crop_editor.handles[i])
+			wlr_scene_node_destroy(&crop_editor.handles[i]->node);
+		crop_editor.handles[i] = NULL;
+	}
+	
+	/* Destroy crosshair lines */
+	if (crop_editor.crosshair_h)
+		wlr_scene_node_destroy(&crop_editor.crosshair_h->node);
+	if (crop_editor.crosshair_v)
+		wlr_scene_node_destroy(&crop_editor.crosshair_v->node);
+	crop_editor.crosshair_h = NULL;
+	crop_editor.crosshair_v = NULL;
+	
+	/* Restore default cursor */
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	
+	crop_editor.active = false;
+	crop_editor.target = NULL;
+	crop_editor.dragging = false;
+	
+	wlr_log(WLR_INFO, "Crop mode cancelled");
+	printstatus();
+}
+
+void
+cropend(const Arg *arg)
+{
+	Client *c;
+	int sx, sy, ex, ey, w, h;
+	int wx, wy, ww, wh;
+	int base_w, base_h;
+	int screen_wx, screen_wy;
+	int delta_h;
+	float cx, cy, cw, ch;
+	struct wlr_box newgeo;
+	
+	if (!crop_editor.active || !crop_editor.dragging) {
+		cropcancel(arg);
+		return;
+	}
+	
+	c = crop_editor.target;
+	if (c) {
+		/* Calculate normalized crop values */
+		sx = MIN(crop_editor.start_x, crop_editor.end_x);
+		sy = MIN(crop_editor.start_y, crop_editor.end_y);
+		ex = MAX(crop_editor.start_x, crop_editor.end_x);
+		ey = MAX(crop_editor.start_y, crop_editor.end_y);
+		w = ex - sx;
+		h = ey - sy;
+		
+		/* Get window geometry */
+		wx = c->geom.x;
+		wy = c->geom.y;
+		ww = c->geom.width;
+		wh = c->geom.height;
+		base_w = ww;
+		base_h = wh;
+		screen_wx = (int)(wx - viewport.x);
+		screen_wy = (int)(wy - viewport.y);
+		
+		/* Check for division by zero */
+		if (ww <= 0 || wh <= 0) {
+			cropcancel(arg);
+			return;
+		}
+
+		/* Capture full/base size on first crop so we can restore it later. */
+		if (!c->crop.saved_base) {
+			c->crop.base_w = ww;
+			c->crop.base_h = wh;
+			c->crop.saved_base = true;
+		}
+		if (c->crop.saved_base && c->crop.base_w > 0 && c->crop.base_h > 0) {
+			base_w = c->crop.base_w;
+			base_h = c->crop.base_h;
+		}
+		
+		/* Calculate crop relative to window */
+		cx = (float)(sx - screen_wx) / ww;
+		cy = (float)(sy - screen_wy) / wh;
+		cw = (float)w / ww;
+		ch = (float)h / wh;
+		
+		/* Clamp to valid range */
+		cx = MAX(0, MIN(1, cx));
+		cy = MAX(0, MIN(1, cy));
+		cw = MAX(0.1, MIN(1 - cx, cw));
+		ch = MAX(0.1, MIN(1 - cy, ch));
+		
+		/* Apply crop */
+		c->crop.active = true;
+		c->crop.x = cx;
+		c->crop.y = cy;
+		c->crop.w = cw;
+		c->crop.h = ch;
+		
+		/* Resize window to crop size */
+		newgeo.x = wx;
+		newgeo.y = wy;
+		newgeo.width = (int)lroundf(base_w * cw);
+		newgeo.height = (int)lroundf(base_h * ch);
+		newgeo.width = MAX(1 + 2 * (int)c->bw, newgeo.width);
+		newgeo.height = MAX(1 + 2 * (int)c->bw, newgeo.height);
+		resize(c, newgeo, 0);
+		delta_h = newgeo.height - base_h;
+		crop_adjust_column_after_height_change(c, delta_h);
+		if (c->mon)
+			arrange(c->mon);
+		
+		wlr_log(WLR_INFO, "Crop applied: window '%s' visible region %dx%d (base %dx%d)", 
+			client_get_title(c), newgeo.width, newgeo.height, base_w, base_h);
+	}
+	
+	cropcancel(arg);
+}
+
+void
+cropdraw(void)
+{
+	if (!crop_editor.active || !crop_editor.dragging) return;
+	if (!crop_editor.border[0] || !crop_editor.border[1]
+			|| !crop_editor.border[2] || !crop_editor.border[3])
+		return;
+	if (!crop_editor.handles[0] || !crop_editor.handles[1]
+			|| !crop_editor.handles[2] || !crop_editor.handles[3])
+		return;
+	if (!crop_editor.crosshair_h || !crop_editor.crosshair_v)
+		return;
+
+	int x = MIN(crop_editor.start_x, crop_editor.end_x);
+	int y = MIN(crop_editor.start_y, crop_editor.end_y);
+	int w = (int)fabs(crop_editor.end_x - crop_editor.start_x);
+	int h = (int)fabs(crop_editor.end_y - crop_editor.start_y);
+	
+	/* Ensure minimum size */
+	if (w < 10) w = 10;
+	if (h < 10) h = 10;
+	
+	/* Update border lines - bright white outline, transparent fill */
+	/* Top border */
+	wlr_scene_rect_set_size(crop_editor.border[0], w, CROP_BORDER_WIDTH);
+	wlr_scene_node_set_position(&crop_editor.border[0]->node, x, y);
+	/* Bottom border */
+	wlr_scene_rect_set_size(crop_editor.border[1], w, CROP_BORDER_WIDTH);
+	wlr_scene_node_set_position(&crop_editor.border[1]->node, x, y + h - CROP_BORDER_WIDTH);
+	/* Left border */
+	wlr_scene_rect_set_size(crop_editor.border[2], CROP_BORDER_WIDTH, h);
+	wlr_scene_node_set_position(&crop_editor.border[2]->node, x, y);
+	/* Right border */
+	wlr_scene_rect_set_size(crop_editor.border[3], CROP_BORDER_WIDTH, h);
+	wlr_scene_node_set_position(&crop_editor.border[3]->node, x + w - CROP_BORDER_WIDTH, y);
+	
+	for (int i = 0; i < 4; i++) {
+		wlr_scene_node_set_enabled(&crop_editor.border[i]->node, true);
+	}
+	
+	/* Position corner handles */
+	int half_handle = CROP_HANDLE_SIZE / 2;
+	/* Top-left */
+	wlr_scene_node_set_position(&crop_editor.handles[0]->node, x - half_handle, y - half_handle);
+	/* Top-right */
+	wlr_scene_node_set_position(&crop_editor.handles[1]->node, x + w - half_handle, y - half_handle);
+	/* Bottom-left */
+	wlr_scene_node_set_position(&crop_editor.handles[2]->node, x - half_handle, y + h - half_handle);
+	/* Bottom-right */
+	wlr_scene_node_set_position(&crop_editor.handles[3]->node, x + w - half_handle, y + h - half_handle);
+	
+	for (int i = 0; i < 4; i++) {
+		wlr_scene_node_set_enabled(&crop_editor.handles[i]->node, true);
+	}
+	
+	/* Update crosshair lines at center - subtle white */
+	int cx = x + w / 2;
+	int cy = y + h / 2;
+	wlr_scene_rect_set_size(crop_editor.crosshair_h, w / 4, 1);
+	wlr_scene_rect_set_size(crop_editor.crosshair_v, 1, h / 4);
+	wlr_scene_node_set_position(&crop_editor.crosshair_h->node, cx - w / 8, cy);
+	wlr_scene_node_set_position(&crop_editor.crosshair_v->node, cx, cy - h / 8);
+	wlr_scene_node_set_enabled(&crop_editor.crosshair_h->node, true);
+	wlr_scene_node_set_enabled(&crop_editor.crosshair_v->node, true);
+}

@@ -1,79 +1,131 @@
-.POSIX:
-.SUFFIXES:
+# kalin-wm - Modular Wayland compositor based on dwl
+# Makefile - Hybrid approach with gradual modularization
 
-include config.mk
+# Variables from environment or defaults
+PREFIX    ?= /usr/local
+BINDIR    ?= $(PREFIX)/bin
+MANDIR    ?= $(PREFIX)/share/man/man1
+WAYLAND_SESSION_DIR ?= /usr/share/wayland-sessions
+BUILD_DIR ?= build
 
-# flags for compiling
-DWLCPPFLAGS = -I. -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L \
-	-DVERSION=\"$(VERSION)\" $(XWAYLAND)
-DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
-	-Wno-unused-parameter -Wshadow -Wunused-macros -Werror=strict-prototypes \
-	-Werror=implicit -Werror=return-type -Werror=incompatible-pointer-types \
-	-Wfloat-conversion
+# Flags
+WLR_FLAGS  = `pkg-config --cflags wlroots-0.20`
+WLR_LIBS   = `pkg-config --libs wlroots-0.20`
+WL_FLAGS   = `pkg-config --cflags wayland-server xkbcommon libinput`
+WL_LIBS    = `pkg-config --libs wayland-server xkbcommon libinput`
 
-# CFLAGS / LDFLAGS
-PKGS      = wayland-server xkbcommon libinput $(XLIBS)
-DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
-LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
+CFLAGS   = $(WLR_FLAGS) $(WL_FLAGS) -I. -Icode/config -Icode/include -Icode/include/protocols -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L
+CFLAGS  += -DVERSION=\"0.8-dev\"
+CFLAGS  += -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement
+CFLAGS  += -Wno-unused-parameter -Wshadow -Wunused-macros
+CFLAGS  += -Werror=strict-prototypes -Werror=implicit -Werror=return-type
+CFLAGS  += -Werror=incompatible-pointer-types -Wfloat-conversion -O1
 
-all: dwl
-dwl: dwl.o util.o
-	$(CC) dwl.o util.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
-dwl.o: dwl.c client.h config.h config.mk cursor-shape-v1-protocol.h \
-	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
-	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h
-util.o: util.c util.h
+LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
 
-# wayland-scanner is a tool which generates C headers and rigging for Wayland
-# protocols, which are specified in XML. wlroots requires you to rig these up
-# to your build system yourself and provide them in the include path.
-WAYLAND_SCANNER   = `$(PKG_CONFIG) --variable=wayland_scanner wayland-scanner`
-WAYLAND_PROTOCOLS = `$(PKG_CONFIG) --variable=pkgdatadir wayland-protocols`
+# Source files. dwl.c is the core translation unit; it #include's the feature
+# modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
+# commit_size.c is compiled as its own translation unit. The other listed files
+# (util/crash_report/persistence) are independent translation units.
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/crash_report.c code/src/persistence.c
 
-cursor-shape-v1-protocol.h:
-	$(WAYLAND_SCANNER) enum-header \
-		$(WAYLAND_PROTOCOLS)/staging/cursor-shape/cursor-shape-v1.xml $@
-pointer-constraints-unstable-v1-protocol.h:
-	$(WAYLAND_SCANNER) enum-header \
-		$(WAYLAND_PROTOCOLS)/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml $@
-wlr-layer-shell-unstable-v1-protocol.h:
-	$(WAYLAND_SCANNER) enum-header \
-		protocols/wlr-layer-shell-unstable-v1.xml $@
-wlr-output-power-management-unstable-v1-protocol.h:
-	$(WAYLAND_SCANNER) server-header \
-		protocols/wlr-output-power-management-unstable-v1.xml $@
-xdg-shell-protocol.h:
-	$(WAYLAND_SCANNER) server-header \
-		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
+OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
+BIN = $(BUILD_DIR)/kalin-wm
 
-config.h:
-	cp config.def.h $@
-clean:
-	rm -f dwl *.o *-protocol.h
+# Protocol files
+PROTO_HDRS = code/include/protocols/xdg-shell-protocol.h \
+	     code/include/protocols/wlr-layer-shell-unstable-v1-protocol.h \
+	     code/include/protocols/wlr-output-power-management-unstable-v1-protocol.h \
+	     code/include/protocols/pointer-constraints-unstable-v1-protocol.h \
+	     code/include/protocols/cursor-shape-v1-protocol.h
 
-dist: clean
-	mkdir -p dwl-$(VERSION)
-	cp -R LICENSE* Makefile CHANGELOG.md README.md client.h config.def.h \
-		config.mk protocols dwl.1 dwl.c util.c util.h dwl.desktop \
-		dwl-$(VERSION)
-	tar -caf dwl-$(VERSION).tar.gz dwl-$(VERSION)
-	rm -rf dwl-$(VERSION)
+# Main target
+all: $(BIN)
 
-install: dwl
-	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	rm -f $(DESTDIR)$(PREFIX)/bin/dwl
-	cp -f dwl $(DESTDIR)$(PREFIX)/bin
-	chmod 755 $(DESTDIR)$(PREFIX)/bin/dwl
-	mkdir -p $(DESTDIR)$(MANDIR)/man1
-	cp -f dwl.1 $(DESTDIR)$(MANDIR)/man1
-	chmod 644 $(DESTDIR)$(MANDIR)/man1/dwl.1
-	mkdir -p $(DESTDIR)$(DATADIR)/wayland-sessions
-	cp -f dwl.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop
-	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop
+$(BIN): $(OBJS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $@
+
+kalin-wm: $(BIN)
+
+# Pattern rules
+$(BUILD_DIR)/%.o: %.c code/config/config.h $(PROTO_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Config
+check-config:
+	@-[ -f code/config/config.h ] || cp code/config/config.def.h code/config/config.h
+
+code/config/config.h: check-config
+
+# Installation
+install: $(BIN)
+	install -D -m 755 $(BIN) $(DESTDIR)$(BINDIR)/kalin-wm
+	install -D -m 644 docs/man/dwl.1 $(DESTDIR)$(MANDIR)/kalin-wm.1 2>/dev/null || true
+	install -D -m 644 docs/desktop/dwl.desktop $(DESTDIR)$(WAYLAND_SESSION_DIR)/kalin-wm.desktop
+
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/dwl $(DESTDIR)$(MANDIR)/man1/dwl.1 \
-		$(DESTDIR)$(DATADIR)/wayland-sessions/dwl.desktop
+	rm -f $(DESTDIR)$(BINDIR)/kalin-wm
+	rm -f $(DESTDIR)$(MANDIR)/kalin-wm.1
+	rm -f $(DESTDIR)$(WAYLAND_SESSION_DIR)/kalin-wm.desktop
 
-.SUFFIXES: .c .o
-.c.o:
-	$(CC) $(CPPFLAGS) $(DWLCFLAGS) -o $@ -c $<
+# Cleanup
+clean:
+	rm -rf $(BUILD_DIR)
+	rm -f kalin-wm
+	rm -f tests/test_client_lifecycle tests/*.gcda tests/*.gcno tests/*.gcov
+
+distclean: clean
+	rm -f code/config/config.h
+
+# Development
+debug: CFLAGS += -g3 -O0 -DDEBUG
+debug: kalin-wm
+
+release: CFLAGS += -O3 -DNDEBUG
+release: kalin-wm
+
+# Unit tests (no wlroots dependency)
+test-unit:
+	@echo "=== Running Unit Tests ==="
+	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_client_lifecycle code/tests/test_client_lifecycle.c -lm && tests/test_client_lifecycle
+
+test-unit-coverage:
+	@echo "=== Running Unit Tests with Coverage ==="
+	@rm -f tests/*.gcda tests/*.gcno tests/*.gcov && \
+		gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g --coverage -o tests/test_client_lifecycle code/tests/test_client_lifecycle.c -lm && \
+		tests/test_client_lifecycle && \
+		gcov -b code/tests/test_client_lifecycle.c >/dev/null && \
+		echo "Coverage report: test_client_lifecycle.c.gcov"
+
+test-integration:
+	@echo "=== Running Integration Tests ==="
+	@cd tests && bash test_spawn_crash.sh
+
+# Testing in TTY (requires root/sudo or running from TTY)
+test-tty: $(BIN)
+	./scripts/run-tty
+
+test-manual:
+	@echo "Manual test checklist: docs/MANUAL_TESTING.md"
+	@echo "Quick start (nested): ./scripts/dev/run-nested-safe.sh"
+	@echo "Quick start (tty):    ./scripts/run-tty"
+
+test: test-unit
+
+.PHONY: all kalin-wm clean distclean install uninstall debug release test test-unit test-unit-coverage test-integration test-tty test-manual check-config
+
+# Show modular structure
+structure:
+	@echo "=== Project Structure ==="
+	@echo "Main compositor: code/src/dwl.c"
+	@echo "Modular headers: code/include/*.h"
+	@echo "Protocol headers: code/include/protocols/*.h"
+	@echo "Config files: code/config/"
+	@echo "Docs hub: docs/ (man/ desktop/ changelog/ incidents/ obsidian-vault/)"
+	@echo ""
+	@echo "Current build: code/src/dwl.c + code/src/util.c + selected runtime modules"
+	@echo "Migration path: continue splitting code/src/dwl.c into code/src/modules/*.c translation units"
+
+.PHONY: structure

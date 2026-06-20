@@ -39,7 +39,7 @@
         
         installPhase = ''
           mkdir -p $out/bin
-          cp dwl $out/bin/kalin-wm
+          cp build/kalin-wm $out/bin/kalin-wm
         '';
       };
 

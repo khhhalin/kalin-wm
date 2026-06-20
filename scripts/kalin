@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
+
+usage() {
+  cat <<EOF
+kalin helper script
+
+Usage:
+  ./scripts/kalin build           Build kalin-wm
+  ./scripts/kalin test            Run unit tests
+  ./scripts/kalin test-coverage   Run unit tests with coverage
+  ./scripts/kalin run-nested      Run nested (interactive helper)
+  ./scripts/kalin run-tty [secs]  Run on tty with optional timeout (0=no timeout)
+  ./scripts/kalin all             Build + test
+EOF
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  build)
+    exec ./scripts/build
+    ;;
+  test)
+    exec ./scripts/test
+    ;;
+  test-coverage)
+    exec ./scripts/test coverage
+    ;;
+  run-nested)
+    exec ./scripts/run-nested
+    ;;
+  run-tty)
+    exec ./scripts/run-tty "${1:-30}"
+    ;;
+  all)
+    ./scripts/build
+    exec ./scripts/test
+    ;;
+  ""|-h|--help|help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
