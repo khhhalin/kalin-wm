@@ -1,5 +1,35 @@
 /* Viewport camera operations: pan, zoom, follow, and animation tick. */
 
+void viewport_tick(void); /* defined below; used by the animation timer */
+
+/* Drive animations from an event-loop timer (~60 Hz) rather than relying on
+ * output frame callbacks, which don't free-run when the output is idle (or on
+ * the headless backend). The timer re-arms itself while animating and stops
+ * once the camera settles. */
+static struct wl_event_source *viewport_anim_timer = NULL;
+
+static int
+viewport_anim_timer_cb(void *data)
+{
+	(void)data;
+	viewport_tick();
+	if (viewport.animating && viewport_anim_timer)
+		wl_event_source_timer_update(viewport_anim_timer, 16);
+	return 0;
+}
+
+static void
+viewport_schedule_frame(void)
+{
+	if (!event_loop)
+		return;
+	if (!viewport_anim_timer)
+		viewport_anim_timer = wl_event_loop_add_timer(event_loop,
+				viewport_anim_timer_cb, NULL);
+	if (viewport_anim_timer)
+		wl_event_source_timer_update(viewport_anim_timer, 16);
+}
+
 static void
 viewport_move_to(float x, float y, int smooth)
 {
@@ -8,6 +38,7 @@ viewport_move_to(float x, float y, int smooth)
 
 	if (smooth && viewport.smooth_pan) {
 		viewport.animating = 1;
+		viewport_schedule_frame();
 	} else {
 		viewport.x = x;
 		viewport.y = y;
@@ -18,26 +49,56 @@ viewport_move_to(float x, float y, int smooth)
 void
 viewport_tick(void)
 {
-	float dx, dy;
-	float alpha;
+	static struct timespec last;
+	static int have_last = 0;
+	struct timespec now;
+	float dt, k;
+	float dx, dy, dz;
 
-	if (!viewport.animating || !selmon)
-		return;
-
-	dx = viewport.target_x - viewport.x;
-	dy = viewport.target_y - viewport.y;
-
-	if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f) {
-		viewport.x = viewport.target_x;
-		viewport.y = viewport.target_y;
-		viewport.animating = 0;
-		arrange(selmon);
+	if (!viewport.animating || !selmon) {
+		have_last = 0;
 		return;
 	}
 
-	alpha = 0.22f;
-	viewport.x += dx * alpha;
-	viewport.y += dy * alpha;
+	/* Frame-rate-independent easing: measure real elapsed time so the camera
+	 * converges at the same rate regardless of refresh rate. */
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (!have_last) {
+		dt = 1.0f / 60.0f;
+		have_last = 1;
+	} else {
+		dt = (float)(now.tv_sec - last.tv_sec)
+			+ (float)(now.tv_nsec - last.tv_nsec) / 1e9f;
+	}
+	last = now;
+	if (dt <= 0.0f)
+		dt = 1.0f / 60.0f;
+	if (dt > 0.1f)
+		dt = 0.1f; /* clamp after a stall so we don't jump */
+
+	/* Critically-damped exponential approach toward the target. */
+	k = 1.0f - expf(-18.0f * dt);
+
+	dx = viewport.target_x - viewport.x;
+	dy = viewport.target_y - viewport.y;
+	dz = viewport.target_zoom - viewport.zoom;
+
+	if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f && fabsf(dz) < 0.001f) {
+		viewport.x = viewport.target_x;
+		viewport.y = viewport.target_y;
+		viewport.zoom = viewport.target_zoom;
+		viewport.animating = 0;
+		have_last = 0;
+		arrange(selmon);
+		/* Publish the settled state to status/IPC/foreign-toplevel so the
+		 * shell OSD shows the final zoom level. */
+		printstatus();
+		return;
+	}
+
+	viewport.x += dx * k;
+	viewport.y += dy * k;
+	viewport.zoom += dz * k;
 	arrange(selmon);
 }
 
@@ -64,22 +125,29 @@ void
 viewport_zoom(const Arg *arg)
 {
 	float factor = arg->f;
+	float tz;
 	if (factor <= 0.0f)
 		return;
-	
-	viewport.zoom *= factor;
-	
-	/* Clamp zoom range */
-	if (viewport.zoom < 0.1f)
-		viewport.zoom = 0.1f;
-	if (viewport.zoom > 5.0f)
-		viewport.zoom = 5.0f;
-	
-	wlr_log(WLR_DEBUG, "Viewport zoom: %.2f", viewport.zoom);
-	
-	if (selmon)
-		arrange(selmon);
-	
+
+	/* Multiply the *target* so repeated presses accumulate smoothly. */
+	tz = viewport.target_zoom * factor;
+	if (tz < 0.1f)
+		tz = 0.1f;
+	if (tz > 5.0f)
+		tz = 5.0f;
+	viewport.target_zoom = tz;
+
+	wlr_log(WLR_DEBUG, "Viewport zoom target: %.2f", viewport.target_zoom);
+
+	if (viewport.smooth_pan) {
+		viewport.animating = 1;
+		viewport_schedule_frame();
+	} else {
+		viewport.zoom = tz;
+		if (selmon)
+			arrange(selmon);
+	}
+
 	printstatus();
 }
 
@@ -87,12 +155,24 @@ void
 viewport_reset(const Arg *arg)
 {
 	(void)arg; /* unused */
-	
-	viewport_move_to(0.0f, 0.0f, 0);
-	viewport.zoom = 1.0f;
-	
-	if (selmon)
-		arrange(selmon);
+
+	viewport.target_x = 0.0f;
+	viewport.target_y = 0.0f;
+	viewport.target_zoom = 1.0f;
+
+	if (viewport.smooth_pan) {
+		viewport.animating = 1;
+		viewport_schedule_frame();
+	} else {
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.zoom = 1.0f;
+		viewport.animating = 0;
+		if (selmon)
+			arrange(selmon);
+	}
+
+	printstatus();
 }
 
 /* Center camera on a specific window */

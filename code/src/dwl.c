@@ -270,11 +270,12 @@ static struct {
 	float x, y;              /* camera position */
 	float target_x, target_y;/* camera animation target */
 	float zoom;              /* zoom level (1.0 = normal) */
+	float target_zoom;       /* zoom animation target */
 	int follow;              /* 1 = camera follows focused window */
 	int follow_new_windows;  /* 1 = auto-pan to new windows */
 	int smooth_pan;          /* 1 = animate camera movement */
 	int animating;           /* 1 = moving toward target */
-} viewport = { 0, 0, 0, 0, 1.0, 1, 1, 1, 0 };
+} viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
 
 /* Exit confirmation state */
 static struct {

@@ -20,6 +20,9 @@ CFLAGS  += -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement
 CFLAGS  += -Wno-unused-parameter -Wshadow -Wunused-macros
 CFLAGS  += -Werror=strict-prototypes -Werror=implicit -Werror=return-type
 CFLAGS  += -Werror=incompatible-pointer-types -Wfloat-conversion -O1
+# Auto-generate header/source dependencies so edits to any #include'd file
+# (headers AND the modules dwl.c #include's directly) trigger a rebuild.
+CFLAGS  += -MMD -MP
 
 LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
 
@@ -30,7 +33,12 @@ LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
 SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
+DEPS = $(OBJS:.o=.d)
 BIN = $(BUILD_DIR)/kalin-wm
+
+# Pull in auto-generated dependency files (-MMD). The '-' ignores them on a
+# clean tree where they don't exist yet.
+-include $(DEPS)
 
 # Protocol files
 PROTO_HDRS = code/include/protocols/xdg-shell-protocol.h \
