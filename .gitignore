@@ -12,3 +12,5 @@ tests/test_client_lifecycle
 tests/*.gcda
 tests/*.gcno
 tests/*.gcov
+
+tests/registry_probe

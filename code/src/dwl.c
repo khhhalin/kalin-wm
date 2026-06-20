@@ -63,6 +63,7 @@
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -159,6 +160,12 @@ typedef struct {
 	struct wl_listener fullscreen;
 	struct wl_listener set_decoration_mode;
 	struct wl_listener destroy_decoration;
+
+	/* wlr-foreign-toplevel-management: external shell window control */
+	struct wlr_foreign_toplevel_handle_v1 *foreign_toplevel;
+	struct wl_listener foreign_activate;
+	struct wl_listener foreign_close;
+	struct wl_listener foreign_fullscreen;
 #ifdef XWAYLAND
 	struct wl_listener activate;
 	struct wl_listener associate;
@@ -550,6 +557,7 @@ static struct wlr_session *session;
 
 static struct wlr_xdg_shell *xdg_shell;
 static struct wlr_xdg_activation_v1 *activation;
+static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 struct wl_list clients; /* tiling order */
 static struct wl_list fstack;  /* focus order */
@@ -794,6 +802,12 @@ static void infinite(Monitor *m);
 /* Defined in modules/layout/layout_world.c; declared here because the crop
  * module (included earlier) also uses it. */
 static int same_column_x(float a, float b);
+
+/* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
+static void ftl_create(Client *c);
+static void ftl_destroy(Client *c);
+static void ftl_update_title(Client *c);
+static void ftl_sync_state(void);
 
 /* Hybrid window anchoring system (forward declarations before config.h) */
 static void arrange_columns(Monitor *m);
@@ -2566,6 +2580,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		applyrules(c);
 	}
 	persistence_apply_client(c);
+	ftl_create(c);
 	printstatus();
 
 unset_fullscreen:
@@ -2915,8 +2930,11 @@ printstatus(void)
 	
 	/* Output crop mode state */
 	printf("crop %s\n", crop_editor.active ? "active" : "inactive");
-	
+
 	fflush(stdout);
+
+	/* Mirror focus/fullscreen state to foreign-toplevel handles for shells. */
+	ftl_sync_state();
 }
 
 void
@@ -2966,6 +2984,7 @@ quit(const Arg *arg)
 #include "modules/ui/wallpaper.c"
 #include "modules/viewport/viewport_ops.c"
 #include "modules/input/resize_actions.c"
+#include "modules/foreign_toplevel.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
@@ -3510,6 +3529,7 @@ setup(void)
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
 	wlr_screencopy_manager_v1_create(dpy);
+	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_ext_data_control_manager_v1_create(dpy, 1);
 	wlr_primary_selection_v1_device_manager_create(dpy);
@@ -3828,6 +3848,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 		grabc = NULL;
 	}
 
+	ftl_destroy(c);
+
 	if (client_is_unmanaged(c)) {
 		if (c == exclusive_focus) {
 			exclusive_focus = NULL;
@@ -3969,6 +3991,7 @@ void
 updatetitle(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_title);
+	ftl_update_title(c);
 	if (c == focustop(c->mon))
 		printstatus();
 }

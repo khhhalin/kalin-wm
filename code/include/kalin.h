@@ -300,6 +300,13 @@ struct Client {
     struct wl_listener fullscreen;
     struct wl_listener set_decoration_mode;
     struct wl_listener destroy_decoration;
+
+    /* wlr-foreign-toplevel-management: lets external shells (e.g. quickshell
+     * ToplevelManager) enumerate and control this window. */
+    struct wlr_foreign_toplevel_handle_v1 *foreign_toplevel;
+    struct wl_listener foreign_activate;
+    struct wl_listener foreign_close;
+    struct wl_listener foreign_fullscreen;
 #ifdef XWAYLAND
     struct wl_listener activate;
     struct wl_listener associate;
