@@ -138,6 +138,8 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
  * this file to config.h to override with absolute paths if desired. */
 static const char *termcmd[] = { "foot", NULL };
 static const char *menucmd[] = { "fuzzel", NULL };
+/* Toggle the shell's exposé/overview overlay (quickshell). No-op if no shell. */
+static const char *overviewcmd[] = { "qs", "ipc", "call", "windows-bar", "toggleOverview", NULL };
 
 /* Viewport pan direction arrays - passed to viewport_pan */
 static const float pan_left[]  = {-50, 0};
@@ -160,6 +162,7 @@ static const Key keys[] = {
 	/* modifier                  key                  function          argument */
 	{ MODKEY,                    XKB_KEY_p,           spawn,            {.v = menucmd} },
 	{ MODKEY,                    XKB_KEY_t,           spawn,            {.v = termcmd} }, /* Super+T = terminal */
+	{ MODKEY,                    XKB_KEY_o,           spawn,            {.v = overviewcmd} }, /* Super+O = overview */
 	{ MODKEY,                    XKB_KEY_j,           focusstack,       {.i = +1} },
 	{ MODKEY,                    XKB_KEY_k,           focusstack,       {.i = -1} },
 	{ MODKEY,                    XKB_KEY_i,           incnmaster,       {.i = +1} },
