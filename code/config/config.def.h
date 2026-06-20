@@ -209,6 +209,7 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_J,           viewport_pan,     {.v = pan_down} },
 	{ MODKEY,                    XKB_KEY_equal,       viewport_zoom,    {.f = 1.1f} },
 	{ MODKEY,                    XKB_KEY_minus,       viewport_zoom,    {.f = 0.9f} },
+	{ MODKEY,                    XKB_KEY_0,           viewport_fit_all, {0} }, /* Super+0 = fit all windows */
 	{ MODKEY,                    XKB_KEY_BackSpace,   viewport_reset,   {0} },
 	{ MODKEY,                    XKB_KEY_z,           viewport_toggle_follow, {0} }, /* toggle camera follow */
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Z,           viewport_toggle_follow_new, {0} }, /* toggle auto-pan to new windows */

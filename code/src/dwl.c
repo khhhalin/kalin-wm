@@ -277,6 +277,15 @@ static struct {
 	int animating;           /* 1 = moving toward target */
 } viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
 
+/* True scene-zoom transform: screen = (world - camera) * zoom. Defined here so
+ * input handlers, crop, and the layout (#included later) all share it. Window
+ * SIZES are scaled by zoom in resize(); positions by these macros. */
+#define VIEWPORT_ZOOM_SAFE    (viewport.zoom > 0.0001f ? viewport.zoom : 0.0001f)
+#define WORLD_TO_SCREEN_X(wx) ((int)(((wx) - viewport.x) * VIEWPORT_ZOOM_SAFE))
+#define WORLD_TO_SCREEN_Y(wy) ((int)(((wy) - viewport.y) * VIEWPORT_ZOOM_SAFE))
+#define SCREEN_TO_WORLD_X(sx) ((float)(sx) / VIEWPORT_ZOOM_SAFE + viewport.x)
+#define SCREEN_TO_WORLD_Y(sy) ((float)(sy) / VIEWPORT_ZOOM_SAFE + viewport.y)
+
 /* Exit confirmation state */
 static struct {
 	time_t last_press;       /* time of first exit keypress */
@@ -422,6 +431,7 @@ static void quit(const Arg *arg);
 static void viewport_pan(const Arg *arg);
 static void viewport_zoom(const Arg *arg);
 static void viewport_reset(const Arg *arg);
+static void viewport_fit_all(const Arg *arg);
 static void viewport_center_on(Client *c);
 static void viewport_toggle_follow(const Arg *arg);
 static void viewport_toggle_follow_new(const Arg *arg);
@@ -2699,15 +2709,21 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		return;
 	}
 
-	/* If we are currently grabbing the mouse, handle and return */
+	/* If we are currently grabbing the mouse, handle and return.
+	 * geom is in world space; the cursor is in screen space, so convert via
+	 * SCREEN_TO_WORLD (which accounts for pan + zoom). grabcx/grabcy hold the
+	 * grab offset in world units (see moveresize()). */
 	if (cursor_mode == CurMove && grabc) {
 		/* Move the grabbed client to the new position. */
-		resize(grabc, (struct wlr_box){.x = (int)round(cursor->x) - grabcx, .y = (int)round(cursor->y) - grabcy,
+		resize(grabc, (struct wlr_box){
+			.x = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabcx,
+			.y = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabcy,
 			.width = grabc->geom.width, .height = grabc->geom.height}, 1);
 		return;
 	} else if (cursor_mode == CurResize && grabc) {
 		resize(grabc, (struct wlr_box){.x = grabc->geom.x, .y = grabc->geom.y,
-			.width = (int)round(cursor->x) - grabc->geom.x, .height = (int)round(cursor->y) - grabc->geom.y}, 1);
+			.width = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabc->geom.x,
+			.height = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabc->geom.y}, 1);
 		return;
 	}
 	
@@ -2756,16 +2772,17 @@ moveresize(const Arg *arg)
 	setfloating(grabc, 1);
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
-		grabcx = (int)round(cursor->x) - grabc->geom.x;
-		grabcy = (int)round(cursor->y) - grabc->geom.y;
+		/* Offset stored in world units (cursor is screen space). */
+		grabcx = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabc->geom.x;
+		grabcy = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabc->geom.y;
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "all-scroll");
 		break;
 	case CurResize:
 		/* Doesn't work for X11 output - the next absolute motion event
-		 * returns the cursor to where it started */
+		 * returns the cursor to where it started. Warp target is screen space. */
 		wlr_cursor_warp_closest(cursor, NULL,
-				grabc->geom.x + grabc->geom.width,
-				grabc->geom.y + grabc->geom.height);
+				WORLD_TO_SCREEN_X(grabc->geom.x + grabc->geom.width),
+				WORLD_TO_SCREEN_Y(grabc->geom.y + grabc->geom.height));
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "se-resize");
 		break;
 	}
@@ -3114,75 +3131,89 @@ resize(Client *c, struct wlr_box geo, int interact)
 		c->crop.saved_base = true;
 	}
 
-	/* Apply viewport transform: world -> screen coordinates */
+	/* Apply viewport transform: world -> screen coordinates (includes zoom). */
 	view_x = WORLD_TO_SCREEN_X(c->geom.x);
 	view_y = WORLD_TO_SCREEN_Y(c->geom.y);
 
-	/* Update scene-graph frame */
-	wlr_scene_node_set_position(&c->scene->node, view_x, view_y);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+	/* The whole window (frame + content) is displayed at geom * zoom. The client
+	 * stays configured at native size (cfg_w/cfg_h below) — only the displayed
+	 * size scales, via these scaled frame dims and the buffer dest_size. At
+	 * zoom == 1 every value below reduces to the unscaled original. */
+	{
+		float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+		int z_bw = (int)lroundf(c->bw * zf);
+		int z_w  = MAX(1, (int)lroundf(c->geom.width * zf));
+		int z_h  = MAX(1, (int)lroundf(c->geom.height * zf));
+		int z_inner_h = MAX(0, z_h - 2 * z_bw);
 
-	if (focusringpx > 0 && c->focus_ring[0]) {
-		int ring = (int)focusringpx;
-		int ring_w = c->geom.width + 2 * ring;
-		int ring_h = c->geom.height + 2 * ring;
-		wlr_scene_rect_set_size(c->focus_ring[0], ring_w, ring);
-		wlr_scene_rect_set_size(c->focus_ring[1], ring_w, ring);
-		wlr_scene_rect_set_size(c->focus_ring[2], ring, ring_h);
-		wlr_scene_rect_set_size(c->focus_ring[3], ring, ring_h);
-		wlr_scene_node_set_position(&c->focus_ring[0]->node, -ring, -ring);
-		wlr_scene_node_set_position(&c->focus_ring[1]->node, -ring, c->geom.height);
-		wlr_scene_node_set_position(&c->focus_ring[2]->node, -ring, -ring);
-		wlr_scene_node_set_position(&c->focus_ring[3]->node, c->geom.width, -ring);
-	}
+		/* Update scene-graph frame */
+		wlr_scene_node_set_position(&c->scene->node, view_x, view_y);
+		wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+		wlr_scene_rect_set_size(c->border[0], z_w, z_bw);
+		wlr_scene_rect_set_size(c->border[1], z_w, z_bw);
+		wlr_scene_rect_set_size(c->border[2], z_bw, z_inner_h);
+		wlr_scene_rect_set_size(c->border[3], z_bw, z_inner_h);
+		wlr_scene_node_set_position(&c->border[1]->node, 0, z_h - z_bw);
+		wlr_scene_node_set_position(&c->border[2]->node, 0, z_bw);
+		wlr_scene_node_set_position(&c->border[3]->node, z_w - z_bw, z_bw);
 
-	client_get_clip(c, &clip);
+		if (focusringpx > 0 && c->focus_ring[0]) {
+			int ring = MAX(1, (int)lroundf(focusringpx * zf));
+			int ring_w = z_w + 2 * ring;
+			int ring_h = z_h + 2 * ring;
+			wlr_scene_rect_set_size(c->focus_ring[0], ring_w, ring);
+			wlr_scene_rect_set_size(c->focus_ring[1], ring_w, ring);
+			wlr_scene_rect_set_size(c->focus_ring[2], ring, ring_h);
+			wlr_scene_rect_set_size(c->focus_ring[3], ring, ring_h);
+			wlr_scene_node_set_position(&c->focus_ring[0]->node, -ring, -ring);
+			wlr_scene_node_set_position(&c->focus_ring[1]->node, -ring, z_h);
+			wlr_scene_node_set_position(&c->focus_ring[2]->node, -ring, -ring);
+			wlr_scene_node_set_position(&c->focus_ring[3]->node, z_w, -ring);
+		}
 
-	/* True crop: keep client configured at base size, but show only a cropped
-	 * region using scene-surface offset + clip rectangle. */
-	if (c->crop.active && c->crop.saved_base
-			&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
-		base_inner_w = c->crop.base_w - 2 * (int)c->bw;
-		base_inner_h = c->crop.base_h - 2 * (int)c->bw;
-		full_clip_w = base_inner_w;
-		full_clip_h = base_inner_h;
-		if (clip.x > 0)
-			full_clip_w = MAX(1, base_inner_w - clip.x);
-		if (clip.y > 0)
-			full_clip_h = MAX(1, base_inner_h - clip.y);
+		client_get_clip(c, &clip);
 
-		src_x = (int)lroundf(c->crop.x * base_inner_w);
-		src_y = (int)lroundf(c->crop.y * base_inner_h);
-		vis_w = (int)lroundf(c->crop.w * base_inner_w);
-		vis_h = (int)lroundf(c->crop.h * base_inner_h);
+		/* True crop: keep client configured at base size, but show only a
+		 * cropped region using scene-surface offset + clip rectangle. */
+		if (c->crop.active && c->crop.saved_base
+				&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
+			base_inner_w = c->crop.base_w - 2 * (int)c->bw;
+			base_inner_h = c->crop.base_h - 2 * (int)c->bw;
+			full_clip_w = base_inner_w;
+			full_clip_h = base_inner_h;
+			if (clip.x > 0)
+				full_clip_w = MAX(1, base_inner_w - clip.x);
+			if (clip.y > 0)
+				full_clip_h = MAX(1, base_inner_h - clip.y);
 
-		src_x = MAX(0, MIN(full_clip_w - 1, src_x));
-		src_y = MAX(0, MIN(full_clip_h - 1, src_y));
-		vis_w = MAX(1, MIN(full_clip_w - src_x, vis_w));
-		vis_h = MAX(1, MIN(full_clip_h - src_y, vis_h));
+			src_x = (int)lroundf(c->crop.x * base_inner_w);
+			src_y = (int)lroundf(c->crop.y * base_inner_h);
+			vis_w = (int)lroundf(c->crop.w * base_inner_w);
+			vis_h = (int)lroundf(c->crop.h * base_inner_h);
 
-		/* Shift content so selected source region starts at frame origin. */
-		wlr_scene_node_set_position(&c->scene_surface->node,
-				c->bw - src_x, c->bw - src_y);
+			src_x = MAX(0, MIN(full_clip_w - 1, src_x));
+			src_y = MAX(0, MIN(full_clip_h - 1, src_y));
+			vis_w = MAX(1, MIN(full_clip_w - src_x, vis_w));
+			vis_h = MAX(1, MIN(full_clip_h - src_y, vis_h));
 
-		/* Clip subtree to selected source region. */
-		clip.x += src_x;
-		clip.y += src_y;
-		clip.width = vis_w;
-		clip.height = vis_h;
+			/* Shift content so selected source region starts at frame origin
+			 * (offset scaled to screen space). */
+			wlr_scene_node_set_position(&c->scene_surface->node,
+					z_bw - (int)lroundf(src_x * zf), z_bw - (int)lroundf(src_y * zf));
 
-		cfg_w = base_inner_w;
-		cfg_h = base_inner_h;
-	} else {
-		wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-		cfg_w = c->geom.width - 2 * (int)c->bw;
-		cfg_h = c->geom.height - 2 * (int)c->bw;
+			/* Clip subtree to selected source region (source/buffer coords). */
+			clip.x += src_x;
+			clip.y += src_y;
+			clip.width = vis_w;
+			clip.height = vis_h;
+
+			cfg_w = base_inner_w;
+			cfg_h = base_inner_h;
+		} else {
+			wlr_scene_node_set_position(&c->scene_surface->node, z_bw, z_bw);
+			cfg_w = c->geom.width - 2 * (int)c->bw;
+			cfg_h = c->geom.height - 2 * (int)c->bw;
+		}
 	}
 
 	cfg_w = MAX(1, cfg_w);
@@ -3191,8 +3222,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, cfg_w, cfg_h);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
-	
-	/* Apply buffer scaling for zoom - scales the actual window content */
+
+	/* Scale the displayed buffer to match the zoomed frame. */
 	client_set_buffer_scale(c, viewport.zoom);
 }
 

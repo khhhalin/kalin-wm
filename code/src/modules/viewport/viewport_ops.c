@@ -175,6 +175,75 @@ viewport_reset(const Arg *arg)
 	printstatus();
 }
 
+/* Frame all tiled windows on the focused monitor: zoom/pan so the whole canvas
+ * fits on screen. The primary "where is everything / get me back" navigation. */
+void
+viewport_fit_all(const Arg *arg)
+{
+	Client *c;
+	Monitor *m = selmon;
+	float minx = 0, miny = 0, maxx = 0, maxy = 0;
+	float bw_, bh_, cx, cy, zx, zy, z;
+	int found = 0;
+	(void)arg;
+
+	if (!m || m->w.width <= 0 || m->w.height <= 0)
+		return;
+
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen || !c->world.set)
+			continue;
+		if (!found) {
+			minx = c->world.x;
+			miny = c->world.y;
+			maxx = c->world.x + c->geom.width;
+			maxy = c->world.y + c->geom.height;
+			found = 1;
+		} else {
+			if (c->world.x < minx) minx = c->world.x;
+			if (c->world.y < miny) miny = c->world.y;
+			if (c->world.x + c->geom.width > maxx) maxx = c->world.x + c->geom.width;
+			if (c->world.y + c->geom.height > maxy) maxy = c->world.y + c->geom.height;
+		}
+	}
+
+	if (!found) {
+		viewport_reset(NULL); /* nothing to fit: go home */
+		return;
+	}
+
+	bw_ = maxx - minx;
+	bh_ = maxy - miny;
+	if (bw_ < 1.0f) bw_ = 1.0f;
+	if (bh_ < 1.0f) bh_ = 1.0f;
+
+	/* Fit the bounding box with a 10% margin; never zoom in past 1.0. */
+	zx = (float)m->w.width / bw_;
+	zy = (float)m->w.height / bh_;
+	z = (zx < zy ? zx : zy) * 0.9f;
+	if (z < 0.1f) z = 0.1f;
+	if (z > 1.0f) z = 1.0f;
+
+	cx = (minx + maxx) / 2.0f;
+	cy = (miny + maxy) / 2.0f;
+
+	viewport.target_zoom = z;
+	viewport.target_x = cx - (float)m->w.width / (2.0f * z);
+	viewport.target_y = cy - (float)m->w.height / (2.0f * z);
+
+	if (viewport.smooth_pan) {
+		viewport.animating = 1;
+		viewport_schedule_frame();
+	} else {
+		viewport.zoom = z;
+		viewport.x = viewport.target_x;
+		viewport.y = viewport.target_y;
+		arrange(m);
+	}
+
+	printstatus();
+}
+
 /* Center camera on a specific window */
 void
 viewport_center_on(Client *c)

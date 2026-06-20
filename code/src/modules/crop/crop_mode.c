@@ -198,9 +198,12 @@ cropend(const Arg *arg)
 		wh = c->geom.height;
 		base_w = ww;
 		base_h = wh;
-		screen_wx = (int)(wx - viewport.x);
-		screen_wy = (int)(wy - viewport.y);
-		
+		/* The window is displayed at (world - camera) * zoom, sized geom * zoom.
+		 * The crop selection is in screen pixels, so map through the same zoom. */
+		float crop_zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+		screen_wx = (int)((wx - viewport.x) * crop_zf);
+		screen_wy = (int)((wy - viewport.y) * crop_zf);
+
 		/* Check for division by zero */
 		if (ww <= 0 || wh <= 0) {
 			cropcancel(arg);
@@ -218,11 +221,11 @@ cropend(const Arg *arg)
 			base_h = c->crop.base_h;
 		}
 		
-		/* Calculate crop relative to window */
-		cx = (float)(sx - screen_wx) / ww;
-		cy = (float)(sy - screen_wy) / wh;
-		cw = (float)w / ww;
-		ch = (float)h / wh;
+		/* Calculate crop relative to window (on-screen size is geom * zoom). */
+		cx = (float)(sx - screen_wx) / (ww * crop_zf);
+		cy = (float)(sy - screen_wy) / (wh * crop_zf);
+		cw = (float)w / (ww * crop_zf);
+		ch = (float)h / (wh * crop_zf);
 		
 		/* Clamp to valid range */
 		cx = MAX(0, MIN(1, cx));

@@ -4,15 +4,8 @@
 
 /* ===== INFINITE LAYOUT (like Niri but 2D) ===== */
 
-/* Coordinate transform macros - must be before use */
-/* 
- * World -> Screen: Just subtract viewport position (camera).
- * ZOOM DOES NOT AFFECT POSITIONS - it only scales the buffer content.
- * This gives true "camera zoom" behavior where zooming out shows more
- * of the canvas without moving windows relative to each other.
- */
-#define WORLD_TO_SCREEN_X(wx) ((int)((wx) - viewport.x))
-#define WORLD_TO_SCREEN_Y(wy) ((int)((wy) - viewport.y))
+/* Coordinate transform macros (WORLD_TO_SCREEN / SCREEN_TO_WORLD) are defined
+ * early in dwl.c so input/crop/layout all share the same zoom-aware transform. */
 
 
 /* Configuration for column-based layout */

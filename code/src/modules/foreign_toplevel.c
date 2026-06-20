@@ -14,9 +14,11 @@ ftl_request_activate(struct wl_listener *listener, void *data)
 	(void)data;
 	if (!c || !c->mon)
 		return;
-	/* Focus the requested window and re-run the layout so the infinite-canvas
-	 * camera can bring it into view. */
+	/* Focus the requested window and fly the camera to it, so clicking a window
+	 * in the shell exposé/taskbar brings it into view on the infinite canvas. */
 	focusclient(c, 1);
+	if (c->world.set)
+		viewport_center_on(c);
 	arrange(c->mon);
 }
 
