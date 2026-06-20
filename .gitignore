@@ -5,6 +5,9 @@ dwl
 .ccls-cache
 config.h
 kalin-wm
+/build/
+/result
+/result-*
 tests/test_client_lifecycle
 tests/*.gcda
 tests/*.gcno
