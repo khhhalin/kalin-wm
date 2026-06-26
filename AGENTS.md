@@ -21,15 +21,19 @@ You are a systems programmer working on **kalin-wm**, a Wayland compositor forke
 - **Build system:** `make` (Makefile-based). Run `make` for release, `make debug` for debug symbols, `make test-unit` for unit tests.
 - **Dependencies:** wlroots 0.20, wayland-server, xkbcommon, libinput, wayland-protocols, pkg-config
 - **Configuration:** Compile-time via `code/config/config.h` (dwm style). Edit `config.def.h` to see defaults.
-- **Source layout:**
-  - `code/src/dwl.c` — Main compositor monolith (~3900 lines). Most logic is still here.
-  - `code/src/client.c` — Client lifecycle, anchoring, column placement (~1500 lines)
-  - `code/src/input.c` — Keyboard, mouse, input handling (~690 lines)
-  - `code/src/viewport.c` — Viewport pan, zoom, follow (~180 lines)
-  - `code/src/crop.c` — Crop mode (~210 lines)
-  - `code/src/layouts/infinite.c` — Infinite canvas layout
+- **Source layout:** `code/src/dwl.c` is the core translation unit (~3900 lines)
+  and `#include`s the feature modules under `code/src/modules/` directly (see the
+  `#include "modules/..."` block at the bottom of `dwl.c`). Most logic still lives
+  in `dwl.c`.
+  - `code/src/dwl.c` — Core compositor; `#include`s the modules below
+  - `code/src/modules/crop/crop_mode.c` — Crop mode
+  - `code/src/modules/layout/layout_world.c` — Infinite-canvas world layout / column placement
+  - `code/src/modules/viewport/viewport_ops.c` — Viewport pan, zoom, follow
+  - `code/src/modules/input/{commit_size,resize_actions}.c` — Resize handling (commit_size is its own TU)
+  - `code/src/modules/ui/{offscreen_indicators,overlay_clock,wallpaper}.c` — UI overlays
+  - `code/src/modules/{foreign_toplevel,ipc}.c` — foreign-toplevel protocol + IPC socket
+  - `code/src/{util,crash_report,persistence}.c` — Independent translation units
   - `code/include/kalin.h` — Main umbrella header with all structs, globals, and function declarations
-  - `code/src/modules/` — Runtime operation chain (commit_size, layout_world, viewport_ops, etc.)
 - **Tests:** `tests/test_client_lifecycle.c` (C unit tests, no wlroots dep), `tests/test_spawn_crash.sh` (integration test)
 - **Run:** `scripts/dev/run-nested-safe.sh` for nested manual testing
 
@@ -84,13 +88,12 @@ kalin-wm is a **hybrid infinite-canvas / column-tiling compositor**:
 | `docs/CURRENT_SPECS.md` | What is already built. Read before coding. |
 | `code/include/kalin.h` | All structs, globals, function declarations. |
 | `code/config/config.def.h` | Default keybindings and tunables. |
-| `code/src/dwl.c` | Main compositor logic. |
-| `code/src/client.c` | Client creation, destruction, anchoring, columns. |
-| `code/src/input.c` | Keyboard and pointer event handling. |
-| `code/src/viewport.c` | Pan, zoom, follow logic. |
-| `code/src/crop.c` | Crop mode implementation. |
-| `code/src/layouts/infinite.c` | Infinite canvas layout algorithm. |
-| `tests/test_client_lifecycle.c` | Unit tests for client logic. |
+| `code/src/dwl.c` | Core compositor logic; `#include`s the modules below. |
+| `code/src/modules/layout/layout_world.c` | Infinite-canvas world layout / column placement. |
+| `code/src/modules/input/{commit_size,resize_actions}.c` | Resize handling. |
+| `code/src/modules/viewport/viewport_ops.c` | Pan, zoom, follow logic. |
+| `code/src/modules/crop/crop_mode.c` | Crop mode implementation. |
+| `code/tests/test_client_lifecycle.c` | Unit tests for client logic. |
 | `docs/obsidian-vault/research/active-design/stability-audit.md` | Detailed crash findings. |
 
 ### Current Blockers (Read These First)

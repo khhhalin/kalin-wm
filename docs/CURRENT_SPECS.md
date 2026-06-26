@@ -131,19 +131,27 @@ Nix flake available: `nix develop` for reproducible environment.
 
 ## Source Layout
 
+The build is still effectively a monolith: `code/src/dwl.c` is the core
+translation unit and `#include`s the feature modules under
+`code/src/modules/` directly (see the `#include "modules/..."` block near the
+bottom of `dwl.c`). A handful of files are independent translation units
+(`util.c`, `crash_report.c`, `persistence.c`, `commit_size.c`); the rest are
+folded into `dwl.c` at compile time.
+
 | File | Purpose |
 |------|---------|
-| `code/src/dwl.c` | Main compositor logic (~3900 lines, still the monolith) |
-| `code/src/client.c` | Client lifecycle, anchoring, column placement (~1500 lines) |
-| `code/src/input.c` | Keyboard, mouse, input handling (~690 lines) |
-| `code/src/viewport.c` | Viewport pan, zoom, follow (~180 lines) |
-| `code/src/crop.c` | Crop mode implementation (~210 lines) |
-| `code/src/compositor.c` | Compositor glue (~300 lines) |
-| `code/src/main.c` | Entry point (~90 lines) |
-| `code/src/layouts/tile.c` | dwl tile layout |
-| `code/src/layouts/monocle.c` | dwl monocle layout |
-| `code/src/layouts/infinite.c` | Infinite canvas layout |
-| `code/src/modules/` | Runtime operation chain (commit_size, layout_world, viewport_ops, etc.) |
+| `code/src/dwl.c` | Core compositor logic (~3900 lines). `#include`s the modules below. |
+| `code/src/modules/crop/crop_mode.c` | Crop mode (selection, clipping) |
+| `code/src/modules/layout/layout_world.c` | Infinite-canvas world layout / column placement |
+| `code/src/modules/viewport/viewport_ops.c` | Viewport pan, zoom, follow |
+| `code/src/modules/input/commit_size.c` | Commit-size handling (separate translation unit) |
+| `code/src/modules/input/resize_actions.c` | Interactive resize actions |
+| `code/src/modules/ui/offscreen_indicators.c` | Off-screen window edge indicators |
+| `code/src/modules/ui/overlay_clock.c` | Overlay clock |
+| `code/src/modules/ui/wallpaper.c` | Wallpaper rendering |
+| `code/src/modules/foreign_toplevel.c` | wlr-foreign-toplevel-management-v1 |
+| `code/src/modules/ipc.c` | Unix-domain IPC socket (`$KALIN_IPC_SOCKET`) |
+| `code/src/util.c` / `crash_report.c` / `persistence.c` | Independent translation units |
 | `code/include/kalin.h` | Main header — all structs, globals, function declarations |
 
 ---
