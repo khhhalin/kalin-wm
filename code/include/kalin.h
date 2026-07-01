@@ -302,6 +302,7 @@ struct Client {
     int isfloating;             /* Floating state */
     int isurgent;               /* Urgency hint */
     int isfullscreen;           /* Fullscreen state */
+    float opacity;              /* Per-window opacity, 0.1..1.0 */
     uint32_t resize;            /* Configure serial of pending resize */
 };
 
@@ -560,6 +561,8 @@ void pointerfocus(Client *c, struct wlr_surface *surface,
 void resize(Client *c, struct wlr_box geo, int interact);
 void setfloating(Client *c, int floating);
 void setfullscreen(Client *c, int fullscreen);
+void setopacity(Client *c, float opacity);
+void opacityadjust(const Arg *arg);
 void setmon(Client *c, Monitor *m);
 void tagmon(const Arg *arg);
 void togglefloating(const Arg *arg);

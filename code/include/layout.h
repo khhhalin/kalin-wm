@@ -57,6 +57,7 @@ struct Client {
 
 	int isfloating;
 	int isfullscreen;
+	float opacity;
 	int isurgent;
 	unsigned int bw;     /* border width */
 };

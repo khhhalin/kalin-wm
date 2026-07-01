@@ -162,6 +162,7 @@ typedef struct {
 	struct wl_listener foreign_fullscreen;
 	unsigned int bw;
 	int isfloating, isurgent, isfullscreen;
+	float opacity; /* per-window opacity, 0.1..1.0 (1.0 = opaque) */
 	uint32_t resize; /* configure serial of a pending resize */
 } Client;
 
@@ -398,6 +399,9 @@ static void motionnotify(uint32_t time, struct wlr_input_device *device, double 
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
 static void moveresize(const Arg *arg);
+static void opacityadjust(const Arg *arg);
+static void setopacity(Client *c, float opacity);
+static void applyopacity(Client *c);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
@@ -1028,10 +1032,16 @@ arrangelayers(Monitor *m)
 	for (i = 3; i >= 0; i--)
 		arrangelayer(m, &m->layers[i], &usable_area, 0);
 
-	/* Find topmost keyboard interactive layer, if such a layer exists */
+	/* Find topmost layer that demands EXCLUSIVE keyboard focus, if any.
+	 * Only EXCLUSIVE grabs the keyboard here; ON_DEMAND surfaces (e.g. a bar
+	 * that wants click-to-type) must NOT starve toplevels of keyboard input —
+	 * they receive focus via pointer interaction instead. Treating the enum as
+	 * a boolean (the dwl original) wrongly grabbed for ON_DEMAND too. */
 	for (i = 0; i < (int)LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(l, &m->layers[layers_above_shell[i]], link) {
-			if (locked || !l->layer_surface->current.keyboard_interactive || !l->mapped)
+			if (locked || l->layer_surface->current.keyboard_interactive
+					!= ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE
+					|| !l->mapped)
 				continue;
 			/* Deactivate the focused client. */
 			focusclient(NULL, 0);
@@ -1039,6 +1049,15 @@ arrangelayers(Monitor *m)
 			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
 			return;
 		}
+	}
+
+	/* No layer surface demands exclusive keyboard focus. If one previously held
+	 * it, release and hand keyboard focus back to the top client — otherwise the
+	 * keyboard stays stranded on the (now non-exclusive) layer surface and no
+	 * window can be typed into. */
+	if (exclusive_focus) {
+		exclusive_focus = NULL;
+		focus_top(selmon, 0);
 	}
 }
 
@@ -1343,6 +1362,10 @@ commitnotify(struct wl_listener *listener, void *data)
 
 	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
 
+	/* keep a non-opaque window's opacity applied to freshly committed buffers */
+	if (c->opacity < 1.0f)
+		applyopacity(c);
+
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
@@ -1617,6 +1640,7 @@ createnotify(struct wl_listener *listener, void *data)
 	c->type = XDGShell;
 	c->surface.xdg = toplevel->base;
 	c->bw = borderpx;
+	c->opacity = 1.0f;
 	wl_list_init(&c->link);
 	wl_list_init(&c->flink);
 
@@ -3295,6 +3319,39 @@ setcursorshape(struct wl_listener *listener, void *data)
 	if (event->seat_client == seat->pointer_state.focused_client)
 		wlr_cursor_set_xcursor(cursor, cursor_mgr,
 				wlr_cursor_shape_v1_name(event->shape));
+}
+
+static void
+opacity_iter(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	wlr_scene_buffer_set_opacity(buffer, *(float *)data);
+}
+
+/* Apply the client's current opacity to every scene buffer in its subtree.
+ * Called on change and on each commit so new sub/popup buffers inherit it. */
+void
+applyopacity(Client *c)
+{
+	if (c && c->scene)
+		wlr_scene_node_for_each_buffer(&c->scene->node, opacity_iter, &c->opacity);
+}
+
+void
+setopacity(Client *c, float opacity)
+{
+	if (!c)
+		return;
+	c->opacity = fmaxf(0.1f, fminf(1.0f, opacity));
+	applyopacity(c);
+}
+
+/* Keybind: nudge the focused window's opacity by arg->f. */
+void
+opacityadjust(const Arg *arg)
+{
+	Client *c = focustop(selmon);
+	if (c && arg)
+		setopacity(c, c->opacity + arg->f);
 }
 
 void
