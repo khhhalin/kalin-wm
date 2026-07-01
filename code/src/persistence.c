@@ -196,7 +196,6 @@ loaded_state_from_object(const char *obj)
 	state->crop_base_w = json_find_int(obj, "crop_base_w", 0);
 	state->crop_base_h = json_find_int(obj, "crop_base_h", 0);
 	state->crop_saved_base = json_find_int(obj, "crop_saved_base", 0);
-	state->tags = (uint32_t)json_find_int(obj, "tags", 0);
 	state->isfloating = json_find_int(obj, "isfloating", 0);
 	state->isfullscreen = json_find_int(obj, "isfullscreen", 0);
 }
@@ -316,8 +315,6 @@ persistence_apply_client(void *client_ptr)
 	c->crop.base_w = state->crop_base_w;
 	c->crop.base_h = state->crop_base_h;
 	c->crop.saved_base = state->crop_saved_base;
-	if (state->tags)
-		c->tags = state->tags;
 	c->isfloating = state->isfloating;
 	c->isfullscreen = state->isfullscreen;
 }
@@ -373,8 +370,8 @@ save_client_cb(const SavedClientState *unused, void *data)
 		c->crop.active, c->crop.x, c->crop.y, c->crop.w, c->crop.h);
 	fprintf(ctx->fp, ",\"crop_base_w\":%d,\"crop_base_h\":%d,\"crop_saved_base\":%d",
 		c->crop.base_w, c->crop.base_h, c->crop.saved_base);
-	fprintf(ctx->fp, ",\"tags\":%u,\"isfloating\":%d,\"isfullscreen\":%d}",
-		c->tags, c->isfloating, c->isfullscreen);
+	fprintf(ctx->fp, ",\"isfloating\":%d,\"isfullscreen\":%d}",
+		c->isfloating, c->isfullscreen);
 }
 
 int

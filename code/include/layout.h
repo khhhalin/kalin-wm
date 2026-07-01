@@ -26,7 +26,7 @@ typedef struct {
 /* Client structure - matches dwl.c definition */
 struct Client {
 	/* Must keep this field first */
-	unsigned int type; /* XDGShell or X11* */
+	unsigned int type; /* XDGShell or LayerShell */
 	
 	/* Crop state */
 	struct {
@@ -53,10 +53,8 @@ struct Client {
 	struct wlr_box bounds; /* only width and height are used */
 	union {
 		struct wlr_xdg_surface *xdg;
-		struct wlr_xwayland_surface *xwayland;
 	} surface;
-	
-	unsigned int tags;
+
 	int isfloating;
 	int isfullscreen;
 	int isurgent;
@@ -78,12 +76,8 @@ struct Monitor {
 	struct wlr_box w; /* window area, layout-relative */
 	struct wl_list layers[4]; /* LayerSurface.link */
 	const Layout *lt[2];
-	unsigned int seltags;
 	unsigned int sellt;
-	unsigned int tagset[2];
-	float mfact;
 	int gamma_lut_changed;
-	int nmaster;
 	char ltsymbol[16];
 	int asleep;
 };
@@ -92,7 +86,7 @@ struct Monitor {
 extern struct wl_list clients;  /* Tiling order list of all clients */
 
 /* Helper macros */
-#define VISIBLEON(C, M) ((C) && (M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
+#define VISIBLEON(C, M) ((C) && (M) && (C)->mon == (M))
 #define LENGTH(X)       (sizeof X / sizeof X[0])
 #define MIN(A, B)       ((A) < (B) ? (A) : (B))
 
@@ -101,8 +95,6 @@ struct Client *focustop(Monitor *m);
 void resize(Client *c, struct wlr_box geo, int interact);
 
 /* Layout implementations */
-void tile(Monitor *m);      /* Traditional master/stack tiling layout */
-void monocle(Monitor *m);   /* Single window fullscreen layout */
 void infinite(Monitor *m);  /* Infinite scroll layout (like Niri) */
 
 #endif /* LAYOUT_H */

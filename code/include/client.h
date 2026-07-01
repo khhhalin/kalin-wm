@@ -232,7 +232,7 @@ void updatemons(struct wl_listener *listener, void *data);
  * Assign a client to a monitor.
  * Handles client migration between monitors.
  */
-void setmon(Client *c, Monitor *m, uint32_t newtags);
+void setmon(Client *c, Monitor *m);
 
 /**
  * Close a monitor and migrate its clients.
@@ -267,42 +267,8 @@ void xytonode(double x, double y, struct wlr_surface **psurface,
         Client **pc, LayerSurface **pl, double *nx, double *ny);
 
 /* ============================================================================
- * Tag Management
- * ============================================================================ */
-
-/**
- * Assign tags to the selected client.
- */
-void tag(const Arg *arg);
-
-/**
- * Toggle tags on the selected client.
- */
-void toggletag(const Arg *arg);
-
-/**
- * Switch to a different tag view.
- */
-void view(const Arg *arg);
-
-/**
- * Toggle tag view.
- */
-void toggleview(const Arg *arg);
-
-/* ============================================================================
  * Layout Functions
  * ============================================================================ */
-
-/**
- * Tile layout - master/stack arrangement.
- */
-void tile(Monitor *m);
-
-/**
- * Monocle layout - single fullscreen window per tag.
- */
-void monocle(Monitor *m);
 
 /**
  * Infinite layout - 2D scrollable canvas.
@@ -320,15 +286,6 @@ void zoom(const Arg *arg);
 void setlayout(const Arg *arg);
 
 /**
- * Change master factor.
- */
-void setmfact(const Arg *arg);
-
-/**
- * Change number of master windows.
- */
-void incnmaster(const Arg *arg);
-
 /* ============================================================================
  * Layer Shell Management
  * ============================================================================ */

@@ -7,13 +7,6 @@
 /* Logging level - defined in main.c */
 extern int log_level;
 
-/* X11 Atom type - defined in XWayland or stubbed */
-#ifdef XWAYLAND
-#include <X11/Xlib.h>
-#else
-typedef unsigned long Atom;
-#endif
-
 /* Forward declarations */
 struct wlr_backend;
 struct wlr_renderer;
@@ -23,7 +16,6 @@ struct wlr_xdg_shell;
 struct wlr_layer_shell_v1;
 struct wlr_output_layout;
 struct wlr_seat;
-struct wlr_xwayland;
 
 /* Global state - defined in compositor.c */
 extern struct wl_display *dpy;
@@ -37,10 +29,6 @@ extern struct wlr_layer_shell_v1 *layer_shell;
 extern struct wlr_output_layout *output_layout;
 
 extern struct wlr_seat *seat;
-extern struct wlr_xwayland *xwayland;
-
-/* Global atoms for XWayland */
-extern Atom netatom[];
 
 /* Session lock */
 extern struct wlr_session_lock_manager_v1 *session_lock_mgr;

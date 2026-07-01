@@ -28,7 +28,6 @@ typedef struct {
 	int crop_base_w;
 	int crop_base_h;
 	int crop_saved_base;
-	uint32_t tags;
 	int isfloating;
 	int isfullscreen;
 } SavedClientState;

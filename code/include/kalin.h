@@ -76,12 +76,6 @@
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 
-#ifdef XWAYLAND
-#include <wlr/xwayland.h>
-#include <xcb/xcb.h>
-#include <xcb/xcb_icccm.h>
-#endif
-
 /* Project utility header */
 #include "util.h"
 #include "crash_report.h"
@@ -99,10 +93,10 @@ extern struct wl_list clients;
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
 #define MIN(A, B)               ((A) < (B) ? (A) : (B))
 #define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
-#define VISIBLEON(C, M)         ((C) && (M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
+/* One infinite canvas per monitor: a client is "on" a monitor iff assigned to it. */
+#define VISIBLEON(C, M)         ((C) && (M) && (C)->mon == (M))
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define END(A)                  ((A) + LENGTH(A))
-#define TAGMASK                 ((1u << TAGCOUNT) - 1)
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 
 #define LISTEN_STATIC(E, H)     listen_static((E), (H))
@@ -147,8 +141,7 @@ enum {
  */
 enum {
     XDGShell,       /* Standard XDG toplevel */
-    LayerShell,     /* Layer shell surface */
-    X11             /* XWayland window */
+    LayerShell      /* Layer shell surface */
 };
 
 /**
@@ -223,8 +216,6 @@ typedef struct {
  */
 typedef struct {
     const char *name;           /* Output name pattern to match */
-    float mfact;                /* Master factor */
-    int nmaster;                /* Number of master windows */
     float scale;                /* Output scale */
     const Layout *lt;           /* Default layout */
     enum wl_output_transform rr;/* Rotation/reflect transform */
@@ -237,7 +228,6 @@ typedef struct {
 typedef struct {
     const char *id;             /* App ID pattern to match */
     const char *title;          /* Title pattern to match */
-    uint32_t tags;              /* Tags to assign */
     int isfloating;             /* Start as floating */
     int monitor;                /* Preferred monitor (-1 for current) */
 } Rule;
@@ -266,7 +256,7 @@ typedef struct {
  */
 struct Client {
     /* Must keep this field first - identifies the client type */
-    unsigned int type;          /* XDGShell, LayerShell, or X11 */
+    unsigned int type;          /* XDGShell or LayerShell */
     
     /* Crop state for window cropping functionality */
     CropState crop;             /* Normalized crop rectangle */
@@ -286,7 +276,6 @@ struct Client {
     struct wlr_box bounds;                  /* Size bounds (width/height only) */
     union {
         struct wlr_xdg_surface *xdg;
-        struct wlr_xwayland_surface *xwayland;
     } surface;                              /* Shell-specific surface */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     
@@ -307,17 +296,9 @@ struct Client {
     struct wl_listener foreign_activate;
     struct wl_listener foreign_close;
     struct wl_listener foreign_fullscreen;
-#ifdef XWAYLAND
-    struct wl_listener activate;
-    struct wl_listener associate;
-    struct wl_listener dissociate;
-    struct wl_listener configure;
-    struct wl_listener set_hints;
-#endif
-    
+
     /* State */
     unsigned int bw;            /* Border width in pixels */
-    uint32_t tags;              /* Tag bitfield */
     int isfloating;             /* Floating state */
     int isurgent;               /* Urgency hint */
     int isfullscreen;           /* Fullscreen state */
@@ -378,12 +359,8 @@ struct Monitor {
     struct wlr_box w;                       /* Window area, layout-relative */
     struct wl_list layers[4];               /* LayerSurface lists by layer */
     const Layout *lt[2];                    /* Selected and previous layout */
-    unsigned int seltags;                   /* Selected tagset index */
     unsigned int sellt;                     /* Selected layout index */
-    uint32_t tagset[2];                     /* Tagsets for view switching */
-    float mfact;                            /* Master factor for tiling */
     int gamma_lut_changed;                  /* Gamma LUT needs update */
-    int nmaster;                            /* Number of master windows */
     char ltsymbol[16];                      /* Current layout symbol */
     int asleep;                             /* Power management state */
 };
@@ -550,12 +527,6 @@ extern struct wl_listener request_start_drag;
 extern struct wl_listener start_drag;
 extern struct wl_listener new_session_lock;
 
-#ifdef XWAYLAND
-extern struct wl_listener new_xwayland_surface;
-extern struct wl_listener xwayland_ready;
-extern struct wlr_xwayland *xwayland;
-#endif
-
 /* ============================================================================
  * Function Declarations - Core
  * ============================================================================ */
@@ -589,12 +560,10 @@ void pointerfocus(Client *c, struct wlr_surface *surface,
 void resize(Client *c, struct wlr_box geo, int interact);
 void setfloating(Client *c, int floating);
 void setfullscreen(Client *c, int fullscreen);
-void setmon(Client *c, Monitor *m, uint32_t newtags);
-void tag(const Arg *arg);
+void setmon(Client *c, Monitor *m);
 void tagmon(const Arg *arg);
 void togglefloating(const Arg *arg);
 void togglefullscreen(const Arg *arg);
-void toggletag(const Arg *arg);
 void unmapnotify(struct wl_listener *listener, void *data);
 void updatetitle(struct wl_listener *listener, void *data);
 void urgent(struct wl_listener *listener, void *data);
@@ -615,8 +584,6 @@ void xytonode(double x, double y, struct wlr_surface **psurface,
 
 /* Layout functions */
 void infinite(Monitor *m);
-void monocle(Monitor *m);
-void tile(Monitor *m);
 
 /* Layer shell */
 void commitlayersurfacenotify(struct wl_listener *listener, void *data);
@@ -697,11 +664,8 @@ void cropdraw(void);
 void setpsel(struct wl_listener *listener, void *data);
 void setsel(struct wl_listener *listener, void *data);
 
-/* Layout and tags */
+/* Layout */
 void setlayout(const Arg *arg);
-void setmfact(const Arg *arg);
-void view(const Arg *arg);
-void incnmaster(const Arg *arg);
 
 /* System and lifecycle */
 void checkidleinhibitor(struct wlr_surface *exclude);
@@ -719,17 +683,6 @@ void spawn(const Arg *arg);
 void pty_child_reaped(pid_t pid);
 int pty_inject(pid_t pid, const char *text);
 const char *pty_log_for(pid_t pid);
-
-/* XWayland (optional) */
-#ifdef XWAYLAND
-void activatex11(struct wl_listener *listener, void *data);
-void associatex11(struct wl_listener *listener, void *data);
-void configurex11(struct wl_listener *listener, void *data);
-void createnotifyx11(struct wl_listener *listener, void *data);
-void dissociatex11(struct wl_listener *listener, void *data);
-void sethints(struct wl_listener *listener, void *data);
-void xwaylandready(struct wl_listener *listener, void *data);
-#endif
 
 /* Idle inhibitor */
 void createidleinhibitor(struct wl_listener *listener, void *data);
