@@ -101,15 +101,9 @@ extern struct wl_list clients;
 
 #define LISTEN_STATIC(E, H)     listen_static((E), (H))
 
-/* 
- * Coordinate conversion macros
- * Zoom only affects buffer scale, not positions.
- * This gives camera-like zoom where zooming out shows more canvas.
- */
-#define WORLD_TO_SCREEN_X(wx)   ((int)((wx) - viewport.x))
-#define WORLD_TO_SCREEN_Y(wy)   ((int)((wy) - viewport.y))
-#define SCREEN_TO_WORLD_X(sx)   ((float)((sx) / viewport.zoom + viewport.x))
-#define SCREEN_TO_WORLD_Y(sy)   ((float)((sy) / viewport.zoom + viewport.y))
+/* Note: the world<->screen coordinate macros and the viewport/crop-editor state
+ * are dwl.c-private (they need the full 10-field camera struct + zoom); they are
+ * intentionally NOT declared here. */
 
 /* ============================================================================
  * Forward Declarations
@@ -385,38 +379,8 @@ struct SessionLock {
     struct wl_listener destroy;
 };
 
-/**
- * Viewport state - global 2D view transform for infinite layout
- */
-typedef struct {
-    float x, y;              /* Camera position in world coordinates */
-    float zoom;              /* Zoom level (1.0 = normal) */
-    int follow;              /* 1 = camera follows focused window */
-    int follow_new_windows;  /* 1 = auto-pan to new windows */
-} Viewport;
-
-/**
- * Wallpaper state - stationary background elements
- */
-typedef struct {
-    struct wlr_scene_rect *bg;              /* Background rectangle */
-    struct wlr_scene_rect **lines;          /* Grid lines array */
-    int num_lines;                          /* Number of grid lines */
-} Wallpaper;
-
-/**
- * CropEditor state - interactive crop selection UI
- */
-typedef struct {
-    bool active;                /* Editor is active */
-    Client *target;             /* Client being cropped */
-    double start_x, start_y;    /* Selection start position */
-    double end_x, end_y;        /* Selection end position */
-    bool dragging;              /* Currently dragging selection */
-    struct wlr_scene_rect *overlay;      /* Dark fullscreen overlay */
-    struct wlr_scene_rect *selection;    /* Selection rectangle border */
-    struct wlr_scene_rect *selection_bg; /* Selection rectangle fill */
-} CropEditor;
+/* Viewport camera, wallpaper, and crop-editor state are dwl.c-private (and the
+ * crop UI has its own struct in crop.h); no shared typedefs live here. */
 
 /* ============================================================================
  * Global Variables (extern declarations)
@@ -488,11 +452,6 @@ extern struct wlr_output_layout *output_layout;
 extern struct wlr_box sgeom;        /* Screen geometry */
 extern struct wl_list mons;         /* Monitor list */
 extern Monitor *selmon;             /* Selected monitor */
-
-/* Kalin-wm specific state */
-extern Viewport viewport;
-extern Wallpaper wallpaper;
-extern CropEditor crop_editor;
 
 /* Wallpaper colors */
 extern const float wallbg_rgba[4];
