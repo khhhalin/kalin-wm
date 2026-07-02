@@ -1,4 +1,9 @@
-/* Keyboard-driven window resize actions. */
+/* Keyboard-driven window resize actions.
+ *
+ * Separately-compiled translation unit: pulls the shared data model, globals,
+ * and prototypes from kalin.h (without DWL_INTERNAL, so it sees the extern
+ * interface that dwl.c backs). */
+#include "kalin.h"
 
 void
 resizefocused(const Arg *arg)

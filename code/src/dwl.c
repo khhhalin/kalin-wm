@@ -163,7 +163,7 @@ static struct {
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
-static void arrange(Monitor *m);
+void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
 static void arrangelayers(Monitor *m);
@@ -207,7 +207,7 @@ static Monitor *dirtomon(enum wlr_direction dir);
 static void focusclient(Client *c, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
-static Client *focustop(Monitor *m);
+Client *focustop(Monitor *m);
 static void focus_top(Monitor *m, int lift);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
@@ -260,14 +260,14 @@ static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
-static void resize(Client *c, struct wlr_box geo, int interact);
+void resize(Client *c, struct wlr_box geo, int interact);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
 static void setfloating(Client *c, int floating);
 static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
-static void resizefocused(const Arg *arg);
+void resizefocused(const Arg *arg);
 static void setmon(Client *c, Monitor *m);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
@@ -411,7 +411,7 @@ static int grabcx, grabcy; /* client-relative */
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
 static struct wl_list mons;
-static Monitor *selmon;
+Monitor *selmon;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -2779,7 +2779,6 @@ quit(const Arg *arg)
 #include "modules/ui/overlay_clock.c"
 #include "modules/ui/wallpaper.c"
 #include "modules/viewport/viewport_ops.c"
-#include "modules/input/resize_actions.c"
 #include "modules/foreign_toplevel.c"
 #include "modules/ipc.c"
 

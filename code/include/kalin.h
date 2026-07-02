@@ -524,6 +524,7 @@ void moveresize(const Arg *arg);
 void pointerfocus(Client *c, struct wlr_surface *surface,
         double sx, double sy, uint32_t time);
 void resize(Client *c, struct wlr_box geo, int interact);
+void resizefocused(const Arg *arg);
 void setfloating(Client *c, int floating);
 void setfullscreen(Client *c, int fullscreen);
 void setopacity(Client *c, float opacity);
