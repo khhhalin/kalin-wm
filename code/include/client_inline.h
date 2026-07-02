@@ -1,3 +1,6 @@
+#ifndef KALIN_CLIENT_INLINE_H
+#define KALIN_CLIENT_INLINE_H
+
 /*
  * Attempt to consolidate unavoidable suck into one file, away from dwl.c.  This
  * file is not meant to be pretty.  We use a .h file with static inline
@@ -291,3 +294,5 @@ client_wants_fullscreen(Client *c)
 {
 	return c->surface.xdg->toplevel->requested.fullscreen;
 }
+
+#endif /* KALIN_CLIENT_INLINE_H */

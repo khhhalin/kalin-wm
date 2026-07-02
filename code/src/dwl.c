@@ -204,7 +204,7 @@ static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
-static void focusclient(Client *c, int lift);
+void focusclient(Client *c, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 Client *focustop(Monitor *m);
@@ -245,7 +245,7 @@ static void viewport_pan(const Arg *arg);
 static void viewport_zoom(const Arg *arg);
 static void viewport_reset(const Arg *arg);
 static void viewport_fit_all(const Arg *arg);
-static void viewport_center_on(Client *c);
+void viewport_center_on(Client *c);
 static void viewport_toggle_follow(const Arg *arg);
 static void viewport_toggle_follow_new(const Arg *arg);
 static void viewport_follow_focus(void);
@@ -265,7 +265,7 @@ static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
 static void setfloating(Client *c, int floating);
-static void setfullscreen(Client *c, int fullscreen);
+void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 void resizefocused(const Arg *arg);
 static void setmon(Client *c, Monitor *m);
@@ -376,7 +376,7 @@ static struct wlr_session *session;
 
 static struct wlr_xdg_shell *xdg_shell;
 static struct wlr_xdg_activation_v1 *activation;
-static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
+struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 struct wl_list clients; /* tiling order */
 static struct wl_list fstack;  /* focus order */
@@ -410,7 +410,7 @@ static int grabcx, grabcy; /* client-relative */
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
-static struct wl_list mons;
+struct wl_list mons;
 Monitor *selmon;
 
 /* global event handlers */
@@ -610,10 +610,10 @@ static void infinite(Monitor *m);
 static int same_column_x(float a, float b);
 
 /* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
-static void ftl_create(Client *c);
-static void ftl_destroy(Client *c);
-static void ftl_update_title(Client *c);
-static void ftl_sync_state(void);
+void ftl_create(Client *c);
+void ftl_destroy(Client *c);
+void ftl_update_title(Client *c);
+void ftl_sync_state(void);
 
 /* Shell IPC socket (defined in modules/ipc.c). */
 static void ipc_init(const char *wl_display_name);
@@ -2779,7 +2779,6 @@ quit(const Arg *arg)
 #include "modules/ui/overlay_clock.c"
 #include "modules/ui/wallpaper.c"
 #include "modules/viewport/viewport_ops.c"
-#include "modules/foreign_toplevel.c"
 #include "modules/ipc.c"
 
 void

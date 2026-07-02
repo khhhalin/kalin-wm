@@ -3,9 +3,12 @@
  * Exposes every managed toplevel to external Wayland clients (e.g. quickshell's
  * ToplevelManager) so a shell can build a taskbar / dock, drive window peek
  * thumbnails (combined with screencopy), and activate/close windows. This file
- * is #include'd into dwl.c and relies on its globals and forward declarations
+ * Separately-compiled TU: relies on dwl.c's externed globals and functions
  * (clients, mons, focustop, focusclient, arrange, setfullscreen,
- * client_send_close, client_get_title/appid, foreign_toplevel_mgr, LISTEN). */
+ * foreign_toplevel_mgr, LISTEN) via kalin.h, and the client_* accessors from
+ * client_inline.h. */
+#include "kalin.h"
+#include "client_inline.h"
 
 static void
 ftl_request_activate(struct wl_listener *listener, void *data)
@@ -40,7 +43,7 @@ ftl_request_fullscreen(struct wl_listener *listener, void *data)
 		setfullscreen(c, event->fullscreen);
 }
 
-static void
+void
 ftl_update_title(Client *c)
 {
 	const char *title;
@@ -53,7 +56,7 @@ ftl_update_title(Client *c)
 	wlr_foreign_toplevel_handle_v1_set_app_id(c->foreign_toplevel, appid ? appid : "");
 }
 
-static void
+void
 ftl_create(Client *c)
 {
 	if (!foreign_toplevel_mgr || !c || c->foreign_toplevel)
@@ -76,7 +79,7 @@ ftl_create(Client *c)
 			&c->foreign_fullscreen, ftl_request_fullscreen);
 }
 
-static void
+void
 ftl_destroy(Client *c)
 {
 	if (!c || !c->foreign_toplevel)
@@ -90,7 +93,7 @@ ftl_destroy(Client *c)
 
 /* Keep each handle's activated/fullscreen state in sync with the compositor.
  * Called from printstatus(), which already runs on every relevant change. */
-static void
+void
 ftl_sync_state(void)
 {
 	Monitor *m;

@@ -66,6 +66,7 @@
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
@@ -417,6 +418,7 @@ extern struct wlr_session *session;
 /* Shell protocols */
 extern struct wlr_xdg_shell *xdg_shell;
 extern struct wlr_xdg_activation_v1 *activation;
+extern struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 extern struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 extern struct wl_list clients;      /* Tiling order */
 extern struct wl_list fstack;       /* Focus order */
