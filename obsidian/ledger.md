@@ -5,6 +5,29 @@ Dates are absolute.
 
 ## 2026-07-02
 
+- **Phase 2 linkage split begun (true separate compilation).** Chose real
+  separate compilation over a cosmetic `#include` split, for enforced module
+  interfaces + fast incremental builds. Converted two modules from
+  `#include`d-into-dwl.c to their own TUs: `input/resize_actions.c` and
+  `foreign_toplevel.c` (joining the pre-existing `input/commit_size.c`). Pattern:
+  the module `#include`s [[dwl-fork|kalin.h]] *without* `DWL_INTERNAL` (so it
+  sees the extern interface), dwl.c drops `static` from exactly the globals +
+  functions that module references, kalin.h declares them, and the Makefile
+  `SRCS` gains the file. No namespace clashes on generic names (`resize`,
+  `arrange`, `selmon`, `mons`…). Added include guards to `util.h` and
+  `client_inline.h` so they survive multi-TU inclusion.
+  - **Two structural blockers found for the remaining modules.** (1) The UI
+    modules (`offscreen_indicators`, `overlay_clock`) need appearance constants
+    that live in `config.h` — but `config.h` also holds the keybind/button
+    tables, whose function pointers force *every* keybind action to external
+    linkage; the `-O1` build hid this via dead-code elimination but `make debug`
+    (`-O0`) exposed it. Extracting them cleanly needs `config.h` split into
+    appearance-constants vs keybind-tables (a config.def.h change). (2) Five
+    modules (`crop_mode`, `layout_world`, `wallpaper`, `viewport_ops`, `ipc`)
+    reference dwl.c-private structs (`viewport`, `wallpaper`, `crop_editor`),
+    which must be promoted to shared linkage first. Both parked pending a design
+    decision; the two clean extractions are committed and both build profiles
+    (release + debug) pass 18/18 tests.
 - **Phase 2 foundation: single shared data model.** dwl.c no longer duplicates
   the type definitions — it now `#include`s [[dwl-fork|kalin.h]] for the data
   model (enums, `Arg`/`Button`/`Key`/`Layout`, `Client`, `Monitor`,
