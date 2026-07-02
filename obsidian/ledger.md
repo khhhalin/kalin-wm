@@ -5,6 +5,17 @@ Dates are absolute.
 
 ## 2026-07-02
 
+- **Phase 2 foundation: single shared data model.** dwl.c no longer duplicates
+  the type definitions — it now `#include`s [[dwl-fork|kalin.h]] for the data
+  model (enums, `Arg`/`Button`/`Key`/`Layout`, `Client`, `Monitor`,
+  `LayerSurface`, `KeyboardGroup`, `MonitorRule`/`Rule`/`PointerConstraint`/
+  `SessionLock`) and its shared macros. dwl.c defines `DWL_INTERNAL` before the
+  include so it pulls in **only the types** and skips kalin.h's `extern` globals
+  + prototypes (which would clash with dwl.c's file-scope statics — those stay
+  owned by dwl.c until the linkage split). Added an include guard to `util.h`
+  (it defined `static inline` helpers with no guard and was now pulled in
+  twice). Struct edits now happen in exactly **one** place. Build clean, 18/18
+  unit tests green.
 - **Fixed the keyboard-focus daily-driver blocker.** Spawned windows couldn't be
   typed into because the Quickshell bar held an exclusive keyboard grab.
   - Compositor: `arrangelayers` treated the layer-shell `keyboard_interactive`

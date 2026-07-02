@@ -1,5 +1,8 @@
 /* See LICENSE.dwm file for copyright and license details. */
 
+#ifndef KALIN_UTIL_H
+#define KALIN_UTIL_H
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <wayland-server-core.h>
@@ -51,3 +54,5 @@ static_listener_free(struct wl_listener *listener)
 #undef ATTR_PRINTF
 #undef ATTR_MALLOC
 #undef ATTR_RETURNS_NONNULL
+
+#endif /* KALIN_UTIL_H */

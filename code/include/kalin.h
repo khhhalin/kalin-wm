@@ -382,6 +382,12 @@ struct SessionLock {
 /* Viewport camera, wallpaper, and crop-editor state are dwl.c-private (and the
  * crop UI has its own struct in crop.h); no shared typedefs live here. */
 
+/* Everything below is the runtime interface (globals + prototypes) that the
+ * separately-compiled TUs link against. dwl.c OWNS these symbols (defines them
+ * as file-scope statics), so it includes this header with DWL_INTERNAL defined
+ * to pull in ONLY the shared types above and skip the clashing declarations. */
+#ifndef DWL_INTERNAL
+
 /* ============================================================================
  * Global Variables (extern declarations)
  * ============================================================================ */
@@ -649,5 +655,7 @@ const char *pty_log_for(pid_t pid);
 /* Idle inhibitor */
 void createidleinhibitor(struct wl_listener *listener, void *data);
 void destroyidleinhibitor(struct wl_listener *listener, void *data);
+
+#endif /* !DWL_INTERNAL */
 
 #endif /* KALIN_H */

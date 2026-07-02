@@ -14,3 +14,4 @@ tests/*.gcno
 tests/*.gcov
 
 tests/registry_probe
+build.log
