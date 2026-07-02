@@ -1,106 +1,158 @@
-# Agent Instructions for kalin-wm
+# Agent Start Here — kalin-wm
 
-> **Use this prompt when spawning a Codex / GPT agent to work on kalin-wm.**
-> Copy the "Agent Prompt" section below into your agent context. Do not delete this file.
+kalin-wm is a personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). It replaces fixed workspaces with an infinite 2D canvas navigated by a viewport camera, adds Niri-style column tiling, and is paired with the Quickshell-based companion shell in `~/environment/quickshell` for the bar, overview, and notifications.
 
----
+This file is the entry point for coding agents. Deeper design context lives in the `obsidian/` vault; consult it only when you need it.
 
-## Agent Prompt
+## Build
 
-You are a systems programmer working on **kalin-wm**, a Wayland compositor forked from dwl. Your job is to implement items from the project roadmap, fix bugs, and add features. You write correct, minimal C code and you test everything you build.
+```bash
+cd /home/kalin/environment/kalin-wm
+nix develop -c make clean all
+```
 
-### MANDATORY: Read Before Touching Code
+Expected outcome: `build/kalin-wm` exists and the build exits 0.
 
-1. **`ROADMAP.md`** (repo root) — The single source of truth for what needs to be done. It is organized by priority: Phase 0 (stability fixes, blocks v1.0), Phase 1 (v1.0 features), Phase 2 (post-v1.0). **Always pick the highest-priority unchecked item you are qualified to fix.**
-2. **`docs/CURRENT_SPECS.md`** — Describes the *currently implemented* state of the compositor. Read this so you do not reinvent what already exists.
-3. **`docs/obsidian-vault/research/active-design/`** — Design documents, stability audits, and UX research relevant to the current implementation.
+Run unit tests:
 
-### Project Context
+```bash
+make test-unit
+```
 
-- **Language:** C11, single-threaded event-loop architecture
-- **Build system:** `make` (Makefile-based). Run `make` for release, `make debug` for debug symbols, `make test-unit` for unit tests.
-- **Dependencies:** wlroots 0.20, wayland-server, xkbcommon, libinput, wayland-protocols, pkg-config
-- **Configuration:** Compile-time via `code/config/config.h` (dwm style). Edit `config.def.h` to see defaults.
-- **Source layout:** `code/src/dwl.c` is the core translation unit (~3900 lines)
-  and `#include`s the feature modules under `code/src/modules/` directly (see the
-  `#include "modules/..."` block at the bottom of `dwl.c`). Most logic still lives
-  in `dwl.c`.
-  - `code/src/dwl.c` — Core compositor; `#include`s the modules below
-  - `code/src/modules/crop/crop_mode.c` — Crop mode
-  - `code/src/modules/layout/layout_world.c` — Infinite-canvas world layout / column placement
-  - `code/src/modules/viewport/viewport_ops.c` — Viewport pan, zoom, follow
-  - `code/src/modules/input/{commit_size,resize_actions}.c` — Resize handling (commit_size is its own TU)
-  - `code/src/modules/ui/{offscreen_indicators,overlay_clock,wallpaper}.c` — UI overlays
-  - `code/src/modules/{foreign_toplevel,ipc}.c` — foreign-toplevel protocol + IPC socket
-  - `code/src/{util,crash_report,persistence}.c` — Independent translation units
-  - `code/include/kalin.h` — Main umbrella header with all structs, globals, and function declarations
-- **Tests:** `tests/test_client_lifecycle.c` (C unit tests, no wlroots dep), `tests/test_spawn_crash.sh` (integration test)
-- **Run:** `scripts/dev/run-nested-safe.sh` for nested manual testing
+Expected outcome: 18 tests pass, 0 failures.
 
-### Core Concepts You Must Understand
+## Run nested (development smoke test)
 
-kalin-wm is a **hybrid infinite-canvas / column-tiling compositor**:
-- Windows live on an infinite 2D plane with **world coordinates**.
-- A **viewport** (camera) looks at the canvas. Users pan (`Super+Shift+Arrows`) and zoom (`Super+equal/minus`).
-- **Column windows** are auto-placed in a horizontal strip (Niri-style).
-- **Anchored windows** are detached from the strip and stay at fixed world coordinates.
-- **Directional focus** (`Super+Arrows`) uses a cone-search algorithm in world coordinates to jump to the nearest window.
+From inside an existing X11 or Wayland session:
 
-### Work Rules
+```bash
+./scripts/run-nested
+```
 
-1. **Stability first.** Phase 0 items (critical crashes, division-by-zero, NULL derefs) outrank ALL feature work. If you are not fixing a Phase 0 item, you must be able to justify why.
-2. **Minimal changes.** This is a suckless-adjacent project. Do not add dependencies, abstractions, or indirection unless explicitly required. Prefer modifying existing functions over adding new files.
-3. **Defensive C.** Every pointer dereference must have a NULL check. Every division must have a non-zero divisor. Every allocation failure must be handled (use `die()` for fatal errors, return early for recoverable ones).
-4. **No dead code.** Do not leave commented-out code, unused variables, or unused functions.
-5. **Follow existing style.** 4-space indentation, K&R braces, `snake_case` for functions, `SCREAMING_SNAKE_CASE` for macros. Match the surrounding code exactly.
-6. **Update the header.** If you add a struct, global, or function declaration, add it to `code/include/kalin.h`.
-7. **Config defaults.** If you add a new user-facing tunable, add a sensible default to `code/config/config.def.h` with a comment explaining it.
+If the interactive script hangs or you want a direct command:
 
-### Workflow
+```bash
+WLR_BACKENDS=wayland ./build/kalin-wm -d
+```
 
-1. **Select a task** from `ROADMAP.md`. Pick the highest-priority unchecked item.
-2. **Research.** Read the linked design doc or audit entry in `docs/obsidian-vault/research/active-design/` if one exists.
-3. **Implement.** Make the smallest correct change. If the task mentions both `dwl.c` and a modular file (e.g., `src/client.c`), prefer the modular version if it exists and is functional; otherwise use `dwl.c`.
-4. **Build.** Run `make` and ensure zero warnings.
-5. **Test.**
-   - Run `make test-unit` and ensure all tests pass.
-   - If your change affects window lifecycle, spawning, or layout, run `make test-integration`.
-   - For input or viewport changes, run `scripts/dev/run-nested-safe.sh` and do a quick manual sanity check.
-6. **Update docs.**
-   - In `ROADMAP.md`, change `[ ]` to `[x]` for the item you completed. Append `(your name / commit)` in parentheses.
-   - If you changed architecture or added protocols, update `docs/CURRENT_SPECS.md`.
-   - If you fixed a stability-audit issue, add a brief note to `docs/obsidian-vault/research/active-design/fixes-summary.md`.
-7. **Report.** Summarize what you changed, what you tested, and what the next logical item would be.
+To also load the Quickshell bar while nested:
 
-### What NOT To Do
+```bash
+QS_CONFIG_PATH=/home/kalin/environment/quickshell \
+  WLR_BACKENDS=wayland ./build/kalin-wm -d -s 'qs & foot --server'
+```
 
-- Do NOT add runtime configuration (files, IPC, etc.). Config is compile-time only.
-- Do NOT add text rendering, font libraries, or cairo/pango. This is a deliberate non-goal.
-- Do NOT rewrite the monolith into modules unless the roadmap explicitly asks for it.
-- Do NOT change the existing dwl-style tag/layout system unless your task requires it.
-- Do NOT submit untested code. If you cannot test something (e.g., multi-monitor), say so explicitly.
+Expected outcome: a nested window appears, `Super+T` opens `foot`, `Super+P` opens `fuzzel`, and `Super+Escape` quits.
 
-### Key Files Quick Reference
+## Run on a real TTY
 
-| File | Purpose |
-|------|---------|
-| `ROADMAP.md` | Your todo list. Update it when done. |
-| `docs/CURRENT_SPECS.md` | What is already built. Read before coding. |
-| `code/include/kalin.h` | All structs, globals, function declarations. |
-| `code/config/config.def.h` | Default keybindings and tunables. |
-| `code/src/dwl.c` | Core compositor logic; `#include`s the modules below. |
-| `code/src/modules/layout/layout_world.c` | Infinite-canvas world layout / column placement. |
-| `code/src/modules/input/{commit_size,resize_actions}.c` | Resize handling. |
-| `code/src/modules/viewport/viewport_ops.c` | Pan, zoom, follow logic. |
-| `code/src/modules/crop/crop_mode.c` | Crop mode implementation. |
-| `code/tests/test_client_lifecycle.c` | Unit tests for client logic. |
-| `docs/obsidian-vault/research/active-design/stability-audit.md` | Detailed crash findings. |
+```bash
+./scripts/run-tty [secs]
+```
 
-### Current Blockers (Read These First)
+- Default timeout is 30 s; `0` disables the timeout.
+- The script starts `seatd` if it is not running.
+- Logs are written to `/tmp/kalin-wm-<timestamp>.log`.
 
-- **Stability Audit:** 23 tracked issues (4 critical, 8 high). Full details in `active-design/stability-audit.md`. Critical items are division-by-zero in crop/tile layouts, NULL derefs in input handlers, and memory leaks on duplicate client creation.
-- **Modularization in progress:** Some functions exist in both `dwl.c` and modular files (`src/client.c`, `src/input.c`, etc.). The modular versions are preferred but may be slightly out of sync. If you see discrepancies, fix the modular version and note it.
+For a bare binary run (not recommended for first test):
 
----
+```bash
+./build/kalin-wm
+```
 
-*These instructions are authoritative. If they conflict with something you read in a research note, follow these instructions and ask for clarification.*
+## Automated real-VT test on tty3
+
+`./scripts/test-tty3` starts kalin-wm on VT 3 via `openvt`, with the Quickshell bar and a `foot` server, runs it for a configurable timeout, captures logs, and switches back to the original VT.
+
+```bash
+./scripts/test-tty3          # 30 s timeout
+./scripts/test-tty3 120      # 120 s timeout
+./scripts/test-tty3 0        # no timeout; quit with Super+Escape
+```
+
+Requirements:
+- You must be in the `tty` group so `openvt` and `chvt` can access VTs.
+- The user account is configured in `~/home-config/users.nix`; run `sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook` to apply the group change.
+
+Logs: `/tmp/kalin-tty3-test/kalin-wm.log` and `/tmp/kalin-tty3-test/quickshell.log`.
+
+Expected output ends with `PASS: Quickshell configuration loaded` and `PASS: Compositor log shows no crash`.
+
+## Validate with the test VM (preferred)
+
+The safest way to test a real DRM-backed session without touching the host is the QEMU/KVM VM in `~/environment/test-vm`.
+
+```bash
+cd /home/kalin/environment/test-vm
+# If you changed the kalin-wm tree since the last VM build, update the lock entry:
+nix flake update kalin-wm
+nix build .#vm
+mkdir -p /tmp/kalin-vm/shared
+# Headless, GL-accelerated smoke run. Remove QEMU_OPTS to open the graphical window.
+timeout 60s env QEMU_OPTS="-display egl-headless,gl=on" ./result/bin/run-kalin-test-vm
+```
+
+- The VM autologins as `tester` / `test` on tty1 and immediately starts kalin-wm + Quickshell + `foot`.
+- Host-readable logs: `/tmp/kalin-vm/kalin-wm.log` and `/tmp/kalin-vm/quickshell.log`.
+- To stop the VM, kill the QEMU process or close the window.
+
+Headless health check:
+
+```bash
+# after the VM has booted
+grep -i "Configuration Loaded" /tmp/kalin-vm/quickshell.log
+tail -20 /tmp/kalin-vm/kalin-wm.log
+```
+
+Expected: `Configuration Loaded` appears in the Quickshell log and the kalin-wm log shows no segfault.
+
+## Activate the NixOS login session on the host
+
+Only do this after the VM tests pass and the user explicitly asks for it.
+
+The session is defined in `/home/kalin/home-config/display.nix`. It installs a `kalin-wm-session` wrapper that starts `kalin-wm` together with the Quickshell bar (`qs`) and a `foot --server`, and registers `kalin-wm` as a login option in `ly`.
+
+> **Do not run this automatically. Ask the user for explicit approval first.**
+
+```bash
+sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook
+```
+
+After the rebuild, the user can select **kalin-wm** from `ly` at login.
+
+## Verify a kalin-wm login session
+
+After logging in via `ly` with **kalin-wm** selected (or booting the test VM), confirm:
+
+- [ ] The Quickshell bar is visible at the bottom of the screen.
+- [ ] `Super+T` opens a terminal (`foot`).
+- [ ] `Super+P` opens the launcher (`fuzzel`).
+- [ ] `Super+O` toggles the Quickshell overview.
+- [ ] The taskbar lists running applications.
+- [ ] `Super+Escape` quits the session.
+
+If any item fails, check the VM logs (`/tmp/kalin-vm/*.log`) or, on the host, `journalctl --user -u kalin-wm` and Quickshell logs.
+
+## Shell aliases
+
+If you use the home-managed Zsh config, these aliases are defined in `~/home-config/desktop.nix` and are available after the next NixOS rebuild + new terminal:
+
+- `kalin-code`, `kalin-shell`, `kalin-vm`, `kalin-home` — cd into the main repos.
+- `kalin-build`, `kalin-test` — build and unit-test kalin-wm.
+- `kalin-nested`, `kalin-tty`, `kalin-tty3` — run the compositor nested, on the current TTY, or on VT 3.
+- `kalin-vm-build`, `kalin-vm-run`, `kalin-vm-logs` — build/run/check the QEMU VM.
+- `kalin-rebuild`, `kalin-rebuild-build` — host NixOS rebuild helpers.
+
+## Key files and pointers
+
+- `code/config/config.h` — compile-time keybindings and constants.
+- `code/config/config.def.h` — upstream defaults; copy to `config.h` to customize.
+- `code/src/dwl.c` + `code/src/modules/` — compositor source.
+- `obsidian/kalin-wm.md` — project goal note.
+- `obsidian/agent-workflow.md` — coding rules and workflow.
+- `obsidian/keybindings.md` — keybinding reference.
+- `obsidian/nixos-session.md` — how the login session is wired.
+- `obsidian/quickshell-shell.md` — shell integration details.
+- `obsidian/build-system.md` — build and flake details.
+- `obsidian/roadmap.md` — open work.
+- `obsidian/ledger.md` — recent decisions and progress.

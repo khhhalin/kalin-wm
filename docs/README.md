@@ -1,11 +1,7 @@
-# Docs Index
+# Docs
 
-This folder is now the main documentation hub.
+Project documentation now lives in the vault at [`../obsidian/`](../obsidian/) —
+a linked graph of notes. Start at [`../obsidian/kalin-wm.md`](../obsidian/kalin-wm.md).
 
-## Main sections
-
-- `MANUAL_TESTING.md` — manual verification flows.
-- `incidents/` — incident reports and deep dives.
-- `PROJECT_STRUCTURE.md` — repository layout reference.
-- `obsidian-vault/` — notes vault location.
-  - `obsidian-vault/research/` — architecture/protocol research content.
+This `docs/` folder keeps only conventional artifacts: `man/`, `desktop/`,
+`changelog/`, `incidents/`, and `MANUAL_TESTING.md`.

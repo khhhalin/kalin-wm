@@ -128,14 +128,17 @@ timeout 15s ./dwl -s "foot"
 
 ### Manual Test Checklist
 Test these keybinds when running:
-- [x] `Super+Shift+Return` - Open terminal (works)
-- [x] `Super+equal(=)` - Zoom in (function called)
-- [x] `Super+minus(-)` - Zoom out (function called)
-- [x] `Super+0` - Reset zoom (function called)
-- [x] `Super+Ctrl+H/J/K/L` - Pan viewport (works)
-- [x] `Super+Z` - Toggle follow focus (works)
-- [x] `Super+Shift+Z` - Toggle auto-pan to new windows (works)
-- [x] `Super+Shift+Q` - Exit (works)
+- [x] `Super+T` - Open terminal (`foot`)
+- [x] `Super+P` - Open launcher (`fuzzel`)
+- [x] `Super+O` - Toggle Quickshell overview
+- [x] `Super+Escape` - Exit compositor
+- [x] `Super+equal(=)` - Zoom in
+- [x] `Super+minus(-)` - Zoom out
+- [x] `Super+0` - Fit all windows
+- [x] `Super+BackSpace` - Reset camera
+- [x] `Super+Shift+Arrows` / `Super+Shift+HJKL` - Pan viewport
+- [x] `Super+Z` - Toggle follow focus
+- [x] `Super+Shift+Z` - Toggle auto-pan to new windows
 
 ### Bug Fix Verification
 - [x] New windows spawn OUTSIDE current visible area (to the right)

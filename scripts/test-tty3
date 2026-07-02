@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Run kalin-wm on tty3 for automated real-VT testing.
+# Usage:
+#   ./scripts/test-tty3          # default timeout 30s
+#   ./scripts/test-tty3 0        # no timeout (manual quit with Super+Escape)
+#   ./scripts/test-tty3 120      # timeout after 120s
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+KALIN_WM="$ROOT_DIR/build/kalin-wm"
+TIMEOUT_SECS="${1:-30}"
+LOG_DIR="/tmp/kalin-tty3-test"
+mkdir -p "$LOG_DIR"
+WM_LOG="$LOG_DIR/kalin-wm.log"
+QS_LOG="$LOG_DIR/quickshell.log"
+
+QS_CONFIG_PATH="${QS_CONFIG_PATH:-/home/kalin/environment/quickshell}"
+
+# Remember where to return. fgconsole may fail inside a terminal emulator;
+# fall back to tty1.
+ORIG_VT="$(fgconsole 2>/dev/null || echo 1)"
+
+# Build if needed.
+if [ ! -x "$KALIN_WM" ]; then
+    echo "kalin-wm binary not found. Building first..."
+    (cd "$ROOT_DIR" && nix develop -c make clean all)
+fi
+
+# Sanity check: we need to be able to allocate VT 3.
+if [ ! -c /dev/tty3 ]; then
+    echo "ERROR: /dev/tty3 does not exist" >&2
+    exit 1
+fi
+
+# Make sure openvt is available.
+if ! command -v openvt >/dev/null 2>&1; then
+    echo "ERROR: openvt not found (install kbd)" >&2
+    exit 1
+fi
+
+cleanup() {
+    # Best-effort return to the original VT.
+    chvt "$ORIG_VT" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Clean old logs.
+> "$WM_LOG"
+> "$QS_LOG"
+
+echo "============================================"
+echo "kalin-wm TTY3 automated test runner"
+echo "============================================"
+echo ""
+echo "Binary: $KALIN_WM"
+echo "Quickshell config: $QS_CONFIG_PATH"
+echo "Compositor log: $WM_LOG"
+echo "Quickshell log: $QS_LOG"
+echo "Return VT: $ORIG_VT"
+if [ "$TIMEOUT_SECS" = "0" ]; then
+    echo "Timeout: disabled"
+else
+    echo "Timeout: ${TIMEOUT_SECS}s"
+fi
+echo ""
+
+# The inner payload runs on /dev/tty3 with that VT as its controlling terminal.
+# It starts kalin-wm together with the quickshell bar and a foot server, streams
+# logs, and switches back to ORIG_VT when it exits (or when the timeout fires).
+payload="
+set -euo pipefail
+export XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-/run/user/\$(id - u)}\"
+export QS_CONFIG_PATH=\"$QS_CONFIG_PATH\"
+export PATH=\"$PATH\"
+
+exec > \"$WM_LOG\" 2>&1
+
+echo \"=== kalin-wm starting on \$(tty) ===\"
+echo \"QS_CONFIG_PATH=\$QS_CONFIG_PATH\"
+
+# Quickshell logs to its own file; also mirror start-up lines here.
+(
+    stdbuf -oL -eL qs -p \"\$QS_CONFIG_PATH\" > \"$QS_LOG\" 2>&1
+) &
+QS_PID=\$!
+
+if [ \"$TIMEOUT_SECS\" = \"0\" ]; then
+    \"$KALIN_WM\" -s 'foot --server'
+else
+    timeout --signal=KILL \"${TIMEOUT_SECS}s\" \"$KALIN_WM\" -s 'foot --server'
+fi
+
+kill \"\$QS_PID\" 2>/dev/null || true
+wait \"\$QS_PID\" 2>/dev/null || true
+
+echo \"=== kalin-wm exited (code \$?) ===\"
+echo \"=== switching back to tty$ORIG_VT ===\"
+chvt $ORIG_VT 2>/dev/null || true
+"
+
+# -c 3   = use VT 3
+# -s     = switch to it
+# -w     = wait for command to finish
+openvt -c 3 -s -w -- bash -c "$payload"
+
+# In case the inner chvt failed, switch back from the host side too.
+cleanup
+
+echo ""
+echo "============================================"
+echo "Run finished. Logs:"
+echo "  $WM_LOG"
+echo "  $QS_LOG"
+echo ""
+
+# Quick health check.
+if grep -qi "Configuration Loaded" "$QS_LOG"; then
+    echo "PASS: Quickshell configuration loaded"
+else
+    echo "FAIL: Quickshell configuration did not load"
+fi
+
+if grep -qi "couldn't create backend\|SIGSEGV\|Segmentation fault" "$WM_LOG"; then
+    echo "FAIL: Compositor crashed or failed to create backend"
+    exit 1
+else
+    echo "PASS: Compositor log shows no crash"
+fi
+
+echo ""
+tail -20 "$WM_LOG"

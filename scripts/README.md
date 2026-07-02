@@ -17,6 +17,7 @@ Convenience scripts for day-to-day workflow.
 - `./scripts/test [coverage]`
 - `./scripts/run-nested`
 - `./scripts/run-tty [secs]`
+- `./scripts/test-tty3 [secs]` → real-VT automated test on tty3 (default 30s)
 
 ## Development helper scripts
 

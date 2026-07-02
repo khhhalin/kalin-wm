@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "architecture/decisions/layout-column.md",
+                "file": "buffer-scaling.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "layout-column"
+              "title": "buffer-scaling"
             }
           }
         ]
@@ -182,6 +182,23 @@
   },
   "active": "725bc6419a81d42c",
   "lastOpenFiles": [
+    "anchored-window.md",
+    "agent-workflow.md",
+    "build-system.md",
+    "compile-time-config.md",
+    "fit-all.md",
+    "persistence.md",
+    "quickshell-shell.md",
+    "roadmap.md",
+    "stability.md",
+    "test-vm.md",
+    "wlroots.md",
+    "zoom.md",
+    "buffer-scaling.md",
+    "foreign-toplevel.md",
+    "focus-ring.md",
+    "column-layout.md",
+    "scene-graph.md",
     "definitions/wayland-scaling-glossary.md",
     "wlroots/fractional-scaling.md",
     "current-design/code-operation-pipeline.md",
@@ -191,22 +208,8 @@
     "current-design/stability-audit.md",
     "current-design/ux-polish.md",
     "current-design/implementation-summary.md",
-    "current-design/README.md",
-    "current-design/archive/scope-and-exit-conditions.md",
     "current-design/archive",
-    "current-design/animations.md",
-    "current-design/overview-mode.md",
-    "current-design/exit-conditions.md",
-    "current-design/index.md",
-    "current-design/window-placement.md",
-    "current-design/navigation.md",
-    "current-design/layout-paradigm.md",
     "meta",
-    "definitions",
-    "compositors/zoom-features.md",
-    "wlroots/scene-graph-scaling.md",
-    "scaling-techniques/buffer-management.md",
-    "definitions.md",
-    "gpu-rendering/scaling-algorithms.md"
+    "definitions"
   ]
 }

@@ -1,143 +1,143 @@
 # kalin-wm
 
-> A **Wayland compositor** with an **infinite 2D canvas** and **hybrid column tiling**.
->
-> Forked from [dwl](https://codeberg.org/dwl/dwl) (dwm for Wayland). kalin-wm keeps the suckless philosophy — compile-time configuration, minimal dependencies, hackable C — and adds a viewport-driven navigation model inspired by Niri and DriftWM.
+A personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). kalin-wm keeps the suckless philosophy — compile-time configuration, minimal dependencies, hackable C — and replaces fixed workspaces with an infinite 2D canvas plus Niri-style column tiling. A Quickshell-based companion shell in `~/environment/quickshell` provides the bar, overview, and notifications.
 
----
+## Quick start
 
-## For Agents Working on This Repo
-
-**BEFORE you write code:**
-1. Read **`docs/CURRENT_SPECS.md`** to understand what is already implemented.
-2. Read **`ROADMAP.md`** to see what needs to be done and what the current priorities are.
-3. Check `docs/obsidian-vault/research/` for design documents, stability audits, and protocol research.
-
-**AFTER you complete work:**
-- Update `ROADMAP.md` by changing `[ ]` to `[x]` on the items you finished.
-- If you changed architecture or added protocols, update `docs/CURRENT_SPECS.md`.
-
----
-
-## Core Concepts
-
-### Infinite Canvas
-
-Windows live on an unbounded 2D plane. You navigate with a **camera** rather than switching workspaces:
-
-- **Pan** — move the viewport across the canvas (`Super+Shift+Arrows`)
-- **Zoom** — scale the viewport in and out (`Super+equal` / `Super+minus`)
-- **Follow** — camera automatically tracks the focused window or new spawns (`Super+Z` / `Super+Shift+Z`)
-
-### Column Layout
-
-Windows are auto-placed in a horizontal strip of columns, Niri-style.
-
-Move the focused window between columns:
-- `Ctrl+Left` — move to the column on the left
-- `Ctrl+Right` — move to the column on the right
-
-### Directional Focus
-
-`Super+Arrow` jumps to the nearest window in that direction using a cone-search algorithm in world coordinates. It works correctly no matter how far you have panned or zoomed.
-
-### Crop Mode
-
-Interactive window cropping with mouse selection. Enter crop mode, drag to select, press Escape to cancel.
-
----
-
-## Quick Start
-
-### Dependencies
-
-- `libinput`
-- `wayland`
-- `wlroots` 0.20 (compiled with the libinput backend)
-- `xkbcommon`
-- `wayland-protocols` (compile-time)
-- `pkg-config` (compile-time)
-
-Optional for XWayland support:
-- `libxcb`, `libxcb-wm`, `Xwayland`
-
-### Building
+### Build
 
 ```bash
-make              # release build → build/kalin-wm
-make debug        # debug build with symbols and assertions
-make test-unit    # run C unit tests
+cd /home/kalin/environment/kalin-wm
+nix develop -c make clean all
 ```
 
-To enable XWayland, uncomment its flags in `code/config/config.mk`.
-
-### Running
+Run unit tests:
 
 ```bash
-# Nested in an existing X11 or Wayland session
-./scripts/dev/run-nested-safe.sh
-
-# Directly from a VT (add your user to `video` and `input` groups)
-./build/kalin-wm
-
-# With a startup command (like .xinitrc)
-./build/kalin-wm -s 'foot --server'
+make test-unit
 ```
 
-### Configuration
+### Run nested (inside an existing graphical session)
 
-All config is compile-time via `code/config/config.h`, in the dwm tradition. Edit the file, then `make`.
+```bash
+./scripts/run-nested
+```
 
-Default keybinds include:
-- `Super+P` — run launcher (`wmenu-run`)
-- `Super+Shift+Return` — terminal (`foot`)
-- `Super+Arrows` — directional focus
-- `Super+Shift+Arrows` — pan camera
-- `Super+equal/minus` — zoom in/out
-- `Super+BackSpace` — reset view
-- `Super+E` — toggle fullscreen
-- `Super+Shift+Q` — quit
+If the script hangs, use the underlying command directly:
 
-See `code/config/config.def.h` for the full default configuration.
+```bash
+WLR_BACKENDS=wayland ./build/kalin-wm -d
+```
 
----
+To test with the Quickshell bar loaded:
 
-## Project Structure
+```bash
+QS_CONFIG_PATH=/home/kalin/environment/quickshell \
+  WLR_BACKENDS=wayland ./build/kalin-wm -d -s 'qs & foot --server'
+```
 
-- `code/src/` — source code (compositor, client management, input, viewport, layouts, modules)
-- `code/include/` — headers (kalin.h is the main umbrella header)
-- `code/config/` — configuration and build flags
-- `protocols/` — Wayland protocol XML definitions
-- `tests/` — unit tests, integration tests, debug runners
-- `scripts/` — development helpers
-- `docs/` — documentation, manual testing guide, and the research vault
-  - `docs/CURRENT_SPECS.md` — **what is implemented right now**
-  - `docs/obsidian-vault/research/` — design docs, stability audits, protocol matrices, comparator research
+### Run on a TTY
 
-See `docs/PROJECT_STRUCTURE.md` for the full layout philosophy.
+```bash
+./scripts/run-tty [secs]
+```
 
----
+Default timeout is 30 s; use `0` to disable it. Logs go to `/tmp/kalin-wm-<timestamp>.log`.
+
+### Automated real-VT test on tty3
+
+```bash
+./scripts/test-tty3 [secs]
+```
+
+Starts kalin-wm on VT 3 with Quickshell + foot, captures logs, and returns to the original VT. Requires membership in the `tty` group (configured in `~/home-config/users.nix`).
+
+## Shell aliases
+
+If you use the home-managed Zsh config, these aliases are available after `sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook` and opening a new terminal:
+
+| Alias | What it does |
+|-------|--------------|
+| `kalin-code` | `cd ~/environment/kalin-wm` |
+| `kalin-shell` | `cd ~/environment/quickshell` |
+| `kalin-vm` | `cd ~/environment/test-vm` |
+| `kalin-home` | `cd ~/home-config` |
+| `kalin-build` | build kalin-wm |
+| `kalin-test` | run unit tests |
+| `kalin-nested` | run nested compositor |
+| `kalin-tty` | run on current TTY |
+| `kalin-tty3` | automated VT 3 test |
+| `kalin-vm-build` | build the test VM |
+| `kalin-vm-run` | run the test VM headless for 60 s |
+| `kalin-vm-logs` | tail VM compositor + Quickshell logs |
+| `kalin-rebuild` | `sudo nixos-rebuild switch ...` |
+| `kalin-rebuild-build` | `nixos-rebuild build ...` |
+
+### Test with the real QEMU/KVM VM
+
+The safest end-to-end test is the VM in `~/environment/test-vm`. It boots a real NixOS system with kalin-wm as the session compositor on a virtual DRM GPU, so it exercises seat/input/GL without touching the host.
+
+```bash
+cd ~/environment/test-vm
+nix build .#vm
+mkdir -p /tmp/kalin-vm/shared
+QEMU_OPTS="-display none -serial stdio" ./result/bin/run-kalin-test-vm
+```
+
+Logs stream to the host at `/tmp/kalin-vm/kalin-wm.log` and `/tmp/kalin-vm/quickshell.log`. Remove `QEMU_OPTS` to see the graphical window.
+
+### Activate the NixOS login session on the host
+
+Only after VM tests pass:
+
+```bash
+sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook
+```
+
+Then select **kalin-wm** from `ly` at login.
+
+## Default keybindings
+
+`Super` is the Windows/Command key.
+
+| Key | Action |
+|-----|--------|
+| `Super+T` | Open terminal (`foot`) |
+| `Super+P` | Open launcher (`fuzzel`) |
+| `Super+O` | Toggle Quickshell overview |
+| `Super+Escape` | Quit the compositor |
+| `Super+Q` | Close focused window |
+| `Super+E` | Toggle fullscreen |
+| `Super+Arrows` | Directional focus |
+| `Super+Shift+Arrows` / `Super+Shift+HJKL` | Pan camera |
+| `Super+equal` / `Super+minus` | Zoom in / out |
+| `Super+0` | Fit all windows |
+| `Super+BackSpace` | Reset camera |
+| `Super+Z` / `Super+Shift+Z` | Toggle follow mode / follow-new-windows |
+| `Ctrl+Left` / `Ctrl+Right` | Move focused window between columns |
+| `Super+[` / `Super+]` | Narrow / widen focused window |
+| `Super+Shift+{` / `Super+Shift+}` | Shorten / lengthen focused window |
+| `Super+C` | Enter crop mode (Escape or `Super+Shift+R` to cancel) |
+
+See `code/config/config.h` for the full configuration.
+
+## Project layout
+
+- `code/src/dwl.c` + `code/src/modules/` — compositor source
+- `code/include/` — headers (`kalin.h` is the umbrella)
+- `code/config/` — compile-time configuration
+- `scripts/` — development helpers (`run-nested`, `run-tty`, `build`, `test`)
+- `tests/` — unit and integration tests
+- `obsidian/` — design vault and project text model
+- `docs/` — man page, desktop entry, changelog, manual testing guide
 
 ## Status
 
 **Version:** 0.8-dev  
-**MVP:** ✅ Complete (infinite canvas, pan/zoom, column + anchored windows, crop mode, multi-monitor)  
-**v1.0:** 🚧 In progress  
+**MVP:** complete (infinite canvas, pan/zoom, column + anchored windows, crop mode, multi-monitor, Quickshell integration)  
+**v1.0:** in progress
 
-The main blocker for v1.0 is a **stability audit** that identified 23 issues (4 critical, 8 high). These are tracked in `ROADMAP.md` Phase 0 and must be resolved before feature work continues.
-
-Planned v1.0 features include smooth animations, touchpad gestures, window shadows, persistent world state, minimap, bookmarks, and magnetic snapping.
-
----
-
-## Acknowledgements
-
-kalin-wm is a fork of **dwl** by the dwl developers and community. Many thanks to:
-
-- **Devin J. Pohly** for creating dwl
-- The [wlroots](https://gitlab.freedesktop.org/wlroots) and [sway](https://swaywm.org/) developers for the reference implementations
-- [suckless.org](https://suckless.org/) and the [dwm](https://dwm.suckless.org/) community for the philosophy
-- The [Niri](https://github.com/YaLTeR/niri) and DriftWM projects for layout inspiration
+See `obsidian/roadmap.md` for open work and `obsidian/ledger.md` for recent progress.
 
 ---
 

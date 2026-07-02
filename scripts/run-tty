@@ -19,8 +19,9 @@ LOG="/tmp/kalin-wm-$(date +%s).log"
 #   Super+Shift+C        - Cancel crop (alternative)
 
 # Keybinds:
-#   Super+Shift+Return  - Open terminal (foot)
-#   Super+Shift+Q       - Exit compositor
+#   Super+T             - Open terminal (foot)
+#   Super+P             - Open launcher (fuzzel)
+#   Super+Escape        - Exit compositor
 #   Super+j/k           - Focus next/previous window
 #   Super+Return        - Zoom (swap master)
 #   Super+1-9           - Switch to tag (workspace)
@@ -51,8 +52,9 @@ if ! pgrep -x seatd > /dev/null; then
 fi
 
 echo "Starting kalin-wm..."
-echo "Press Super+Shift+Return to open terminal"
-echo "Press Super+Shift+Q to exit"
+echo "Press Super+T to open terminal"
+echo "Press Super+P to open launcher"
+echo "Press Super+Escape to exit"
 echo ""
 
 # Run compositor (with or without timeout)
