@@ -333,8 +333,10 @@ arrange_columns(Monitor *m)
 			wlr_log(WLR_ERROR, "arrange_columns: INVALID GEOMETRY");
 			continue;
 		}
-		
-		resize(c, geo, 0);
+
+		/* Set the layout target; the compositor springs the window there so
+		 * columns slide instead of snapping (camera pans stay instant). */
+		client_set_target_geom(c, geo);
 	}
 }
 

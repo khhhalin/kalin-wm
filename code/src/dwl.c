@@ -3021,6 +3021,131 @@ resize(Client *c, struct wlr_box geo, int interact)
 	client_set_buffer_scale(c, viewport.zoom);
 }
 
+/* ── Window spring-glide animation ─────────────────────────────────────────
+ * The column layout writes each tiled client's target *world* geometry via
+ * client_set_target_geom(); this event-loop timer springs the rendered world
+ * position toward it (size is applied immediately) so columns slide instead of
+ * snapping. Camera pans don't trigger it: world coords are unchanged then, so
+ * the "size-only" branch just repositions via the existing resize() path. */
+static struct wl_event_source *client_anim_timer;
+static struct timespec client_anim_last;
+static int client_anim_have_last;
+static int client_anim_tick(void *data);
+
+static void
+schedule_client_anim(void)
+{
+	if (!event_loop)
+		return;
+	if (!client_anim_timer)
+		client_anim_timer = wl_event_loop_add_timer(event_loop,
+				client_anim_tick, NULL);
+	if (client_anim_timer)
+		wl_event_source_timer_update(client_anim_timer, 16);
+}
+
+static float
+spring_step(float cur, float target, float *vel, float dt)
+{
+	/* Semi-implicit spring: x'' = -k(x-target) - c*x'. */
+	float force = -anim_stiffness * (cur - target) - anim_damping * (*vel);
+	*vel += force * dt;
+	return cur + (*vel) * dt;
+}
+
+static int
+client_anim_tick(void *data)
+{
+	struct timespec now;
+	Client *c;
+	float dt;
+	int still = 0;
+	(void)data;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (!client_anim_have_last) {
+		dt = 1.0f / 60.0f;
+		client_anim_have_last = 1;
+	} else {
+		dt = (float)(now.tv_sec - client_anim_last.tv_sec)
+			+ (float)(now.tv_nsec - client_anim_last.tv_nsec) / 1e9f;
+	}
+	client_anim_last = now;
+	if (dt <= 0.0f)
+		dt = 1.0f / 60.0f;
+	if (dt > 0.1f)
+		dt = 0.1f; /* clamp after a stall so windows don't jump */
+
+	wl_list_for_each(c, &clients, link) {
+		struct wlr_box b;
+		if (!c->animating)
+			continue;
+		c->anim_x = spring_step(c->anim_x, (float)c->target_geom.x, &c->vx, dt);
+		c->anim_y = spring_step(c->anim_y, (float)c->target_geom.y, &c->vy, dt);
+		if (fabsf(c->anim_x - (float)c->target_geom.x) < 0.5f
+				&& fabsf(c->anim_y - (float)c->target_geom.y) < 0.5f
+				&& fabsf(c->vx) < 2.0f && fabsf(c->vy) < 2.0f) {
+			c->animating = 0;
+			c->vx = c->vy = 0;
+			c->anim_x = c->target_geom.x;
+			c->anim_y = c->target_geom.y;
+			resize(c, c->target_geom, 0);
+			continue;
+		}
+		b = c->target_geom;
+		b.x = (int)lroundf(c->anim_x);
+		b.y = (int)lroundf(c->anim_y);
+		resize(c, b, 0);
+		still = 1;
+	}
+
+	if (!still)
+		client_anim_have_last = 0;
+	if (still && client_anim_timer)
+		wl_event_source_timer_update(client_anim_timer, 16);
+	return 0;
+}
+
+void
+client_set_target_geom(Client *c, struct wlr_box geo)
+{
+	int moving;
+	if (!c)
+		return;
+	c->target_geom = geo;
+
+	/* First placement (new window) or animations disabled: snap into place. */
+	if (!c->anim_ready || anim_stiffness <= 0.0f) {
+		c->anim_ready = 1;
+		c->animating = 0;
+		c->anim_x = geo.x;
+		c->anim_y = geo.y;
+		c->vx = c->vy = 0;
+		resize(c, geo, 0);
+		return;
+	}
+
+	moving = (geo.x != c->geom.x) || (geo.y != c->geom.y);
+	if (!c->animating) {
+		c->anim_x = c->geom.x;
+		c->anim_y = c->geom.y;
+	}
+
+	if (moving || c->animating) {
+		/* Apply the new size now at the current (animating) position; the
+		 * position springs toward target on the next ticks. */
+		struct wlr_box now = { (int)lroundf(c->anim_x), (int)lroundf(c->anim_y),
+			geo.width, geo.height };
+		c->animating = 1;
+		resize(c, now, 0);
+		schedule_client_anim();
+	} else {
+		/* No movement (e.g. a camera pan re-arranging at the same world
+		 * coords, or a pure size change): apply immediately. */
+		resize(c, geo, 0);
+	}
+}
+
 /* Helper to check if a float is close to an integer */
 static int
 is_integer_zoom(float zoom)

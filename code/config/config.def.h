@@ -16,6 +16,13 @@ static const int offscreen_indicator_enabled = 1;
 static const int offscreen_indicator_size    = 10;
 static const int offscreen_indicator_margin  = 8;
 static const float offscreen_indicator_color[] = COLOR(0xffffffff);
+/* Window spring-glide animation (Niri-style column sliding). The rendered world
+ * position springs toward the layout target: x'' = -stiffness*(x-target) -
+ * damping*x'. Critical damping is ~2*sqrt(stiffness); a lower damping gives a
+ * livelier overshoot. Set anim_stiffness = 0 to disable and snap instantly. */
+static const float anim_stiffness = 250.0f;
+static const float anim_damping    = 26.0f;
+
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 

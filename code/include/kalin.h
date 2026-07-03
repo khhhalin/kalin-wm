@@ -299,6 +299,17 @@ struct Client {
     int isfullscreen;           /* Fullscreen state */
     float opacity;              /* Per-window opacity, 0.1..1.0 */
     uint32_t resize;            /* Configure serial of pending resize */
+
+    /* Spring-glide animation: the layout writes target_geom; a per-frame tick
+     * springs the rendered world position (anim_x/anim_y, with velocity vx/vy)
+     * toward it so columns slide instead of snapping. Size is applied instantly.
+     * anim_ready gates the first placement so a new window doesn't fly in from
+     * the origin. */
+    struct wlr_box target_geom;
+    float anim_x, anim_y;
+    float vx, vy;
+    int animating;
+    int anim_ready;
 };
 
 /**
@@ -672,6 +683,10 @@ void cropcancel(const Arg *arg);
 void cropreset(const Arg *arg);
 void cropend(const Arg *arg);
 void cropdraw(void);
+
+/* Spring-glide animation: layout sets a client's target world geometry and the
+ * compositor tick slides it there (defined in dwl.c). */
+void client_set_target_geom(Client *c, struct wlr_box geo);
 
 /* Column layout helpers (layout_world TU) */
 void infinite(Monitor *m);
