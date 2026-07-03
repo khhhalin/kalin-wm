@@ -79,6 +79,13 @@ ipc_build_state(char *buf, size_t len)
 	Client *f = selmon ? focustop(selmon) : NULL;
 	char title[512];
 	char appid[256];
+	float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	/* Focused window's on-screen rect (world -> screen, matches resize()), so
+	 * the shell can flow the radial buttons out of the actual window. */
+	int rx = f ? (int)((f->geom.x - viewport.x) * zf) : 0;
+	int ry = f ? (int)((f->geom.y - viewport.y) * zf) : 0;
+	int rw = f ? (int)(f->geom.width  * zf) : 0;
+	int rh = f ? (int)(f->geom.height * zf) : 0;
 
 	ipc_json_escape(f ? client_get_title(f) : "", title, sizeof(title));
 	ipc_json_escape(f ? client_get_appid(f) : "", appid, sizeof(appid));
@@ -90,6 +97,7 @@ ipc_build_state(char *buf, size_t len)
 		"\"crop\":%s,"
 		"\"super_held\":%s,"
 		"\"exit_pending\":%s,"
+		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
 		"\"fullscreen\":%s,\"floating\":%s}}\n",
 		viewport.x, viewport.y, viewport.zoom,
@@ -98,6 +106,7 @@ ipc_build_state(char *buf, size_t len)
 		crop_editor.active ? "true" : "false",
 		super_held ? "true" : "false",
 		exit_pending ? "true" : "false",
+		rx, ry, rw, rh,
 		appid, title,
 		(f && f->isfullscreen) ? "true" : "false",
 		(f && f->isfloating) ? "true" : "false");
@@ -152,6 +161,12 @@ ipc_exec_command(char *line)
 	} else if (strcmp(cmd, "follow-toggle") == 0) {
 		Arg a = {0};
 		viewport_toggle_follow(&a);
+	} else if (strcmp(cmd, "spotlight") == 0) {
+		char *v = strtok_r(NULL, " \t\r", &save);
+		if (v && atoi(v))
+			spotlight_enter();
+		else
+			spotlight_exit();
 	} else {
 		wlr_log(WLR_DEBUG, "ipc: unknown command '%s'", cmd);
 	}

@@ -673,9 +673,16 @@ void viewport_pan(const Arg *arg);
 void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_center_on(Client *c);
+void viewport_focus_window(Client *c);
+void viewport_animate_to(float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
+
+/* Hold-Super spotlight: focus the active window and recede the rest (defined in
+ * dwl.c, driven by the shell via the "spotlight" IPC command). */
+void spotlight_enter(void);
+void spotlight_exit(void);
 
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);

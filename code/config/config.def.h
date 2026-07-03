@@ -23,6 +23,10 @@ static const float offscreen_indicator_color[] = COLOR(0xffffffff);
 static const float anim_stiffness = 250.0f;
 static const float anim_damping    = 26.0f;
 
+/* Hold-Super spotlight: opacity applied to non-focused windows while the
+ * radial menu is up (the focused window stays at 1.0). */
+static const float spotlight_dim = 0.35f;
+
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 

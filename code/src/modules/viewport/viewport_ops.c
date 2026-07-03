@@ -305,6 +305,51 @@ viewport_toggle_follow_new(const Arg *arg)
 	printstatus();
 }
 
+/* Fit + center the camera on a single window (zoom in to fill, with margin).
+ * Used by the hold-Super spotlight to focus the active window. */
+void
+viewport_focus_window(Client *c)
+{
+	Monitor *m;
+	float bw_, bh_, zx, zy, z, cx, cy;
+
+	if (!c || !c->mon)
+		return;
+	m = c->mon;
+	if (m->w.width <= 0 || m->w.height <= 0)
+		return;
+
+	bw_ = c->geom.width  < 1.0f ? 1.0f : (float)c->geom.width;
+	bh_ = c->geom.height < 1.0f ? 1.0f : (float)c->geom.height;
+	zx = (float)m->w.width / bw_;
+	zy = (float)m->w.height / bh_;
+	z = (zx < zy ? zx : zy) * 0.7f;   /* leave a margin around the window */
+	if (z < 0.1f) z = 0.1f;
+	if (z > 2.0f) z = 2.0f;           /* spotlight may zoom IN, unlike fit-all */
+
+	cx = c->world.x + c->geom.width / 2.0f;
+	cy = c->world.y + c->geom.height / 2.0f;
+	viewport.target_zoom = z;
+	viewport.target_x = cx - (float)m->w.width  / (2.0f * z);
+	viewport.target_y = cy - (float)m->w.height / (2.0f * z);
+	viewport.animating = 1;
+	viewport_schedule_frame();
+	printstatus();
+}
+
+/* Animate the camera back to an explicit (x, y, zoom) — restores the
+ * pre-spotlight view. */
+void
+viewport_animate_to(float x, float y, float zoom)
+{
+	viewport.target_x = x;
+	viewport.target_y = y;
+	viewport.target_zoom = zoom;
+	viewport.animating = 1;
+	viewport_schedule_frame();
+	printstatus();
+}
+
 /* Update camera position when following a window - call this on focus change */
 void
 viewport_follow_focus(void)

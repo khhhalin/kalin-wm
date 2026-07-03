@@ -225,6 +225,8 @@ void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
+void viewport_focus_window(Client *c);
+void viewport_animate_to(float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
@@ -3159,6 +3161,52 @@ client_set_target_geom(Client *c, struct wlr_box geo)
 		 * coords, or a pure size change): apply immediately. */
 		resize(c, geo, 0);
 	}
+}
+
+/* ── Hold-Super spotlight ───────────────────────────────────────────────────
+ * While the shell's radial menu is up (it sends "spotlight 1/0" over IPC after
+ * its own hold debounce), focus the camera on the active window and dim the
+ * rest, then restore the prior view on release. */
+static int spotlight_active;
+static float spotlight_saved_x, spotlight_saved_y, spotlight_saved_zoom;
+
+void
+spotlight_enter(void)
+{
+	Client *c, *f;
+
+	if (spotlight_active || !selmon)
+		return;
+	f = focustop(selmon);
+	if (!f)
+		return;
+
+	spotlight_active = 1;
+	spotlight_saved_x = viewport.target_x;
+	spotlight_saved_y = viewport.target_y;
+	spotlight_saved_zoom = viewport.target_zoom;
+
+	viewport_focus_window(f);
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, selmon))
+			continue;
+		setopacity(c, c == f ? 1.0f : spotlight_dim);
+	}
+}
+
+void
+spotlight_exit(void)
+{
+	Client *c;
+
+	if (!spotlight_active)
+		return;
+	spotlight_active = 0;
+
+	viewport_animate_to(spotlight_saved_x, spotlight_saved_y,
+			spotlight_saved_zoom);
+	wl_list_for_each(c, &clients, link)
+		setopacity(c, 1.0f);
 }
 
 /* Helper to check if a float is close to an integer */
