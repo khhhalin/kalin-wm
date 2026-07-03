@@ -3238,16 +3238,26 @@ client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
 {
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
 		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
-		if (sb && sb->buffer && sb->buffer->width > 0 && sb->buffer->height > 0) {
-			/* dest_size is in layout (logical) coords; buffer->width is pixels,
-			 * so divide by the output scale before applying the zoom. */
+		struct wlr_scene_surface *ss;
+		int dw, dh;
+		if (!sb || !sb->buffer || sb->buffer->width <= 0 || sb->buffer->height <= 0)
+			return;
+		/* dest_size is in layout (logical) coords, so it must be logical_size *
+		 * zoom — independent of how many pixels the client rendered. That keeps
+		 * it correct once the client renders at zoom DPI (crisp, not upscaled). */
+		ss = wlr_scene_surface_try_from_buffer(sb);
+		if (ss && ss->surface && ss->surface->current.width > 0) {
+			dw = MAX(1, (int)lroundf(ss->surface->current.width  * scale));
+			dh = MAX(1, (int)lroundf(ss->surface->current.height * scale));
+		} else {
+			/* Plain buffer (no surface): fall back to pixels / output scale. */
 			float f = scale / (out_scale > 0.0f ? out_scale : 1.0f);
-			int dw = MAX(1, (int)lroundf(sb->buffer->width  * f));
-			int dh = MAX(1, (int)lroundf(sb->buffer->height * f));
-			wlr_scene_buffer_set_dest_size(sb, dw, dh);
-			wlr_scene_buffer_set_filter_mode(sb, is_integer_zoom(scale)
-					? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR);
+			dw = MAX(1, (int)lroundf(sb->buffer->width  * f));
+			dh = MAX(1, (int)lroundf(sb->buffer->height * f));
 		}
+		wlr_scene_buffer_set_dest_size(sb, dw, dh);
+		wlr_scene_buffer_set_filter_mode(sb, is_integer_zoom(scale)
+				? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR);
 	} else if (node->type == WLR_SCENE_NODE_TREE) {
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
 		struct wlr_scene_node *child;
@@ -3277,6 +3287,33 @@ client_set_buffer_scale(Client *c, float scale)
 		scale = 1.0f;
 	out_scale = (c->mon && c->mon->wlr_output) ? c->mon->wlr_output->scale : 1.0f;
 	client_scale_buffers(&c->scene_surface->node, scale, out_scale);
+}
+
+/* Ask each mapped client to render at zoom DPI so zoomed content is crisp, not
+ * upscaled. Called from viewport_tick() when the camera *settles* (not every
+ * frame) to avoid a re-render storm; clients that honor wp_fractional_scale
+ * (foot, most GTK/Qt) re-render at the higher resolution. */
+void
+client_apply_zoom_scale(void)
+{
+	static float applied = -1.0f;
+	Client *c;
+
+	if (fabsf(viewport.zoom - applied) < 0.01f)
+		return;                     /* zoom unchanged since last apply */
+	applied = viewport.zoom;
+
+	wl_list_for_each(c, &clients, link) {
+		float out_scale, target;
+		struct wlr_surface *s = client_surface(c);
+		if (!c->mon || !s || !s->mapped)
+			continue;
+		out_scale = c->mon->wlr_output ? c->mon->wlr_output->scale : 1.0f;
+		target = out_scale * viewport.zoom;
+		if (target < out_scale)        target = out_scale;      /* never below native */
+		if (target > zoom_render_max)  target = zoom_render_max;
+		client_set_scale(s, target);
+	}
 }
 
 void

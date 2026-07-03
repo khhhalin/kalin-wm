@@ -95,6 +95,9 @@ viewport_tick(void)
 		viewport.animating = 0;
 		have_last = 0;
 		arrange(selmon);
+		/* Camera settled: ask clients to re-render at the final zoom DPI so
+		 * zoomed content is crisp rather than upscaled. */
+		client_apply_zoom_scale();
 		/* Publish the settled state to status/IPC/foreign-toplevel so the
 		 * shell OSD shows the final zoom level. */
 		printstatus();

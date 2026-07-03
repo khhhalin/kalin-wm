@@ -695,6 +695,10 @@ void cropdraw(void);
  * compositor tick slides it there (defined in dwl.c). */
 void client_set_target_geom(Client *c, struct wlr_box geo);
 
+/* Ask clients to render at zoom DPI so zoomed content is crisp; called from
+ * viewport_tick() on camera settle (defined in dwl.c). */
+void client_apply_zoom_scale(void);
+
 /* Column layout helpers (layout_world TU) */
 void infinite(Monitor *m);
 void arrange_columns(Monitor *m);

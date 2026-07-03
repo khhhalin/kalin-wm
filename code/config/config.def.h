@@ -27,6 +27,10 @@ static const float anim_damping    = 26.0f;
  * radial menu is up (the focused window stays at 1.0). */
 static const float spotlight_dim = 0.35f;
 
+/* Crisp zoom: cap on the render scale (output_scale * zoom) the compositor asks
+ * clients to render at when zoomed in. Higher = crisper deep zoom, more GPU. */
+static const float zoom_render_max = 3.0f;
+
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 
