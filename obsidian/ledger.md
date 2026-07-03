@@ -18,9 +18,15 @@ Dates are absolute.
   whether the client rendered at 1× or zoom×. Verified in the [[test-vm]]: foot
   glyphs are sharp at deep zoom. Caveat: only fractional-scale-aware clients
   (foot, most GTK/Qt) get crisp; others stay soft.
-- **Deferred (next):** `Super+Print` 4K-on-HD capture — render the scene to a 2×
-  offscreen buffer → PNG. Designed in the plan; benefits from the crisp-zoom
-  high-DPI rendering.
+- **4K screenshot on an HD panel (`Super+Print`).** New `modules/capture.c`:
+  renders the focused view to a throwaway **2× headless `wlr_scene_output`**
+  (sharing the scene, allocator, renderer), reads the buffer back with
+  `wlr_texture_read_pixels`, and writes a PNG via a **self-contained encoder**
+  (stored/uncompressed deflate — no zlib in the dev shell). Lands in
+  `$KALIN_SHOT_DIR` or `$HOME`. Verified in the [[test-vm]]: a valid 2560×1600
+  PNG of the real desktop (= 3840×2160 from a 1080p panel). Files are large
+  (~12 MB @ 2560², ~33 MB @ 4K) since uncompressed — adding zlib to the flake
+  would shrink them ~10×.
 - **Note:** the fluid/zoom code keeps growing `dwl.c`; still owes a
   `modules/anim.c` extraction.
 
