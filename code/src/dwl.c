@@ -217,6 +217,7 @@ static void outputmgrtest(struct wl_listener *listener, void *data);
 static void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 void printstatus(void);
+int clients_anim_step(void);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 /* Defined in the separately-compiled viewport_ops TU. */
@@ -2836,6 +2837,10 @@ rendermon(struct wl_listener *listener, void *data)
 	struct timespec now;
 
 	viewport_tick();
+	/* Step window spring-glide in the frame callback so it is vsync-aligned with
+	 * the camera; keep frames coming while anything is still moving. */
+	if (clients_anim_step())
+		wlr_output_schedule_frame(m->wlr_output);
 	offscreen_indicators_update();
 
 	/* wlr_scene_surface resets each buffer's dest_size to the surface's native
@@ -3049,26 +3054,12 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 /* ── Window spring-glide animation ─────────────────────────────────────────
  * The column layout writes each tiled client's target *world* geometry via
- * client_set_target_geom(); this event-loop timer springs the rendered world
- * position toward it (size is applied immediately) so columns slide instead of
- * snapping. Camera pans don't trigger it: world coords are unchanged then, so
- * the "size-only" branch just repositions via the existing resize() path. */
-static struct wl_event_source *client_anim_timer;
+ * client_set_target_geom(); clients_anim_step() (run each frame from
+ * rendermon(), so it is vsync-aligned with the camera) springs the rendered
+ * world position toward it. Per frame we only move the client's scene node —
+ * cheap; a full resize() runs once on settle. */
 static struct timespec client_anim_last;
 static int client_anim_have_last;
-static int client_anim_tick(void *data);
-
-static void
-schedule_client_anim(void)
-{
-	if (!event_loop)
-		return;
-	if (!client_anim_timer)
-		client_anim_timer = wl_event_loop_add_timer(event_loop,
-				client_anim_tick, NULL);
-	if (client_anim_timer)
-		wl_event_source_timer_update(client_anim_timer, 16);
-}
 
 static float
 spring_step(float cur, float target, float *vel, float dt)
@@ -3079,14 +3070,15 @@ spring_step(float cur, float target, float *vel, float dt)
 	return cur + (*vel) * dt;
 }
 
-static int
-client_anim_tick(void *data)
+/* Advance every animating client by one frame. Returns 1 while any is still
+ * moving so rendermon() keeps scheduling frames. */
+int
+clients_anim_step(void)
 {
 	struct timespec now;
 	Client *c;
 	float dt;
 	int still = 0;
-	(void)data;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	if (!client_anim_have_last) {
@@ -3103,7 +3095,6 @@ client_anim_tick(void *data)
 		dt = 0.1f; /* clamp after a stall so windows don't jump */
 
 	wl_list_for_each(c, &clients, link) {
-		struct wlr_box b;
 		if (!c->animating)
 			continue;
 		c->anim_x = spring_step(c->anim_x, (float)c->target_geom.x, &c->vx, dt);
@@ -3111,6 +3102,7 @@ client_anim_tick(void *data)
 		if (fabsf(c->anim_x - (float)c->target_geom.x) < 0.5f
 				&& fabsf(c->anim_y - (float)c->target_geom.y) < 0.5f
 				&& fabsf(c->vx) < 2.0f && fabsf(c->vy) < 2.0f) {
+			/* Settle: one full resize to finalize size/clip/scale. */
 			c->animating = 0;
 			c->vx = c->vy = 0;
 			c->anim_x = c->target_geom.x;
@@ -3118,18 +3110,19 @@ client_anim_tick(void *data)
 			resize(c, c->target_geom, 0);
 			continue;
 		}
-		b = c->target_geom;
-		b.x = (int)lroundf(c->anim_x);
-		b.y = (int)lroundf(c->anim_y);
-		resize(c, b, 0);
+		/* Cheap per-frame move: reposition the client's scene node (borders and
+		 * focus ring are its children) — no full resize(). */
+		c->geom.x = (int)lroundf(c->anim_x);
+		c->geom.y = (int)lroundf(c->anim_y);
+		if (c->scene)
+			wlr_scene_node_set_position(&c->scene->node,
+					WORLD_TO_SCREEN_X(c->geom.x), WORLD_TO_SCREEN_Y(c->geom.y));
 		still = 1;
 	}
 
 	if (!still)
 		client_anim_have_last = 0;
-	if (still && client_anim_timer)
-		wl_event_source_timer_update(client_anim_timer, 16);
-	return 0;
+	return still;
 }
 
 void
@@ -3138,10 +3131,10 @@ client_set_target_geom(Client *c, struct wlr_box geo)
 	int moving;
 	if (!c)
 		return;
-	c->target_geom = geo;
 
 	/* First placement (new window) or animations disabled: snap into place. */
 	if (!c->anim_ready || anim_stiffness <= 0.0f) {
+		c->target_geom = geo;
 		c->anim_ready = 1;
 		c->animating = 0;
 		c->anim_x = geo.x;
@@ -3151,23 +3144,32 @@ client_set_target_geom(Client *c, struct wlr_box geo)
 		return;
 	}
 
+	/* Already gliding toward this exact target (e.g. re-arranged every camera
+	 * frame during a pan): leave it to the frame stepper — no per-frame
+	 * resize(). */
+	if (c->animating && geo.x == c->target_geom.x && geo.y == c->target_geom.y
+			&& geo.width == c->geom.width && geo.height == c->geom.height)
+		return;
+
 	moving = (geo.x != c->geom.x) || (geo.y != c->geom.y);
-	if (!c->animating) {
-		c->anim_x = c->geom.x;
-		c->anim_y = c->geom.y;
-	}
+	c->target_geom = geo;
 
 	if (moving || c->animating) {
-		/* Apply the new size now at the current (animating) position; the
-		 * position springs toward target on the next ticks. */
-		struct wlr_box now = { (int)lroundf(c->anim_x), (int)lroundf(c->anim_y),
+		struct wlr_box now;
+		if (!c->animating) {
+			c->anim_x = c->geom.x;
+			c->anim_y = c->geom.y;
+		}
+		/* Apply the new size now at the current position; position springs. */
+		now = (struct wlr_box){ (int)lroundf(c->anim_x), (int)lroundf(c->anim_y),
 			geo.width, geo.height };
 		c->animating = 1;
 		resize(c, now, 0);
-		schedule_client_anim();
+		if (c->mon && c->mon->wlr_output)
+			wlr_output_schedule_frame(c->mon->wlr_output);
 	} else {
-		/* No movement (e.g. a camera pan re-arranging at the same world
-		 * coords, or a pure size change): apply immediately. */
+		/* No movement (camera pan re-arrange at the same world coords, or a
+		 * pure size change): apply immediately. */
 		resize(c, geo, 0);
 	}
 }
