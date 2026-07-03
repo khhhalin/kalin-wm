@@ -3,6 +3,27 @@
 Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 Dates are absolute.
 
+## 2026-07-03 — smooth animation + crisp high-res zoom
+
+- **Frame-synced window glide.** The window spring now steps inside
+  `rendermon()` (vsync-aligned with the camera) instead of a free-running 16 ms
+  timer, and each frame only repositions the client's scene node (borders/focus
+  ring are its children) rather than calling the full `resize()`; `resize()`
+  runs once on settle. Fixes the janky, unsynced glide.
+- **Crisp zoom via fractional-scale.** Real fix for "zoom is pixelated": the old
+  path upscaled the native buffer. On camera *settle* the compositor now asks
+  each client to render at `output_scale * zoom` via `client_set_scale`
+  (wp_fractional_scale, already wired), capped at `zoom_render_max`. `dest_size`
+  uses the surface *logical* size × zoom (resolution-independent), so it's right
+  whether the client rendered at 1× or zoom×. Verified in the [[test-vm]]: foot
+  glyphs are sharp at deep zoom. Caveat: only fractional-scale-aware clients
+  (foot, most GTK/Qt) get crisp; others stay soft.
+- **Deferred (next):** `Super+Print` 4K-on-HD capture — render the scene to a 2×
+  offscreen buffer → PNG. Designed in the plan; benefits from the crisp-zoom
+  high-DPI rendering.
+- **Note:** the fluid/zoom code keeps growing `dwl.c`; still owes a
+  `modules/anim.c` extraction.
+
 ## 2026-07-03 — Niri-style fluid feel + spotlight window-actions
 
 - **Window spring-glide (Phase 1).** Windows animate their world position toward
