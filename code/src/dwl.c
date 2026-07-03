@@ -3184,7 +3184,13 @@ void
 setfloating(Client *c, int floating)
 {
 	Client *p = client_get_parent(c);
+	int was_floating = c->isfloating;
 	c->isfloating = floating;
+	/* Re-tiling a floating window: drop its stale world position so the column
+	 * layout flows it into a fresh column at the right edge (Niri-style) instead
+	 * of snapping it back to wherever it last floated. */
+	if (was_floating && !floating)
+		c->world.set = false;
 	/* If in floating layout do not change the client's layer */
 	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
 		return;

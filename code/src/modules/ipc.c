@@ -90,7 +90,8 @@ ipc_build_state(char *buf, size_t len)
 		"\"crop\":%s,"
 		"\"super_held\":%s,"
 		"\"exit_pending\":%s,"
-		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\",\"fullscreen\":%s}}\n",
+		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
+		"\"fullscreen\":%s,\"floating\":%s}}\n",
 		viewport.x, viewport.y, viewport.zoom,
 		viewport.follow ? "true" : "false",
 		viewport.follow_new_windows ? "true" : "false",
@@ -98,7 +99,8 @@ ipc_build_state(char *buf, size_t len)
 		super_held ? "true" : "false",
 		exit_pending ? "true" : "false",
 		appid, title,
-		(f && f->isfullscreen) ? "true" : "false");
+		(f && f->isfullscreen) ? "true" : "false",
+		(f && f->isfloating) ? "true" : "false");
 }
 
 static void
