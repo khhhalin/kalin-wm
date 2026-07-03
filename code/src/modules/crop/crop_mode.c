@@ -1,7 +1,18 @@
-/* Crop mode operations: enter, draw, apply/cancel. */
+/* Crop mode operations: enter, draw, apply/cancel.
+ *
+ * Separately-compiled TU: owns the shared `crop_editor` UI state, reads the
+ * `viewport` camera, and links against dwl.c's externed globals/functions
+ * (clients, selmon, cursor, layers, focustop, resize, arrange, printstatus)
+ * plus same_column_x from the layout TU, all via kalin.h; client_* accessors
+ * come from client_inline.h. */
+#include "kalin.h"
+#include "client_inline.h"
 
-/* same_column_x() is defined in modules/layout/layout_world.c and forward
- * declared in dwl.c. */
+/* Crop mode visuals - bright border on transparent selection */
+#define CROP_OVERLAY_ALPHA 0.5f     /* Dark overlay for contrast */
+#define CROP_BORDER_BRIGHT 1.0f     /* Full white brightness */
+#define CROP_HANDLE_SIZE 12         /* Corner handle size in pixels */
+#define CROP_BORDER_WIDTH 2         /* Border line thickness */
 
 static void
 crop_adjust_column_after_height_change(Client *changed, int delta_h)

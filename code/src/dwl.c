@@ -91,12 +91,6 @@
  * instance, so it has external linkage. */
 CropEditor crop_editor;
 
-/* Crop mode visuals - bright border on transparent selection */
-#define CROP_OVERLAY_ALPHA 0.5f     /* Dark overlay for contrast */
-#define CROP_BORDER_BRIGHT 1.0f     /* Full white brightness */
-#define CROP_HANDLE_SIZE 12         /* Corner handle size in pixels */
-#define CROP_BORDER_WIDTH 2         /* Border line thickness */
-
 /* 2D Viewport state - global view transform. Type lives in kalin.h; the
  * viewport/layout/crop/ipc TUs link against this instance (external linkage). */
 Viewport viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
@@ -229,10 +223,11 @@ void viewport_tick(void);
 /* Defined in the separately-compiled wallpaper TU. */
 void wallpaper_configure(int w, int h);
 void wallpaper_update(void);
-static void cropbegin(const Arg *arg);
-static void cropcancel(const Arg *arg);
-static void cropend(const Arg *arg);
-static void cropdraw(void);
+/* Defined in the separately-compiled crop_mode TU. */
+void cropbegin(const Arg *arg);
+void cropcancel(const Arg *arg);
+void cropend(const Arg *arg);
+void cropdraw(void);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
@@ -371,8 +366,8 @@ static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
 static struct wlr_pointer_constraint_v1 *active_constraint;
 
-static struct wlr_cursor *cursor;
-static struct wlr_xcursor_manager *cursor_mgr;
+struct wlr_cursor *cursor;
+struct wlr_xcursor_manager *cursor_mgr;
 
 static struct wlr_scene_rect *root_bg;
 static struct wlr_session_lock_manager_v1 *session_lock_mgr;
@@ -2745,7 +2740,6 @@ quit(const Arg *arg)
 	}
 }
 
-#include "modules/crop/crop_mode.c"
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/ui/overlay_clock.c"
 #include "modules/ipc.c"

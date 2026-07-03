@@ -662,6 +662,12 @@ void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
 
+/* Crop mode (crop_mode TU) */
+void cropbegin(const Arg *arg);
+void cropcancel(const Arg *arg);
+void cropend(const Arg *arg);
+void cropdraw(void);
+
 /* Column layout helpers (layout_world TU) */
 void infinite(Monitor *m);
 void arrange_columns(Monitor *m);
