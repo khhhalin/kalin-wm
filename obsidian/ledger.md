@@ -3,6 +3,28 @@
 Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 Dates are absolute.
 
+## 2026-07-03
+
+- **Phase 2 linkage split: 5 more modules extracted (blocker #2 cleared).**
+  Promoted the three dwl.c-private anonymous structs to shared linkage — gave
+  them named types (`Viewport`, `Wallpaper`, `CropEditor`) in
+  [[dwl-fork|kalin.h]]'s always-visible TYPES section, made dwl.c own single
+  external-linkage instances, and declared `extern` handles. That unblocked all
+  five struct-coupled modules, now their own TUs: `viewport/viewport_ops.c`,
+  `layout/layout_world.c`, `ui/wallpaper.c`, `crop/crop_mode.c`, and `ipc.c`.
+  Additional de-static work along the way: `event_loop`, `printstatus`,
+  `layers[]`, `cursor`/`cursor_mgr`, the `viewport_*`/`infinite`/`move_column`/
+  `arrange_columns` entry points, and the shared `same_column_x` helper (crop
+  calls it across the layout TU boundary). Moved the `CROP_*` visual macros into
+  `crop_mode.c` (only used there). `nm` confirms one global def each of
+  `viewport`/`wallpaper`/`crop_editor` with modules referencing them as `U`.
+  Both build profiles pass; `make test` 18/18. Committed as five focused
+  commits (one per module + the promotion).
+  - **Only blocker #1 remains:** the two UI modules (`offscreen_indicators`,
+    `overlay_clock`) stay `#include`d in dwl.c pending the `config.h`
+    appearance-vs-keybind-tables split. Deferred by decision — it's a
+    user-facing config.def.h change and not worth doing until it matters.
+
 ## 2026-07-02
 
 - **Phase 2 linkage split begun (true separate compilation).** Chose real
