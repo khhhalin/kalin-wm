@@ -73,6 +73,42 @@ get_rightmost_column(Monitor *m)
 	return col;
 }
 
+/* Snap target for a window dropped at drop_x (world units) after a Win+drag:
+ * if the drop overlaps an existing column, return that column's x (join its
+ * stack); otherwise return drop_x so arrange_columns orders it into a new
+ * column at the drop position. `exclude` is the dragged window itself. */
+float
+nearest_column_x(Monitor *m, Client *exclude, float drop_x)
+{
+	Client *c;
+	float best_x = drop_x;
+	float best_dist = 1e9f;
+
+	wl_list_for_each(c, &clients, link) {
+		float left, right, d;
+		if (c == exclude)
+			continue;
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen || !c->world.set)
+			continue;
+		left = c->world.x;
+		right = c->world.x + c->geom.width;
+		if (drop_x < left)
+			d = left - drop_x;
+		else if (drop_x > right)
+			d = drop_x - right;
+		else
+			d = 0.0f; /* dropped inside this column */
+		if (d < best_dist) {
+			best_dist = d;
+			best_x = c->world.x;
+		}
+	}
+
+	/* Join only when the drop actually lands on a column; otherwise keep the raw
+	 * drop x so it becomes a new column ordered by position. */
+	return best_dist == 0.0f ? best_x : drop_x;
+}
+
 /* Place a window in niri-style layout */
 void
 place_window_column(Client *c, Monitor *m)

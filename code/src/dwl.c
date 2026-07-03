@@ -589,6 +589,7 @@ pty_child_reaped(pid_t pid)
  * same_column_x is shared: the crop module (still #included here) also uses it. */
 void infinite(Monitor *m);
 int same_column_x(float a, float b);
+float nearest_column_x(Monitor *m, Client *exclude, float drop_x);
 
 /* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
 void ftl_create(Client *c);
@@ -943,11 +944,25 @@ buttonpress(struct wl_listener *listener, void *data)
 		/* If you released any buttons, we exit interactive move/resize mode. */
 		/* TODO: should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
+			int was_move = (cursor_mode == CurMove);
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
 			/* Drop the window off on its new monitor */
 			selmon = xytomon(cursor->x, cursor->y);
 			setmon(grabc, selmon);
+			/* A moved window snaps back into the column strip at the drop
+			 * position (re-tile); Phase 1 then glides it into place. A resized
+			 * window keeps its new free size. */
+			if (was_move && grabc && grabc->mon && !grabc->isfullscreen
+					&& grabc->mon->lt[grabc->mon->sellt]->arrange == infinite) {
+				grabc->world.x = nearest_column_x(grabc->mon, grabc,
+						SCREEN_TO_WORLD_X(cursor->x));
+				grabc->world.y = SCREEN_TO_WORLD_Y(cursor->y);
+				grabc->world.set = true;
+				grabc->isfloating = 0;
+				wlr_scene_node_reparent(&grabc->scene->node, layers[LyrTile]);
+				arrange(grabc->mon);
+			}
 			grabc = NULL;
 			return;
 		}

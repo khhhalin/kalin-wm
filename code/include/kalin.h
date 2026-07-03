@@ -694,6 +694,7 @@ void arrange_columns(Monitor *m);
 void place_window_column(Client *c, Monitor *m);
 void move_column(const Arg *arg);
 int same_column_x(float a, float b);
+float nearest_column_x(Monitor *m, Client *exclude, float drop_x);
 
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);
