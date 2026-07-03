@@ -30,7 +30,7 @@ LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
 # modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
 # commit_size.c is compiled as its own translation unit. The other listed files
 # (util/crash_report/persistence) are independent translation units.
-SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/foreign_toplevel.c code/src/modules/viewport/viewport_ops.c code/src/modules/layout/layout_world.c code/src/crash_report.c code/src/persistence.c
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/foreign_toplevel.c code/src/modules/viewport/viewport_ops.c code/src/modules/layout/layout_world.c code/src/modules/ui/wallpaper.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
 DEPS = $(OBJS:.o=.d)

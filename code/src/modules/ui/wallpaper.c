@@ -1,4 +1,8 @@
-/* World wallpaper system (repeating/tiled), anchored to world coordinates. */
+/* World wallpaper system (repeating/tiled), anchored to world coordinates.
+ *
+ * Separately-compiled TU: owns the shared `wallpaper` scene state, reads the
+ * `viewport` camera, and links against dwl.c's layers[]/ecalloc via kalin.h. */
+#include "kalin.h"
 
 static void
 wallpaper_destroy(void)

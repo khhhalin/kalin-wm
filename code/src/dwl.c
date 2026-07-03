@@ -226,8 +226,9 @@ void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
 void viewport_tick(void);
-static void wallpaper_configure(int w, int h);
-static void wallpaper_update(void);
+/* Defined in the separately-compiled wallpaper TU. */
+void wallpaper_configure(int w, int h);
+void wallpaper_update(void);
 static void cropbegin(const Arg *arg);
 static void cropcancel(const Arg *arg);
 static void cropend(const Arg *arg);
@@ -341,7 +342,7 @@ static struct wl_display *dpy;
 struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
 static struct wlr_scene *scene;
-static struct wlr_scene_tree *layers[NUM_LAYERS];
+struct wlr_scene_tree *layers[NUM_LAYERS];
 static struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
@@ -2747,7 +2748,6 @@ quit(const Arg *arg)
 #include "modules/crop/crop_mode.c"
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/ui/overlay_clock.c"
-#include "modules/ui/wallpaper.c"
 #include "modules/ipc.c"
 
 void
