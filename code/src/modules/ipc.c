@@ -14,8 +14,13 @@
  *       zoom-reset        reset camera to origin / 1.0
  *       follow-toggle     toggle camera-follows-focus
  *
- * The socket path is exported via $KALIN_IPC_SOCKET. This file is #include'd
- * into dwl.c and uses its globals (dpy, event_loop, viewport, selmon, ...). */
+ * The socket path is exported via $KALIN_IPC_SOCKET. Separately-compiled TU:
+ * links against dwl.c's externed globals/functions (event_loop, selmon,
+ * focustop, viewport_pan/zoom/reset/toggle_follow) and the shared viewport /
+ * crop_editor state via kalin.h; client_* accessors from client_inline.h. */
+
+#include "kalin.h"
+#include "client_inline.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -100,7 +105,7 @@ ipc_send(int fd, const char *msg)
 	(void)n; /* best-effort; client fds are non-blocking */
 }
 
-static void
+void
 ipc_broadcast_state(void)
 {
 	char raw[IPC_BUF_SIZE];
@@ -207,7 +212,7 @@ ipc_handle_accept(int fd, uint32_t mask, void *data)
 	return 0;
 }
 
-static void
+void
 ipc_init(const char *wl_display_name)
 {
 	struct sockaddr_un addr = {0};
@@ -255,7 +260,7 @@ ipc_init(const char *wl_display_name)
 	wlr_log(WLR_INFO, "ipc: listening on %s", ipc_socket_path);
 }
 
-static void
+void
 ipc_finish(void)
 {
 	int i;

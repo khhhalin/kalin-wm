@@ -586,10 +586,10 @@ void ftl_destroy(Client *c);
 void ftl_update_title(Client *c);
 void ftl_sync_state(void);
 
-/* Shell IPC socket (defined in modules/ipc.c). */
-static void ipc_init(const char *wl_display_name);
-static void ipc_broadcast_state(void);
-static void ipc_finish(void);
+/* Shell IPC socket (defined in the separately-compiled modules/ipc.c TU). */
+void ipc_init(const char *wl_display_name);
+void ipc_broadcast_state(void);
+void ipc_finish(void);
 
 /* Buffer scaling */
 static int is_integer_zoom(float zoom);
@@ -2742,7 +2742,6 @@ quit(const Arg *arg)
 
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/ui/overlay_clock.c"
-#include "modules/ipc.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
