@@ -2838,6 +2838,15 @@ rendermon(struct wl_listener *listener, void *data)
 	viewport_tick();
 	offscreen_indicators_update();
 
+	/* wlr_scene_surface resets each buffer's dest_size to the surface's native
+	 * size on every surface commit, which clobbers the zoom applied in resize().
+	 * Re-apply it here — after commits, just before rendering — so window
+	 * *content* scales with the camera, not just the frame. */
+	wl_list_for_each(c, &clients, link) {
+		if (client_is_rendered_on_mon(c, m))
+			client_set_buffer_scale(c, viewport.zoom);
+	}
+
 	/* Render if no XDG clients have an outstanding resize and are visible on
 	 * this monitor. */
 	wl_list_for_each(c, &clients, link) {
@@ -3217,56 +3226,55 @@ is_integer_zoom(float zoom)
 	return fabsf(zoom - rounded) < 0.01f;
 }
 
-/* Scale the window's buffer to implement zoom at the content level
- * This makes window content larger/smaller rather than just moving windows apart */
+/* Recursively scale every buffer under a scene node to `scale` of its natural
+ * size, and scale child offsets so subsurfaces stay aligned. wlr_scene_xdg_
+ * surface_create nests the real surface buffer below scene_surface, so a
+ * direct-children-only pass never found it — that was the "only the frame
+ * zooms" bug. */
+static void
+client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
+{
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+		if (sb && sb->buffer && sb->buffer->width > 0 && sb->buffer->height > 0) {
+			/* dest_size is in layout (logical) coords; buffer->width is pixels,
+			 * so divide by the output scale before applying the zoom. */
+			float f = scale / (out_scale > 0.0f ? out_scale : 1.0f);
+			int dw = MAX(1, (int)lroundf(sb->buffer->width  * f));
+			int dh = MAX(1, (int)lroundf(sb->buffer->height * f));
+			wlr_scene_buffer_set_dest_size(sb, dw, dh);
+			wlr_scene_buffer_set_filter_mode(sb, is_integer_zoom(scale)
+					? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR);
+		}
+	} else if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link) {
+			/* Scale a subsurface's offset from the primary surface (the
+			 * primary sits at 0,0 so it is unaffected). */
+			if (child->x || child->y)
+				wlr_scene_node_set_position(child,
+						(int)lroundf(child->x * scale),
+						(int)lroundf(child->y * scale));
+			client_scale_buffers(child, scale, out_scale);
+		}
+	}
+}
+
+/* Scale the window's buffer to implement zoom at the content level: window
+ * content grows/shrinks with the camera, not just the frame. Must be re-applied
+ * each frame in rendermon() because wlr_scene_surface resets dest_size on every
+ * surface commit. */
 void
 client_set_buffer_scale(Client *c, float scale)
 {
-	struct wlr_scene_node *node, *tmp;
-	struct wlr_scene_buffer *buffer;
-	int dest_w, dest_h;
-	
+	float out_scale;
 	if (!c || !c->scene_surface)
 		return;
 	if (scale <= 0.0f)
 		scale = 1.0f;
-	
-	/* Validate geometry */
-	if (c->geom.width <= 2 * (int)c->bw || c->geom.height <= 2 * (int)c->bw)
-		return;
-	
-	/* Calculate destination size */
-	dest_w = (int)((c->geom.width - 2 * c->bw) * scale);
-	dest_h = (int)((c->geom.height - 2 * c->bw) * scale);
-
-	if (dest_w < 1)
-		dest_w = 1;
-	if (dest_h < 1)
-		dest_h = 1;
-	
-	/* Find the buffer node inside scene_surface tree.
-	 * node->parent is the wlr_scene_tree that owns the node, so compare it
-	 * against the tree itself (not its embedded node). The previous form
-	 * compared a wlr_scene_tree* to a wlr_scene_node*, which was always
-	 * unequal and skipped every child, disabling buffer scaling. */
-	wl_list_for_each_safe(node, tmp, &c->scene_surface->children, link) {
-		if (node->parent != c->scene_surface)
-			continue;
-		if (node->type != WLR_SCENE_NODE_BUFFER)
-			continue;
-		buffer = wlr_scene_buffer_from_node(node);
-		if (!buffer)
-			continue;
-
-		wlr_scene_buffer_set_dest_size(buffer, dest_w, dest_h);
-
-		/* Choose filter based on scale type */
-		if (is_integer_zoom(scale)) {
-			wlr_scene_buffer_set_filter_mode(buffer, WLR_SCALE_FILTER_NEAREST);
-		} else {
-			wlr_scene_buffer_set_filter_mode(buffer, WLR_SCALE_FILTER_BILINEAR);
-		}
-	}
+	out_scale = (c->mon && c->mon->wlr_output) ? c->mon->wlr_output->scale : 1.0f;
+	client_scale_buffers(&c->scene_surface->node, scale, out_scale);
 }
 
 void
