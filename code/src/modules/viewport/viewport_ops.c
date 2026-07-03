@@ -1,4 +1,9 @@
-/* Viewport camera operations: pan, zoom, follow, and animation tick. */
+/* Viewport camera operations: pan, zoom, follow, and animation tick.
+ *
+ * Separately-compiled TU: reads the shared `viewport` camera state and links
+ * against dwl.c's externed globals/functions (selmon, clients, event_loop,
+ * arrange, focustop, printstatus) via kalin.h. */
+#include "kalin.h"
 
 void viewport_tick(void); /* defined below; used by the animation timer */
 

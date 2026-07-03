@@ -87,19 +87,9 @@
 #define DWL_INTERNAL
 #include "kalin.h"
 
-/* Crop editor state */
-static struct {
-	bool active;
-	Client *target;
-	double start_x, start_y;
-	double end_x, end_y;
-	bool dragging;
-	struct wlr_scene_rect *overlay;      /* dark fullscreen overlay */
-	struct wlr_scene_rect *border[4];    /* border lines: top, bottom, left, right */
-	struct wlr_scene_rect *handles[4];   /* corner handles: TL, TR, BL, BR */
-	struct wlr_scene_rect *crosshair_h;  /* horizontal center line */
-	struct wlr_scene_rect *crosshair_v;  /* vertical center line */
-} crop_editor;
+/* Crop editor state. Type lives in kalin.h; the crop/ipc TUs link against this
+ * instance, so it has external linkage. */
+CropEditor crop_editor;
 
 /* Crop mode visuals - bright border on transparent selection */
 #define CROP_OVERLAY_ALPHA 0.5f     /* Dark overlay for contrast */
@@ -107,17 +97,9 @@ static struct {
 #define CROP_HANDLE_SIZE 12         /* Corner handle size in pixels */
 #define CROP_BORDER_WIDTH 2         /* Border line thickness */
 
-/* 2D Viewport state - global view transform */
-static struct {
-	float x, y;              /* camera position */
-	float target_x, target_y;/* camera animation target */
-	float zoom;              /* zoom level (1.0 = normal) */
-	float target_zoom;       /* zoom animation target */
-	int follow;              /* 1 = camera follows focused window */
-	int follow_new_windows;  /* 1 = auto-pan to new windows */
-	int smooth_pan;          /* 1 = animate camera movement */
-	int animating;           /* 1 = moving toward target */
-} viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
+/* 2D Viewport state - global view transform. Type lives in kalin.h; the
+ * viewport/layout/crop/ipc TUs link against this instance (external linkage). */
+Viewport viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
 
 /* True scene-zoom transform: screen = (world - camera) * zoom. Defined here so
  * input handlers, crop, and the layout (#included later) all share it. Window
@@ -134,16 +116,9 @@ static struct {
 	int pending;             /* 1 = waiting for confirmation */
 } exit_confirm = { 0, 0 };
 
-/* Stationary wallpaper background */
-static struct {
-	struct wlr_scene_tree *tree;
-	struct wlr_scene_tree **tiles;
-	int tiles_x;
-	int tiles_y;
-	int tile_size;
-	int configured_w;
-	int configured_h;
-} wallpaper;
+/* Stationary wallpaper background. Type lives in kalin.h; the wallpaper TU links
+ * against this instance (external linkage). */
+Wallpaper wallpaper;
 
 #define WINDOW_SIZE_HISTORY_MAX 256
 #define WINDOW_SIZE_KEY_MAX 256
@@ -238,18 +213,19 @@ static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int
 static void outputmgrtest(struct wl_listener *listener, void *data);
 static void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
-static void printstatus(void);
+void printstatus(void);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
-static void viewport_pan(const Arg *arg);
-static void viewport_zoom(const Arg *arg);
-static void viewport_reset(const Arg *arg);
-static void viewport_fit_all(const Arg *arg);
+/* Defined in the separately-compiled viewport_ops TU. */
+void viewport_pan(const Arg *arg);
+void viewport_zoom(const Arg *arg);
+void viewport_reset(const Arg *arg);
+void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
-static void viewport_toggle_follow(const Arg *arg);
-static void viewport_toggle_follow_new(const Arg *arg);
-static void viewport_follow_focus(void);
-static void viewport_tick(void);
+void viewport_toggle_follow(const Arg *arg);
+void viewport_toggle_follow_new(const Arg *arg);
+void viewport_follow_focus(void);
+void viewport_tick(void);
 static void wallpaper_configure(int w, int h);
 static void wallpaper_update(void);
 static void cropbegin(const Arg *arg);
@@ -362,7 +338,7 @@ static pid_t child_pid = -1;
 static int locked;
 static void *exclusive_focus;
 static struct wl_display *dpy;
-static struct wl_event_loop *event_loop;
+struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
 static struct wlr_scene *scene;
 static struct wlr_scene_tree *layers[NUM_LAYERS];
@@ -2778,7 +2754,6 @@ quit(const Arg *arg)
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/ui/overlay_clock.c"
 #include "modules/ui/wallpaper.c"
-#include "modules/viewport/viewport_ops.c"
 #include "modules/ipc.c"
 
 void

@@ -380,8 +380,49 @@ struct SessionLock {
     struct wl_listener destroy;
 };
 
-/* Viewport camera, wallpaper, and crop-editor state are dwl.c-private (and the
- * crop UI has its own struct in crop.h); no shared typedefs live here. */
+/**
+ * Viewport - global 2D view transform (camera) over the infinite canvas.
+ * dwl.c owns the single instance; viewport/layout/crop/ipc TUs read it.
+ */
+typedef struct {
+    float x, y;                 /* camera position */
+    float target_x, target_y;   /* camera animation target */
+    float zoom;                 /* zoom level (1.0 = normal) */
+    float target_zoom;          /* zoom animation target */
+    int follow;                 /* 1 = camera follows focused window */
+    int follow_new_windows;     /* 1 = auto-pan to new windows */
+    int smooth_pan;             /* 1 = animate camera movement */
+    int animating;              /* 1 = moving toward target */
+} Viewport;
+
+/**
+ * Wallpaper - stationary tiled background scene state (owned by dwl.c).
+ */
+typedef struct {
+    struct wlr_scene_tree *tree;
+    struct wlr_scene_tree **tiles;
+    int tiles_x;
+    int tiles_y;
+    int tile_size;
+    int configured_w;
+    int configured_h;
+} Wallpaper;
+
+/**
+ * CropEditor - transient crop-mode UI state (owned by dwl.c).
+ */
+typedef struct {
+    bool active;
+    Client *target;
+    double start_x, start_y;
+    double end_x, end_y;
+    bool dragging;
+    struct wlr_scene_rect *overlay;      /* dark fullscreen overlay */
+    struct wlr_scene_rect *border[4];    /* border lines: top, bottom, left, right */
+    struct wlr_scene_rect *handles[4];   /* corner handles: TL, TR, BL, BR */
+    struct wlr_scene_rect *crosshair_h;  /* horizontal center line */
+    struct wlr_scene_rect *crosshair_v;  /* vertical center line */
+} CropEditor;
 
 /* Everything below is the runtime interface (globals + prototypes) that the
  * separately-compiled TUs link against. dwl.c OWNS these symbols (defines them
@@ -464,6 +505,12 @@ extern Monitor *selmon;             /* Selected monitor */
 /* Wallpaper colors */
 extern const float wallbg_rgba[4];
 extern const float wallpattern_rgba[4];
+
+/* Shared runtime state promoted from dwl.c file scope so the separately-
+ * compiled feature TUs can link against it (see the typedefs above). */
+extern Viewport viewport;
+extern Wallpaper wallpaper;
+extern CropEditor crop_editor;
 
 /* Event listeners */
 extern struct wl_listener cursor_axis;
