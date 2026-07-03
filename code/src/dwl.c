@@ -226,6 +226,7 @@ void wallpaper_update(void);
 /* Defined in the separately-compiled crop_mode TU. */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);
+void cropreset(const Arg *arg);
 void cropend(const Arg *arg);
 void cropdraw(void);
 static void rendermon(struct wl_listener *listener, void *data);
@@ -2159,9 +2160,23 @@ keypress(struct wl_listener *listener, void *data)
 		}
 	}
 
+	/* While crop mode is active, an unmodified 'r' resets the target window to
+	 * its uncropped size and leaves crop mode. Handled here (not via keys[]) so
+	 * a bare 'r' is only captured during crop mode and types normally otherwise. */
+	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
+			&& crop_editor.active && CLEANMASK(mods) == 0) {
+		for (i = 0; i < nsyms; i++) {
+			if (xkb_keysym_to_lower(syms[i]) == XKB_KEY_r) {
+				cropreset(NULL);
+				handled = 1;
+				break;
+			}
+		}
+	}
+
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
-	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+	if (!handled && !locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, syms[i]) || handled;
 	}

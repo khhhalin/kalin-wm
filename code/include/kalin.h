@@ -665,6 +665,7 @@ void viewport_follow_focus(void);
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);
+void cropreset(const Arg *arg);
 void cropend(const Arg *arg);
 void cropdraw(void);
 

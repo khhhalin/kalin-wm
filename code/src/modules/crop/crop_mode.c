@@ -38,43 +38,53 @@ crop_adjust_column_after_height_change(Client *changed, int delta_h)
 	}
 }
 
+/* Restore a client to its saved uncropped/base size and clear its crop rect,
+ * pulling the rest of the column back up. No-op if no base size was captured. */
+static void
+crop_restore_base(Client *c)
+{
+	struct wlr_box resetgeo;
+	int old_h, delta_h;
+
+	if (!c || !c->crop.saved_base || c->crop.base_w <= 0 || c->crop.base_h <= 0)
+		return;
+
+	old_h = c->geom.height;
+	resetgeo.x = c->geom.x;
+	resetgeo.y = c->geom.y;
+	resetgeo.width = c->crop.base_w;
+	resetgeo.height = c->crop.base_h;
+	resize(c, resetgeo, 0);
+	delta_h = resetgeo.height - old_h;
+	crop_adjust_column_after_height_change(c, delta_h);
+	c->crop.active = false;
+	c->crop.x = 0.0f;
+	c->crop.y = 0.0f;
+	c->crop.w = 1.0f;
+	c->crop.h = 1.0f;
+	if (c->mon)
+		arrange(c->mon);
+}
+
 void
 cropbegin(const Arg *arg)
 {
 	Client *c;
 	Monitor *m;
-	struct wlr_box resetgeo;
-	int old_h, delta_h;
 	float flash_color[4] = {1.0f, 1.0f, 1.0f, 0.3f};  /* White flash */
 	static struct wlr_scene_rect *flash_rect = NULL;
-	
+
 	if (!selmon) return;
 	c = focustop(selmon);
 	if (!c || crop_editor.active) return;
-	
+
 	crop_editor.active = true;
 	crop_editor.target = c;
 	crop_editor.dragging = false;
 
 	/* Entering crop mode resets this window to uncropped/base size first. */
-	if (c->crop.saved_base && c->crop.base_w > 0 && c->crop.base_h > 0) {
-		old_h = c->geom.height;
-		resetgeo.x = c->geom.x;
-		resetgeo.y = c->geom.y;
-		resetgeo.width = c->crop.base_w;
-		resetgeo.height = c->crop.base_h;
-		resize(c, resetgeo, 0);
-		delta_h = resetgeo.height - old_h;
-		crop_adjust_column_after_height_change(c, delta_h);
-		c->crop.active = false;
-		c->crop.x = 0.0f;
-		c->crop.y = 0.0f;
-		c->crop.w = 1.0f;
-		c->crop.h = 1.0f;
-		if (c->mon)
-			arrange(c->mon);
-	}
-	
+	crop_restore_base(c);
+
 	m = selmon;
 	
 	/* Visual feedback: brief white flash on screen to indicate crop mode */
@@ -173,6 +183,20 @@ cropcancel(const Arg *arg)
 	
 	wlr_log(WLR_INFO, "Crop mode cancelled");
 	printstatus();
+}
+
+/* Reset the crop target to its uncropped/base size and leave crop mode. Bound
+ * to an unmodified 'r' while crop mode is active; dispatched from keypress()
+ * rather than keys[] so 'r' still types normally outside crop mode. */
+void
+cropreset(const Arg *arg)
+{
+	if (!crop_editor.active)
+		return;
+
+	crop_restore_base(crop_editor.target);
+	wlr_log(WLR_INFO, "Crop reset to original size");
+	cropcancel(arg);
 }
 
 void
