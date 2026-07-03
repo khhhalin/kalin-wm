@@ -684,6 +684,9 @@ void viewport_follow_focus(void);
 void spotlight_enter(void);
 void spotlight_exit(void);
 
+/* High-res screenshot (capture TU) */
+void capture_screenshot(const Arg *arg);
+
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);

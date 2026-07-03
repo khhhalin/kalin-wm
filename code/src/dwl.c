@@ -235,6 +235,9 @@ void viewport_tick(void);
 /* Defined in the separately-compiled wallpaper TU. */
 void wallpaper_configure(int w, int h);
 void wallpaper_update(void);
+/* Defined in the separately-compiled capture TU. */
+void capture_screenshot(const Arg *arg);
+
 /* Defined in the separately-compiled crop_mode TU. */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);
@@ -349,13 +352,13 @@ static void *exclusive_focus;
 static struct wl_display *dpy;
 struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
-static struct wlr_scene *scene;
+struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
 static struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
-static struct wlr_renderer *drw;
-static struct wlr_allocator *alloc;
+struct wlr_renderer *drw;
+struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
 static struct wlr_session *session;
 
@@ -393,7 +396,7 @@ static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 
-static struct wlr_output_layout *output_layout;
+struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
 struct wl_list mons;
 Monitor *selmon;

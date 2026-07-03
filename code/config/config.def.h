@@ -166,6 +166,7 @@ static const Key keys[] = {
 	/* Note that Shift changes certain key codes: 2 -> at, etc. */
 	/* modifier                  key                  function          argument */
 	{ MODKEY,                    XKB_KEY_p,           spawn,            {.v = menucmd} },
+	{ MODKEY,                    XKB_KEY_Print,       capture_screenshot, {0} }, /* Super+PrtSc = 2x hi-res PNG */
 	{ MODKEY,                    XKB_KEY_t,           spawn,            {.v = termcmd} }, /* Super+T = terminal */
 	{ MODKEY,                    XKB_KEY_o,           spawn,            {.v = overviewcmd} }, /* Super+O = overview */
 	{ MODKEY,                    XKB_KEY_j,           focusstack,       {.i = +1} },
