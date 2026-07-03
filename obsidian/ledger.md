@@ -3,6 +3,31 @@
 Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 Dates are absolute.
 
+## 2026-07-03 — Niri-style fluid feel + spotlight window-actions
+
+- **Window spring-glide (Phase 1).** Windows animate their world position toward
+  the layout target instead of snapping: each [[dwl-fork|Client]] carries
+  `target_geom` + spring velocity, `arrange_columns()` calls the new
+  `client_set_target_geom()`, and an event-loop timer springs them via
+  `spring_step()`. Size is applied instantly (position-only avoids per-frame
+  reconfigures and layout width-feedback); camera pans stay instant. Tunable via
+  `anim_stiffness`/`anim_damping`. Verified in the [[test-vm]]: `move_column`
+  shows windows mid-slide.
+- **Win+drag → snap to nearest column (Phase 2).** On `CurMove` release a dragged
+  window re-tiles at the drop position (`nearest_column_x()`); Phase 1 glides it
+  in. Required making the hold-Super radial menu **click-through** (empty input
+  mask) — its overlay had blocked the drag.
+- **Hold-Super spotlight + buttons from the window (Phase 3).** The shell drives a
+  spotlight over IPC (`spotlight 1/0`, after its 180 ms debounce): camera zooms to
+  the focused window (`viewport_focus_window`) and the rest dim (`spotlight_dim`),
+  restoring on release (`viewport_animate_to`). The compositor broadcasts the
+  focused window's on-screen `rect` and the radial buttons flow out of the window
+  perimeter. Verified: hold → 106% zoom + buttons around the window; release →
+  100%, undim.
+- **Phase 4 (camera spring) deferred** (existing easing already fluid); **language
+  call: stay C** (a Rust/Smithay rewrite is months of re-plumbing for no
+  user-visible gain).
+
 ## 2026-07-03
 
 - **Phase 2 linkage split: 5 more modules extracted (blocker #2 cleared).**
