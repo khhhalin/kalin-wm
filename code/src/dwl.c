@@ -110,6 +110,12 @@ static struct {
 	int pending;             /* 1 = waiting for confirmation */
 } exit_confirm = { 0, 0 };
 
+/* State bits mirrored to the IPC shell (quickshell hold-Super window-actions
+ * overlay + "press Esc again to quit" prompt). Owned here as external-linkage
+ * globals; the ipc TU reads them via kalin.h. */
+int super_held = 0;
+int exit_pending = 0;
+
 /* Stationary wallpaper background. Type lives in kalin.h; the wallpaper TU links
  * against this instance (external linkage). */
 Wallpaper wallpaper;
@@ -2138,10 +2144,19 @@ keypress(struct wl_listener *listener, void *data)
 			super_tap.down = 1;
 			super_tap.consumed = 0;
 			super_tap.press_time_msec = event->time_msec;
+			/* Surface Super-held to the shell so it can raise the
+			 * hold-Super window-actions overlay. */
+			super_held = 1;
+			ipc_broadcast_state();
 		} else if (super_tap.down) {
 			super_tap.consumed = 1;
 		}
 	} else {
+		if (is_super_key && super_held) {
+			/* Super released: drop the hold-Super overlay. */
+			super_held = 0;
+			ipc_broadcast_state();
+		}
 		if (is_super_key && super_tap.down) {
 			uint32_t dt = event->time_msec - super_tap.press_time_msec;
 			int should_spawn = !locked && !super_tap.consumed && dt <= SUPER_TAP_MAX_MS;
@@ -2743,14 +2758,19 @@ quit(const Arg *arg)
 		/* First press or timer expired - show confirmation message */
 		exit_confirm.pending = 1;
 		exit_confirm.last_press = now;
-		wlr_log(WLR_INFO, "Press exit key again within %d seconds to quit", 
+		wlr_log(WLR_INFO, "Press exit key again within %d seconds to quit",
 			EXIT_CONFIRMATION_SECONDS);
 		/* Also print to stdout for status bars */
 		printf("exit_confirm pending %d\n", EXIT_CONFIRMATION_SECONDS);
 		fflush(stdout);
+		/* Surface the pending confirmation so the shell shows an
+		 * on-screen "press Esc again to quit" prompt. */
+		exit_pending = 1;
+		ipc_broadcast_state();
 	} else {
 		/* Second press within timeout - actually exit */
 		wlr_log(WLR_INFO, "Exit confirmed - quitting dwl");
+		exit_pending = 0;
 		wl_display_terminate(dpy);
 	}
 }

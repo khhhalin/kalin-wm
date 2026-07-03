@@ -88,11 +88,15 @@ ipc_build_state(char *buf, size_t len)
 		"\"viewport\":{\"x\":%.0f,\"y\":%.0f,\"zoom\":%.3f,"
 		"\"follow\":%s,\"follow_new\":%s},"
 		"\"crop\":%s,"
+		"\"super_held\":%s,"
+		"\"exit_pending\":%s,"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\",\"fullscreen\":%s}}\n",
 		viewport.x, viewport.y, viewport.zoom,
 		viewport.follow ? "true" : "false",
 		viewport.follow_new_windows ? "true" : "false",
 		crop_editor.active ? "true" : "false",
+		super_held ? "true" : "false",
+		exit_pending ? "true" : "false",
 		appid, title,
 		(f && f->isfullscreen) ? "true" : "false");
 }

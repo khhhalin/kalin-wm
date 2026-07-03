@@ -512,6 +512,10 @@ extern Viewport viewport;
 extern Wallpaper wallpaper;
 extern CropEditor crop_editor;
 
+/* State bits the ipc TU mirrors to the shell (hold-Super overlay + exit prompt). */
+extern int super_held;
+extern int exit_pending;
+
 /* Event listeners */
 extern struct wl_listener cursor_axis;
 extern struct wl_listener cursor_button;
