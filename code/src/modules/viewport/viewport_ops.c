@@ -323,14 +323,16 @@ viewport_focus_window(Client *c)
 	bh_ = c->geom.height < 1.0f ? 1.0f : (float)c->geom.height;
 	zx = (float)m->w.width / bw_;
 	zy = (float)m->w.height / bh_;
-	z = (zx < zy ? zx : zy) * 0.7f;   /* leave a margin around the window */
+	z = (zx < zy ? zx : zy) * 0.55f;  /* margin: window ~55% of the viewport */
 	if (z < 0.1f) z = 0.1f;
 	if (z > 2.0f) z = 2.0f;           /* spotlight may zoom IN, unlike fit-all */
 
 	cx = c->world.x + c->geom.width / 2.0f;
 	cy = c->world.y + c->geom.height / 2.0f;
 	viewport.target_zoom = z;
-	viewport.target_x = cx - (float)m->w.width  / (2.0f * z);
+	/* Bias the window left of centre (~40% of the width) so the Android-style
+	 * side menu has room to fan out on its right. */
+	viewport.target_x = cx - (float)m->w.width * 0.40f / z;
 	viewport.target_y = cy - (float)m->w.height / (2.0f * z);
 	viewport.animating = 1;
 	viewport_schedule_frame();
