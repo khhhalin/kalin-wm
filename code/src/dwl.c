@@ -115,6 +115,9 @@ static struct {
  * globals; the ipc TU reads them via kalin.h. */
 int super_held = 0;
 int exit_pending = 0;
+/* Clears exit_pending/exit_confirm after the confirmation window so each fresh
+ * arming re-broadcasts a 0->1 edge the shell can flash on. */
+static struct wl_event_source *exit_confirm_timer;
 
 /* Stationary wallpaper background. Type lives in kalin.h; the wallpaper TU links
  * against this instance (external linkage). */
@@ -894,6 +897,10 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED:
+		/* A button press during a Super-hold consumes the tap, so releasing
+		 * Super after e.g. Super+MiddleClick doesn't also fire the launcher. */
+		if (super_tap.down)
+			super_tap.consumed = 1;
 		selmon = xytomon(cursor->x, cursor->y);
 		if (locked)
 			break;
@@ -2748,12 +2755,24 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+static int
+exit_confirm_expire(void *data)
+{
+	(void)data;
+	/* The confirmation window lapsed without a second press: reset so the next
+	 * arming is a fresh 0->1 edge for the shell prompt. */
+	exit_confirm.pending = 0;
+	exit_pending = 0;
+	ipc_broadcast_state();
+	return 0;
+}
+
 void
 quit(const Arg *arg)
 {
 	time_t now = time(NULL);
-	
-	if (!exit_confirm.pending || 
+
+	if (!exit_confirm.pending ||
 	    (now - exit_confirm.last_press) > EXIT_CONFIRMATION_SECONDS) {
 		/* First press or timer expired - show confirmation message */
 		exit_confirm.pending = 1;
@@ -2764,13 +2783,24 @@ quit(const Arg *arg)
 		printf("exit_confirm pending %d\n", EXIT_CONFIRMATION_SECONDS);
 		fflush(stdout);
 		/* Surface the pending confirmation so the shell shows an
-		 * on-screen "press Esc again to quit" prompt. */
+		 * on-screen "press Esc again to quit" prompt, and auto-clear it when
+		 * the window lapses so a later arming re-flashes. */
 		exit_pending = 1;
 		ipc_broadcast_state();
+		if (event_loop) {
+			if (!exit_confirm_timer)
+				exit_confirm_timer = wl_event_loop_add_timer(event_loop,
+						exit_confirm_expire, NULL);
+			if (exit_confirm_timer)
+				wl_event_source_timer_update(exit_confirm_timer,
+						EXIT_CONFIRMATION_SECONDS * 1000);
+		}
 	} else {
 		/* Second press within timeout - actually exit */
 		wlr_log(WLR_INFO, "Exit confirmed - quitting dwl");
 		exit_pending = 0;
+		if (exit_confirm_timer)
+			wl_event_source_timer_update(exit_confirm_timer, 0);
 		wl_display_terminate(dpy);
 	}
 }
