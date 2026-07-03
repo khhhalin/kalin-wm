@@ -662,9 +662,12 @@ void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
 
-/* Column layout helpers */
+/* Column layout helpers (layout_world TU) */
+void infinite(Monitor *m);
 void arrange_columns(Monitor *m);
 void place_window_column(Client *c, Monitor *m);
+void move_column(const Arg *arg);
+int same_column_x(float a, float b);
 
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);

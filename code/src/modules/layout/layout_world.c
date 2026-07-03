@@ -1,4 +1,8 @@
-/* Infinite world layout and column strip window operations. */
+/* Infinite world layout and column strip window operations.
+ *
+ * Separately-compiled TU: reads the shared `viewport` camera and links against
+ * dwl.c's externed clients/selmon/focustop/arrange/resize via kalin.h. */
+#include "kalin.h"
 
 /* infinite layout is now in src/layouts/infinite.c */
 
@@ -16,7 +20,7 @@
 #define COLUMN_GAP 20
 #define WINDOW_GAP 20
 
-static int
+int
 same_column_x(float a, float b)
 {
 	/* Columns are identified by near-identical x origins. A wide tolerance
@@ -70,7 +74,7 @@ get_rightmost_column(Monitor *m)
 }
 
 /* Place a window in niri-style layout */
-static void
+void
 place_window_column(Client *c, Monitor *m)
 {
 	ColumnInfo col;
@@ -100,7 +104,7 @@ place_window_column(Client *c, Monitor *m)
 }
 
 /* Move focused window to adjacent column in the horizontal strip (Niri-like). */
-static void
+void
 move_column(const Arg *arg)
 {
 	Client *c;
@@ -193,7 +197,7 @@ move_column(const Arg *arg)
 }
 
 /* Arrange windows: niri-style vertical stacking in columns */
-static void
+void
 arrange_columns(Monitor *m)
 {
 	Client *c;

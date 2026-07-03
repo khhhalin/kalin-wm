@@ -251,7 +251,7 @@ static void setup(void);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
 static void tagmon(const Arg *arg);
-static void infinite(Monitor *m);
+void infinite(Monitor *m);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
@@ -423,7 +423,7 @@ static struct wl_listener new_session_lock = {.notify = locksession};
 static void focus_directional(const Arg *arg);
 
 /* Column movement (Niri-style) - forward declaration for config.h */
-static void move_column(const Arg *arg);
+void move_column(const Arg *arg);
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -579,11 +579,10 @@ pty_child_reaped(pid_t pid)
 	}
 }
 
-/* Layout functions */
-static void infinite(Monitor *m);
-/* Defined in modules/layout/layout_world.c; declared here because the crop
- * module (included earlier) also uses it. */
-static int same_column_x(float a, float b);
+/* Layout functions (defined in the separately-compiled layout_world TU).
+ * same_column_x is shared: the crop module (still #included here) also uses it. */
+void infinite(Monitor *m);
+int same_column_x(float a, float b);
 
 /* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
 void ftl_create(Client *c);
@@ -595,10 +594,6 @@ void ftl_sync_state(void);
 static void ipc_init(const char *wl_display_name);
 static void ipc_broadcast_state(void);
 static void ipc_finish(void);
-
-/* Hybrid window anchoring system (forward declarations before config.h) */
-static void arrange_columns(Monitor *m);
-static void place_window_column(Client *c, Monitor *m);
 
 /* Buffer scaling */
 static int is_integer_zoom(float zoom);
@@ -2750,7 +2745,6 @@ quit(const Arg *arg)
 }
 
 #include "modules/crop/crop_mode.c"
-#include "modules/layout/layout_world.c"
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/ui/overlay_clock.c"
 #include "modules/ui/wallpaper.c"
