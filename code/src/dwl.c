@@ -246,6 +246,7 @@ static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
+static void client_apply_crop_clip(Client *c);
 void resize(Client *c, struct wlr_box geo, int interact);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
@@ -2865,8 +2866,13 @@ rendermon(struct wl_listener *listener, void *data)
 	 * Re-apply it here — after commits, just before rendering — so window
 	 * *content* scales with the camera, not just the frame. */
 	wl_list_for_each(c, &clients, link) {
-		if (client_is_rendered_on_mon(c, m))
+		if (client_is_rendered_on_mon(c, m)) {
 			client_set_buffer_scale(c, viewport.zoom);
+			/* Same reset-on-commit problem as buffer scale above: a cropped
+			 * client's clip must be reapplied every frame or it reverts to the
+			 * full, uncropped surface as soon as the client commits again. */
+			client_apply_crop_clip(c);
+		}
 	}
 
 	/* Render if no XDG clients have an outstanding resize and are visible on
@@ -2922,17 +2928,76 @@ requestmonstate(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+/* Position the client's content within its frame and, if cropped, clip it to
+ * the selected sub-region (offset + wlr_scene_subsurface_tree_set_clip).
+ * wlroots resets a subsurface tree's clip on every surface commit (the same
+ * reset client_set_buffer_scale works around for dest_size — see its comment),
+ * so this must be re-applied every frame in rendermon(), not just once from
+ * resize(), or the crop silently reverts to the full, uncropped surface as
+ * soon as the client commits again. */
+static void
+client_apply_crop_clip(Client *c)
+{
+	struct wlr_box clip;
+	int base_inner_w, base_inner_h;
+	int src_x, src_y, vis_w, vis_h;
+	int full_clip_w, full_clip_h;
+	float zf;
+	int z_bw;
+
+	if (!c || !c->scene_surface)
+		return;
+
+	zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	z_bw = (int)lroundf(c->bw * zf);
+
+	client_get_clip(c, &clip);
+
+	if (c->crop.active && c->crop.saved_base
+			&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
+		base_inner_w = c->crop.base_w - 2 * (int)c->bw;
+		base_inner_h = c->crop.base_h - 2 * (int)c->bw;
+		full_clip_w = base_inner_w;
+		full_clip_h = base_inner_h;
+		if (clip.x > 0)
+			full_clip_w = MAX(1, base_inner_w - clip.x);
+		if (clip.y > 0)
+			full_clip_h = MAX(1, base_inner_h - clip.y);
+
+		src_x = (int)lroundf(c->crop.x * base_inner_w);
+		src_y = (int)lroundf(c->crop.y * base_inner_h);
+		vis_w = (int)lroundf(c->crop.w * base_inner_w);
+		vis_h = (int)lroundf(c->crop.h * base_inner_h);
+
+		src_x = MAX(0, MIN(full_clip_w - 1, src_x));
+		src_y = MAX(0, MIN(full_clip_h - 1, src_y));
+		vis_w = MAX(1, MIN(full_clip_w - src_x, vis_w));
+		vis_h = MAX(1, MIN(full_clip_h - src_y, vis_h));
+
+		/* Clip subtree to selected source region (source/buffer coords).
+		 * client_set_buffer_scale() already scales dest_size down to match this
+		 * region (vis_w/vis_h, via the crop.w/crop.h fraction), so the clipped
+		 * region displays natively at the frame origin — no extra position
+		 * shift needed (an old per-pixel shift here, sized for full-scale
+		 * display, is stale now that dest_size shrinks with the crop and
+		 * pushed the content out from under the frame). */
+		clip.x += src_x;
+		clip.y += src_y;
+		clip.width = vis_w;
+		clip.height = vis_h;
+	}
+
+	wlr_scene_node_set_position(&c->scene_surface->node, z_bw, z_bw);
+	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+}
+
 void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
-	struct wlr_box clip;
 	int cfg_w, cfg_h;
 	int view_x, view_y;
 	int unbounded_infinite_tile;
-	int base_inner_w, base_inner_h;
-	int src_x, src_y, vis_w, vis_h;
-	int full_clip_w, full_clip_h;
 	
 	/* DEBUG: resize start */
 
@@ -3013,46 +3078,13 @@ resize(Client *c, struct wlr_box geo, int interact)
 			wlr_scene_node_set_position(&c->focus_ring[3]->node, z_w, -ring);
 		}
 
-		client_get_clip(c, &clip);
-
-		/* True crop: keep client configured at base size, but show only a
-		 * cropped region using scene-surface offset + clip rectangle. */
+		/* True crop keeps the client configured at its base (uncropped) size —
+		 * only the displayed region is restricted, via client_apply_crop_clip(). */
 		if (c->crop.active && c->crop.saved_base
 				&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
-			base_inner_w = c->crop.base_w - 2 * (int)c->bw;
-			base_inner_h = c->crop.base_h - 2 * (int)c->bw;
-			full_clip_w = base_inner_w;
-			full_clip_h = base_inner_h;
-			if (clip.x > 0)
-				full_clip_w = MAX(1, base_inner_w - clip.x);
-			if (clip.y > 0)
-				full_clip_h = MAX(1, base_inner_h - clip.y);
-
-			src_x = (int)lroundf(c->crop.x * base_inner_w);
-			src_y = (int)lroundf(c->crop.y * base_inner_h);
-			vis_w = (int)lroundf(c->crop.w * base_inner_w);
-			vis_h = (int)lroundf(c->crop.h * base_inner_h);
-
-			src_x = MAX(0, MIN(full_clip_w - 1, src_x));
-			src_y = MAX(0, MIN(full_clip_h - 1, src_y));
-			vis_w = MAX(1, MIN(full_clip_w - src_x, vis_w));
-			vis_h = MAX(1, MIN(full_clip_h - src_y, vis_h));
-
-			/* Shift content so selected source region starts at frame origin
-			 * (offset scaled to screen space). */
-			wlr_scene_node_set_position(&c->scene_surface->node,
-					z_bw - (int)lroundf(src_x * zf), z_bw - (int)lroundf(src_y * zf));
-
-			/* Clip subtree to selected source region (source/buffer coords). */
-			clip.x += src_x;
-			clip.y += src_y;
-			clip.width = vis_w;
-			clip.height = vis_h;
-
-			cfg_w = base_inner_w;
-			cfg_h = base_inner_h;
+			cfg_w = c->crop.base_w - 2 * (int)c->bw;
+			cfg_h = c->crop.base_h - 2 * (int)c->bw;
 		} else {
-			wlr_scene_node_set_position(&c->scene_surface->node, z_bw, z_bw);
 			cfg_w = c->geom.width - 2 * (int)c->bw;
 			cfg_h = c->geom.height - 2 * (int)c->bw;
 		}
@@ -3063,7 +3095,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, cfg_w, cfg_h);
-	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	client_apply_crop_clip(c);
 
 	/* Scale the displayed buffer to match the zoomed frame. */
 	client_set_buffer_scale(c, viewport.zoom);
@@ -3245,13 +3277,22 @@ is_integer_zoom(float zoom)
 	return fabsf(zoom - rounded) < 0.01f;
 }
 
-/* Recursively scale every buffer under a scene node to `scale` of its natural
- * size, and scale child offsets so subsurfaces stay aligned. wlr_scene_xdg_
- * surface_create nests the real surface buffer below scene_surface, so a
- * direct-children-only pass never found it — that was the "only the frame
- * zooms" bug. */
+/* Recursively scale every buffer under a scene node to (scale_w, scale_h) of
+ * its natural size, and scale child offsets so subsurfaces stay aligned.
+ * wlr_scene_xdg_surface_create nests the real surface buffer below
+ * scene_surface, so a direct-children-only pass never found it — that was the
+ * "only the frame zooms" bug.
+ *
+ * scale_w/scale_h are independent (not just a uniform zoom) so a cropped
+ * client can be handled in the same pass: wlr_scene_subsurface_tree_set_clip's
+ * clip selects a source sub-rect, but wlr_scene_buffer_set_dest_size then
+ * scales *that clipped sub-rect* to fill dest_size — so if dest_size were left
+ * at the full uncropped surface size, the small cropped region would be
+ * stretched up to fill it (the "crop zooms/stretches" bug). Multiplying scale
+ * by the crop fraction (client_set_buffer_scale) makes dest_size match the
+ * clipped region's own size instead. */
 static void
-client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
+client_scale_buffers(struct wlr_scene_node *node, float scale_w, float scale_h, float out_scale)
 {
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
 		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
@@ -3264,16 +3305,17 @@ client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
 		 * it correct once the client renders at zoom DPI (crisp, not upscaled). */
 		ss = wlr_scene_surface_try_from_buffer(sb);
 		if (ss && ss->surface && ss->surface->current.width > 0) {
-			dw = MAX(1, (int)lroundf(ss->surface->current.width  * scale));
-			dh = MAX(1, (int)lroundf(ss->surface->current.height * scale));
+			dw = MAX(1, (int)lroundf(ss->surface->current.width  * scale_w));
+			dh = MAX(1, (int)lroundf(ss->surface->current.height * scale_h));
 		} else {
 			/* Plain buffer (no surface): fall back to pixels / output scale. */
-			float f = scale / (out_scale > 0.0f ? out_scale : 1.0f);
-			dw = MAX(1, (int)lroundf(sb->buffer->width  * f));
-			dh = MAX(1, (int)lroundf(sb->buffer->height * f));
+			float fw = scale_w / (out_scale > 0.0f ? out_scale : 1.0f);
+			float fh = scale_h / (out_scale > 0.0f ? out_scale : 1.0f);
+			dw = MAX(1, (int)lroundf(sb->buffer->width  * fw));
+			dh = MAX(1, (int)lroundf(sb->buffer->height * fh));
 		}
 		wlr_scene_buffer_set_dest_size(sb, dw, dh);
-		wlr_scene_buffer_set_filter_mode(sb, is_integer_zoom(scale)
+		wlr_scene_buffer_set_filter_mode(sb, (is_integer_zoom(scale_w) && is_integer_zoom(scale_h))
 				? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR);
 	} else if (node->type == WLR_SCENE_NODE_TREE) {
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
@@ -3283,9 +3325,9 @@ client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
 			 * primary sits at 0,0 so it is unaffected). */
 			if (child->x || child->y)
 				wlr_scene_node_set_position(child,
-						(int)lroundf(child->x * scale),
-						(int)lroundf(child->y * scale));
-			client_scale_buffers(child, scale, out_scale);
+						(int)lroundf(child->x * scale_w),
+						(int)lroundf(child->y * scale_h));
+			client_scale_buffers(child, scale_w, scale_h, out_scale);
 		}
 	}
 }
@@ -3293,17 +3335,27 @@ client_scale_buffers(struct wlr_scene_node *node, float scale, float out_scale)
 /* Scale the window's buffer to implement zoom at the content level: window
  * content grows/shrinks with the camera, not just the frame. Must be re-applied
  * each frame in rendermon() because wlr_scene_surface resets dest_size on every
- * surface commit. */
+ * surface commit.
+ *
+ * When cropped, the scale is additionally reduced by the crop fraction (see
+ * client_scale_buffers) so the clipped sub-region displays at its own native
+ * size (times zoom) instead of being stretched to fill the full surface. */
 void
 client_set_buffer_scale(Client *c, float scale)
 {
-	float out_scale;
+	float out_scale, scale_w, scale_h;
 	if (!c || !c->scene_surface)
 		return;
 	if (scale <= 0.0f)
 		scale = 1.0f;
 	out_scale = (c->mon && c->mon->wlr_output) ? c->mon->wlr_output->scale : 1.0f;
-	client_scale_buffers(&c->scene_surface->node, scale, out_scale);
+	scale_w = scale_h = scale;
+	if (c->crop.active && c->crop.saved_base
+			&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
+		scale_w = scale * c->crop.w;
+		scale_h = scale * c->crop.h;
+	}
+	client_scale_buffers(&c->scene_surface->node, scale_w, scale_h, out_scale);
 }
 
 /* Ask each mapped client to render at zoom DPI so zoomed content is crisp, not

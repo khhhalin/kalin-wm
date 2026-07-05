@@ -3,6 +3,45 @@
 Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 Dates are absolute.
 
+## 2026-07-06 — fix: cropped window content stretched instead of showing 1:1
+
+Reported bug: after `Super+C` crop-select, the window shrank to the selected
+frame size but its *content* rendered as if zoomed/stretched to fill the
+window's original full size, with a few extra rows/columns bleeding past the
+small frame border. Root-caused in the VM with targeted `wlr_log` probes (not
+guessable from reading the code — the compositor-side clip/geometry math in
+`resize()` was already numerically correct).
+
+**Root cause (`code/src/dwl.c`, the crop rendering in `resize()` /
+`client_set_buffer_scale`):** `wlr_scene_subsurface_tree_set_clip()` selects a
+*source* sub-rectangle from the client's buffer, but `wlr_scene_buffer_set_
+dest_size()` then scales *that selected sub-rectangle* to fill dest_size —
+they're a matched pair, not independent knobs. `client_set_buffer_scale()`
+(shared with the zoom-crispness feature, re-applied every frame because
+wlroots resets a buffer's dest_size on every surface commit) was computing
+dest_size from the client's *full, uncropped* surface size regardless of crop
+— so a small clipped selection got stretched up to fill the full original
+window's worth of pixels. Confirmed by forcing a 20x20 clip and watching it
+blow up into giant blocky glyphs filling most of the window.
+
+**Fix:** `client_set_buffer_scale` now multiplies the zoom scale by the crop
+fraction (`c->crop.w`/`c->crop.h`) when the client is cropped, so dest_size
+matches the clipped region's own size (1:1, times zoom) instead of the full
+surface. `client_scale_buffers` took separate `scale_w`/`scale_h` (previously
+one uniform `scale`) to carry this. A second, smaller bug surfaced once the
+stretch was fixed: a few rows/columns still bled out above the frame — a stale
+position-shift compensation in the crop branch (sized for the old "display at
+full scale" approach, shifting `scene_surface`'s node by the crop offset in
+*full-scale* pixels) was now wrong given dest_size already shrinks to the
+crop's own size; removed it — the node just sits at the frame's content origin
+(`z_bw, z_bw`) like the uncropped case, and the clip's `(x, y)` offset alone
+selects the correct source sub-region.
+
+VM-verified with a large monospace text grid (to make any stretch obvious):
+crop selection now shows at correct font size, no bleed past the frame, stable
+across repeated frames/re-renders. Unrelated behaviors (launcher, uncropped
+windows) unaffected. Build clean, 20/20 unit tests green.
+
 ## 2026-07-06 — modularization step 2: extract keyboard event dispatch to modules/input/keyboard.c
 
 Moved `keypress`, `keypressmod`, `keyrepeat` out of `dwl.c` into a new
