@@ -60,6 +60,19 @@ viewport_tick(void)
 	float dt, k;
 	float dx, dy, dz;
 
+	/* Defensive: keep zoom finite and in a sane range on EVERY frame (before the
+	 * not-animating early-out), so a NaN/inf or near-zero zoom can never reach
+	 * WORLD_TO_SCREEN — enormous coordinates hang a real GPU driver and freeze
+	 * the whole session. Cheap insurance. */
+	if (isnan(viewport.target_zoom) || viewport.target_zoom < 0.05f)
+		viewport.target_zoom = 1.0f;
+	else if (viewport.target_zoom > 20.0f)
+		viewport.target_zoom = 20.0f;
+	if (isnan(viewport.zoom) || viewport.zoom < 0.05f)
+		viewport.zoom = 1.0f;
+	else if (viewport.zoom > 20.0f)
+		viewport.zoom = 20.0f;
+
 	if (!viewport.animating || !selmon) {
 		have_last = 0;
 		return;

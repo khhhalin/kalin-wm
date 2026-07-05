@@ -199,8 +199,8 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_L,           viewport_pan,     {.v = pan_right} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_K,           viewport_pan,     {.v = pan_up} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_J,           viewport_pan,     {.v = pan_down} },
-	{ MODKEY,                    XKB_KEY_equal,       viewport_zoom,    {.f = 1.1f} },
-	{ MODKEY,                    XKB_KEY_minus,       viewport_zoom,    {.f = 0.9f} },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_equal,       viewport_zoom,    {.f = 1.1f} },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_minus,       viewport_zoom,    {.f = 0.9f} },
 	{ MODKEY,                    XKB_KEY_0,           viewport_fit_all, {0} }, /* Super+0 = fit all windows */
 	{ MODKEY,                    XKB_KEY_BackSpace,   viewport_reset,   {0} },
 	{ MODKEY,                    XKB_KEY_z,           viewport_toggle_follow, {0} }, /* toggle camera follow */
@@ -218,7 +218,12 @@ static const Key keys[] = {
 
 
 
-	/* Resize focused window (Super+[ / Super+] / Super+{ / Super+}) */
+	/* Resize focused window: Super+=/- width, Super+Shift+=/- (plus/underscore) height.
+	 * Also keep the bracket binds for width/height. */
+	{ MODKEY,                    XKB_KEY_equal,       resizefocused,    {.v = resize_wide} },
+	{ MODKEY,                    XKB_KEY_minus,       resizefocused,    {.v = resize_narrow} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_plus,        resizefocused,    {.v = resize_tall} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_underscore,  resizefocused,    {.v = resize_short} },
 	{ MODKEY,                    XKB_KEY_bracketleft, resizefocused,    {.v = resize_narrow} },
 	{ MODKEY,                    XKB_KEY_bracketright,resizefocused,    {.v = resize_wide} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft,   resizefocused,    {.v = resize_short} },

@@ -96,6 +96,7 @@ ipc_build_state(char *buf, size_t len)
 		"\"follow\":%s,\"follow_new\":%s},"
 		"\"crop\":%s,"
 		"\"super_held\":%s,"
+		"\"menu\":%s,"
 		"\"exit_pending\":%s,"
 		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
@@ -105,6 +106,7 @@ ipc_build_state(char *buf, size_t len)
 		viewport.follow_new_windows ? "true" : "false",
 		crop_editor.active ? "true" : "false",
 		super_held ? "true" : "false",
+		menu_shown ? "true" : "false",
 		exit_pending ? "true" : "false",
 		rx, ry, rw, rh,
 		appid, title,
@@ -162,11 +164,11 @@ ipc_exec_command(char *line)
 		Arg a = {0};
 		viewport_toggle_follow(&a);
 	} else if (strcmp(cmd, "spotlight") == 0) {
-		char *v = strtok_r(NULL, " \t\r", &save);
-		if (v && atoi(v))
-			spotlight_enter();
-		else
-			spotlight_exit();
+		/* Deliberately a no-op: the hold-Super menu no longer zooms the camera
+		 * (it snapped to wrong positions). Kept so a not-yet-rebuilt shell that
+		 * still sends "spotlight 1/0" can't re-trigger the buggy zoom. Ensure any
+		 * previously-applied dim is cleared. */
+		spotlight_exit();
 	} else {
 		wlr_log(WLR_DEBUG, "ipc: unknown command '%s'", cmd);
 	}

@@ -171,12 +171,15 @@ enum Direction {
 /**
  * Argument type for key/button bindings - supports int, uint, float, or pointer
  */
+#ifndef KALIN_ARG_DEFINED
+#define KALIN_ARG_DEFINED
 typedef union {
     int i;
     uint32_t ui;
     float f;
     const void *v;
 } Arg;
+#endif
 
 /**
  * Mouse button binding
@@ -526,6 +529,7 @@ extern CropEditor crop_editor;
 /* State bits the ipc TU mirrors to the shell (hold-Super overlay + exit prompt). */
 extern int super_held;
 extern int exit_pending;
+extern int menu_shown;
 
 /* Event listeners */
 extern struct wl_listener cursor_axis;
@@ -670,6 +674,7 @@ void unlocksession(struct wl_listener *listener, void *data);
 
 /* Viewport and navigation (kalin-wm specific) */
 void viewport_pan(const Arg *arg);
+void viewport_fit_all(const Arg *arg);
 void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_center_on(Client *c);
@@ -710,8 +715,15 @@ void move_column(const Arg *arg);
 int same_column_x(float a, float b);
 float nearest_column_x(Monitor *m, Client *exclude, float drop_x);
 
+/* Carry the focused window through the grid (Super+Ctrl+Arrows). */
+void move_window_dir(const Arg *arg);
+/* Reset the adaptive spawn cursor when focus moves to a new column. */
+void spawn_cursor_on_focus(Client *c);
+
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);
+/* Nearest tiled window to `from` in direction dir (DIR_*); defined in dwl.c. */
+Client *nearest_in_direction(Client *from, int dir);
 
 /* Wallpaper (kalin-wm specific) */
 void wallpaper_init(void);
@@ -728,6 +740,9 @@ void setsel(struct wl_listener *listener, void *data);
 
 /* Layout */
 void setlayout(const Arg *arg);
+
+/* Shell IPC socket (defined in the separately-compiled modules/ipc.c TU). */
+void ipc_broadcast_state(void);
 
 /* System and lifecycle */
 void checkidleinhibitor(struct wlr_surface *exclude);

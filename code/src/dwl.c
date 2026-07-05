@@ -86,6 +86,7 @@
  * DWL_INTERNAL to pull in only the types and skip kalin.h's extern block. */
 #define DWL_INTERNAL
 #include "kalin.h"
+#include "binds.h"
 
 /* Crop editor state. Type lives in kalin.h; the crop/ipc TUs link against this
  * instance, so it has external linkage. */
@@ -115,6 +116,7 @@ static struct {
  * globals; the ipc TU reads them via kalin.h. */
 int super_held = 0;
 int exit_pending = 0;
+int menu_shown = 0;   /* hold-Super window menu visible (broadcast to the shell) */
 /* Clears exit_pending/exit_confirm after the confirmation window so each fresh
  * arming re-broadcasts a 0->1 edge the shell can flash on. */
 static struct wl_event_source *exit_confirm_timer;
@@ -191,10 +193,6 @@ static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
-static int keybinding(uint32_t mods, xkb_keysym_t sym);
-static void keypress(struct wl_listener *listener, void *data);
-static void keypressmod(struct wl_listener *listener, void *data);
-static int keyrepeat(void *data);
 static void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
@@ -279,13 +277,6 @@ static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
 
-#define SUPER_TAP_MAX_MS 250
-static struct {
-	int down;
-	int consumed;
-	uint32_t press_time_msec;
-} super_tap;
-
 static pid_t launcher_pid = -1;
 
 /* forward declare PTY registration so spawn_pid can call it */
@@ -347,7 +338,7 @@ spawn_pid(const Arg *arg)
 
 /* variables */
 static pid_t child_pid = -1;
-static int locked;
+int locked;  /* extern; consumed by modules/input/keyboard.c */
 static void *exclusive_focus;
 static struct wl_display *dpy;
 struct wl_event_loop *event_loop;
@@ -367,9 +358,9 @@ static struct wlr_xdg_activation_v1 *activation;
 struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 struct wl_list clients; /* tiling order */
-static struct wl_list fstack;  /* focus order */
+struct wl_list fstack;  /* focus order (extern; consumed by layout_world.c) */
 struct wl_list static_listeners;
-static struct wlr_idle_notifier_v1 *idle_notifier;
+struct wlr_idle_notifier_v1 *idle_notifier;  /* extern; consumed by modules/input/keyboard.c */
 static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
 static struct wlr_layer_shell_v1 *layer_shell;
 static struct wlr_output_manager_v1 *output_mgr;
@@ -390,7 +381,7 @@ static struct wlr_session_lock_manager_v1 *session_lock_mgr;
 static struct wlr_scene_rect *locked_bg;
 static struct wlr_session_lock_v1 *cur_lock;
 
-static struct wlr_seat *seat;
+struct wlr_seat *seat;  /* extern; consumed by modules/input/keyboard.c */
 static KeyboardGroup *kb_group;
 static unsigned int cursor_mode;
 static Client *grabc;
@@ -436,6 +427,10 @@ static void focus_directional(const Arg *arg);
 
 /* Column movement (Niri-style) - forward declaration for config.h */
 void move_column(const Arg *arg);
+
+/* Grid window movement + adaptive spawn cursor (defined in layout_world.c). */
+void move_window_dir(const Arg *arg);
+void spawn_cursor_on_focus(Client *c);
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -607,6 +602,13 @@ void ftl_sync_state(void);
 void ipc_init(const char *wl_display_name);
 void ipc_broadcast_state(void);
 void ipc_finish(void);
+
+/* Keyboard event dispatch (defined in the separately-compiled
+ * modules/input/keyboard.c TU); keybinding() itself stays here (below) since it
+ * depends on the static compiled-fallback action functions. */
+void keypress(struct wl_listener *listener, void *data);
+void keypressmod(struct wl_listener *listener, void *data);
+int keyrepeat(void *data);
 
 /* Buffer scaling */
 static int is_integer_zoom(float zoom);
@@ -883,8 +885,20 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * for example when you move the scroll wheel. */
 	struct wlr_pointer_axis_event *event = data;
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
-	/* TODO: allow usage of scroll wheel for mousebindings, it can be implemented
-	 * by checking the event's orientation and the delta of the event */
+	/* Scroll bindings: a modifier + a discrete wheel tick can fire an action. */
+	if (binds_active() && event->delta != 0) {
+		struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
+		uint32_t mods = kb ? wlr_keyboard_get_modifiers(kb) : 0;
+		if (CLEANMASK(mods)) {
+			uint32_t dir;
+			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+				dir = event->delta < 0 ? SCROLL_UP : SCROLL_DOWN;
+			else
+				dir = event->delta < 0 ? SCROLL_LEFT : SCROLL_RIGHT;
+			if (bind_dispatch_scroll(mods, dir))
+				return;
+		}
+	}
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
 			event->time_msec, event->orientation, event->delta,
@@ -904,10 +918,9 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED:
-		/* A button press during a Super-hold consumes the tap, so releasing
-		 * Super after e.g. Super+MiddleClick doesn't also fire the launcher. */
-		if (super_tap.down)
-			super_tap.consumed = 1;
+		/* A button press during a modifier hold cancels any arming tap/hold, so
+		 * releasing Super after e.g. Super+MiddleClick doesn't fire the launcher. */
+		bind_gesture_interrupt();
 		selmon = xytomon(cursor->x, cursor->y);
 		if (locked)
 			break;
@@ -930,6 +943,11 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+		if (binds_active()) {
+			if (bind_dispatch_button(mods, event->button))
+				return;
+			break;
+		}
 		for (b = buttons; b < END(buttons); b++) {
 			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
 					event->button == b->button && b->func) {
@@ -1776,6 +1794,8 @@ focusclient(Client *c, int lift)
 		wl_list_insert(&fstack, &c->flink);
 		selmon = c->mon;
 		c->isurgent = 0;
+		/* Moving focus to a different column resets the adaptive spawn cursor. */
+		spawn_cursor_on_focus(c);
 
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
@@ -1989,6 +2009,55 @@ cone_search_focus(float angle, float cone_width)
 	return nearest;
 }
 
+/*
+ * Nearest tiled window to `from` in direction `dir` (DIR_*), using the same
+ * cone search as directional focus but from an arbitrary origin. Used by
+ * move_window_dir() to find the swap partner. Returns NULL if none.
+ */
+Client *
+nearest_in_direction(Client *from, int dir)
+{
+	Client *c, *nearest = NULL;
+	float from_cx, from_cy, c_cx, c_cy, dx, dy, dist;
+	float min_dist = -1.0f;
+	float angle, cone;
+	int pass;
+
+	if (!from || !from->world.set)
+		return NULL;
+
+	switch (dir) {
+	case DIR_LEFT:  angle = M_PI; break;
+	case DIR_RIGHT: angle = 0.0f; break;
+	case DIR_UP:    angle = -M_PI / 2.0f; break;
+	case DIR_DOWN:  angle = M_PI / 2.0f; break;
+	default: return NULL;
+	}
+
+	window_center(from, &from_cx, &from_cy);
+
+	/* 90° cone first, widen to 180° if nothing found. */
+	for (pass = 0; pass < 2 && !nearest; pass++) {
+		cone = pass == 0 ? M_PI / 2.0f : M_PI;
+		min_dist = -1.0f;
+		wl_list_for_each(c, &clients, link) {
+			if (c == from || !VISIBLEON(c, from->mon))
+				continue;
+			if (c->isfloating || c->isfullscreen || !c->world.set)
+				continue;
+			window_center(c, &c_cx, &c_cy);
+			dx = c_cx - from_cx;
+			dy = c_cy - from_cy;
+			dist = angle_distance_in_cone(dx, dy, angle, cone);
+			if (dist >= 0.0f && (min_dist < 0.0f || dist < min_dist)) {
+				min_dist = dist;
+				nearest = c;
+			}
+		}
+	}
+	return nearest;
+}
+
 /**
  * Focus the nearest window in the specified direction
  * Uses cone search with 90° initial cone, widening to 180° if no window found
@@ -2112,6 +2181,98 @@ inputdevice(struct wl_listener *listener, void *data)
 	wlr_seat_set_capabilities(seat, caps);
 }
 
+/*
+ * Run a bind-engine action resolved from the DSL. Lives here (not in the engine
+ * TU) so the static action functions and the compiled `layouts[]` stay visible.
+ * The engine passes semantic ints (directions, layout index); we translate them
+ * to the concrete wlroots enums / pointers the functions expect.
+ */
+void
+bind_invoke(int action_id, const Arg *arg)
+{
+	switch (action_id) {
+	case ACT_SPAWN:             spawn(arg); break;
+	case ACT_TOGGLE_LAUNCHER:
+		/* Toggle the tap-launcher: if it's already running, close it (kill its
+		 * process group — spawn_pid uses setsid()); otherwise spawn it. */
+		if (launcher_pid > 0 && kill(launcher_pid, 0) == 0) {
+			kill(-launcher_pid, SIGTERM);
+			launcher_pid = -1;
+		} else {
+			launcher_pid = spawn_pid(arg);
+		}
+		break;
+	case ACT_CLOSE:             killclient(arg); break;
+	case ACT_RESIZE:            resizefocused(arg); break;
+	case ACT_VIEWPORT_ZOOM:     viewport_zoom(arg); break;
+	case ACT_VIEWPORT_PAN:      viewport_pan(arg); break;
+	case ACT_VIEWPORT_FIT:      viewport_fit_all(arg); break;
+	case ACT_VIEWPORT_RESET:    viewport_reset(arg); break;
+	case ACT_VIEWPORT_FOLLOW:   viewport_toggle_follow(arg); break;
+	case ACT_VIEWPORT_FOLLOW_NEW: viewport_toggle_follow_new(arg); break;
+	case ACT_MOVE_COLUMN:       move_column(arg); break;
+	case ACT_FOCUS_DIR:         focus_directional(arg); break;
+	case ACT_MOVE_WINDOW:       move_window_dir(arg); break;
+	case ACT_FOCUS_STACK:       focusstack(arg); break;
+	case ACT_TOGGLE_FLOATING:   togglefloating(arg); break;
+	case ACT_TOGGLE_FULLSCREEN: togglefullscreen(arg); break;
+	case ACT_MASTER_ZOOM:       zoom(arg); break;
+	case ACT_OPACITY:           opacityadjust(arg); break;
+	case ACT_CROP:              cropbegin(arg); break;
+	case ACT_CROP_CANCEL:       cropcancel(arg); break;
+	case ACT_SCREENSHOT:        capture_screenshot(arg); break;
+	case ACT_CHVT:              chvt(arg); break;
+	case ACT_QUIT:              quit(arg); break;
+	case ACT_WINDOW_MENU:       menu_shown = 1; ipc_broadcast_state(); break;
+	case ACT_FOCUS_MONITOR: {
+		Arg a = {.i = arg->i == 0 ? WLR_DIRECTION_LEFT : WLR_DIRECTION_RIGHT};
+		focusmon(&a);
+		break;
+	}
+	case ACT_MOVE_MONITOR: {
+		Arg a = {.i = arg->i == 0 ? WLR_DIRECTION_LEFT : WLR_DIRECTION_RIGHT};
+		tagmon(&a);
+		break;
+	}
+	case ACT_LAYOUT: {
+		Arg a = {0};
+		if (arg->i == 0) a.v = &layouts[0];
+		else if (arg->i == 1) a.v = &layouts[1];
+		/* arg->i == -1 => {0} toggles */
+		setlayout(&a);
+		break;
+	}
+	case ACT_POINTER_MOVE: {
+		Arg a = {.ui = CurMove};
+		moveresize(&a);
+		break;
+	}
+	case ACT_POINTER_RESIZE: {
+		Arg a = {.ui = CurResize};
+		moveresize(&a);
+		break;
+	}
+	default:
+		wlr_log(WLR_ERROR, "bind_invoke: unhandled action %d", action_id);
+		break;
+	}
+}
+
+/* Release half of a while-held (hold) action; most actions have no release. */
+void
+bind_invoke_release(int action_id, const Arg *arg)
+{
+	(void)arg;
+	switch (action_id) {
+	case ACT_WINDOW_MENU:
+		menu_shown = 0;
+		ipc_broadcast_state();
+		break;
+	default:
+		break;
+	}
+}
+
 int
 keybinding(uint32_t mods, xkb_keysym_t sym)
 {
@@ -2121,6 +2282,9 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * processing.
 	 */
 	const Key *k;
+	if (binds_active())
+		return bind_dispatch_key(mods, sym);
+	/* Fallback: compiled defaults (only reached if no bind file loaded). */
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
 				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
@@ -2129,156 +2293,6 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 			return 1;
 		}
 	}
-	return 0;
-}
-
-void
-keypress(struct wl_listener *listener, void *data)
-{
-	int i;
-	/* This event is raised when a key is pressed or released. */
-	KeyboardGroup *group = wl_container_of(listener, group, key);
-	struct wlr_keyboard_key_event *event = data;
-
-	/* Translate libinput keycode -> xkbcommon */
-	uint32_t keycode = event->keycode + 8;
-	/* Get a list of keysyms based on the keymap for this keyboard */
-	const xkb_keysym_t *syms;
-	int nsyms;
-	if (!group->wlr_group->keyboard.xkb_state)
-		return;
-	nsyms = xkb_state_key_get_syms(
-			group->wlr_group->keyboard.xkb_state, keycode, &syms);
-
-	int handled = 0;
-	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
-	int is_super_key = 0;
-
-	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
-
-	for (i = 0; i < nsyms; i++) {
-		if (syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R) {
-			is_super_key = 1;
-			break;
-		}
-	}
-
-	/* Super-tap launcher: spawn on Super key *release* if it was a quick tap
-	 * with no other key pressed while Super was held.
-	 * This avoids interfering with MODKEY combos like Super+T.
-	 */
-	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		if (is_super_key) {
-			super_tap.down = 1;
-			super_tap.consumed = 0;
-			super_tap.press_time_msec = event->time_msec;
-			/* Surface Super-held to the shell so it can raise the
-			 * hold-Super window-actions overlay. */
-			super_held = 1;
-			ipc_broadcast_state();
-		} else if (super_tap.down) {
-			super_tap.consumed = 1;
-		}
-	} else {
-		if (is_super_key && super_held) {
-			/* Super released: drop the hold-Super overlay. */
-			super_held = 0;
-			ipc_broadcast_state();
-		}
-		if (is_super_key && super_tap.down) {
-			uint32_t dt = event->time_msec - super_tap.press_time_msec;
-			int should_spawn = !locked && !super_tap.consumed && dt <= SUPER_TAP_MAX_MS;
-			super_tap.down = 0;
-			super_tap.consumed = 0;
-			if (should_spawn) {
-				Arg a = {.v = menucmd};
-				if (launcher_pid > 0 && kill(launcher_pid, 0) == 0) {
-					/* kill entire process group (spawn_pid uses setsid()) */
-					kill(-launcher_pid, SIGTERM);
-					launcher_pid = -1;
-				} else {
-					launcher_pid = spawn_pid(&a);
-				}
-			}
-		}
-	}
-
-	/* While crop mode is active, an unmodified 'r' resets the target window to
-	 * its uncropped size and leaves crop mode. Handled here (not via keys[]) so
-	 * a bare 'r' is only captured during crop mode and types normally otherwise. */
-	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
-			&& crop_editor.active && CLEANMASK(mods) == 0) {
-		for (i = 0; i < nsyms; i++) {
-			if (xkb_keysym_to_lower(syms[i]) == XKB_KEY_r) {
-				cropreset(NULL);
-				handled = 1;
-				break;
-			}
-		}
-	}
-
-	/* On _press_ if there is no active screen locker,
-	 * attempt to process a compositor keybinding. */
-	if (!handled && !locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, syms[i]) || handled;
-	}
-
-	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
-		xkb_keysym_t *repeat_syms = NULL;
-		if (nsyms > 0) {
-			repeat_syms = ecalloc((size_t)nsyms, sizeof(*repeat_syms));
-			memcpy(repeat_syms, syms, (size_t)nsyms * sizeof(*repeat_syms));
-		}
-		free(group->keysyms);
-		group->keysyms = repeat_syms;
-		group->mods = mods;
-		group->nsyms = nsyms;
-		wl_event_source_timer_update(group->key_repeat_source,
-				group->wlr_group->keyboard.repeat_info.delay);
-	} else {
-		free(group->keysyms);
-		group->keysyms = NULL;
-		group->nsyms = 0;
-		wl_event_source_timer_update(group->key_repeat_source, 0);
-	}
-
-	if (handled)
-		return;
-
-	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
-	/* Pass unhandled keycodes along to the client. */
-	wlr_seat_keyboard_notify_key(seat, event->time_msec,
-			event->keycode, event->state);
-}
-
-void
-keypressmod(struct wl_listener *listener, void *data)
-{
-	/* This event is raised when a modifier key, such as shift or alt, is
-	 * pressed. We simply communicate this to the client. */
-	KeyboardGroup *group = wl_container_of(listener, group, modifiers);
-
-	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
-	/* Send modifiers to the client. */
-	wlr_seat_keyboard_notify_modifiers(seat,
-			&group->wlr_group->keyboard.modifiers);
-}
-
-int
-keyrepeat(void *data)
-{
-	KeyboardGroup *group = data;
-	int i;
-	if (!group->nsyms || !group->keysyms || group->wlr_group->keyboard.repeat_info.rate <= 0)
-		return 0;
-
-	wl_event_source_timer_update(group->key_repeat_source,
-			1000 / group->wlr_group->keyboard.repeat_info.rate);
-
-	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keysyms[i]);
-
 	return 0;
 }
 
@@ -3328,6 +3342,7 @@ run(char *startup_cmd)
 		die("startup: display_add_socket_auto");
 	setenv("WAYLAND_DISPLAY", socket, 1);
 	ipc_init(socket);
+	binds_init();
 
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
 	 * master, etc */

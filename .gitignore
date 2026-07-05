@@ -15,3 +15,4 @@ tests/*.gcov
 
 tests/registry_probe
 build.log
+tests/test_binds

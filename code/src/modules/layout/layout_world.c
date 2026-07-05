@@ -28,6 +28,53 @@ same_column_x(float a, float b)
 	return fabsf(a - b) < 2.0f;
 }
 
+/* ===== Adaptive spawn cursor =====
+ * Remembers where the next new window should land: to the right of the focused
+ * window by default, or stacked on top of a column after a vertical move. */
+typedef enum { SPAWN_RIGHT_OF_FOCUS, SPAWN_STACK_TOP } SpawnMode;
+static struct { Client *anchor; SpawnMode mode; } spawn_cursor = { NULL, SPAWN_RIGHT_OF_FOCUS };
+
+/* Is `target` still a live tiled client? (anchor may have been destroyed.) */
+static int
+client_is_live(Client *target)
+{
+	Client *c;
+	if (!target)
+		return 0;
+	wl_list_for_each(c, &clients, link)
+		if (c == target)
+			return 1;
+	return 0;
+}
+
+/* Topmost (smallest) world.y among windows in the column at col_x. */
+static float
+column_min_y(Monitor *m, float col_x, Client *exclude)
+{
+	Client *c;
+	float miny = 0;
+	int found = 0;
+	wl_list_for_each(c, &clients, link) {
+		if (c == exclude || !VISIBLEON(c, m) || c->isfloating || c->isfullscreen || !c->world.set)
+			continue;
+		if (!same_column_x(c->world.x, col_x))
+			continue;
+		if (!found || c->world.y < miny) {
+			miny = c->world.y;
+			found = 1;
+		}
+	}
+	return found ? miny : 0;
+}
+
+/* After a vertical move, the next spawn should stack on top of c's column. */
+static void
+spawn_cursor_set_stack(Client *c)
+{
+	spawn_cursor.anchor = c;
+	spawn_cursor.mode = SPAWN_STACK_TOP;
+}
+
 /* Find column layout info */
 typedef struct {
 	float x;           /* Column x position */
@@ -114,29 +161,53 @@ void
 place_window_column(Client *c, Monitor *m)
 {
 	ColumnInfo col;
+	Client *f = NULL, *w;
 
 	if (!m || m->w.width <= 0 || m->w.height <= 0)
 		return;
-	
+
 	if (c->world.set)
 		return;
-	
+
+	/* Adaptive: stack on top of the remembered column (after a vertical move). */
+	if (spawn_cursor.mode == SPAWN_STACK_TOP && client_is_live(spawn_cursor.anchor)
+			&& spawn_cursor.anchor != c && spawn_cursor.anchor->world.set) {
+		c->world.x = spawn_cursor.anchor->world.x;
+		c->world.y = column_min_y(m, c->world.x, c) - 1.0f;
+		c->world.set = true;
+		return;
+	}
+
+	/* Default: to the right of the currently-focused window. The new client is
+	 * already at the front of fstack (mapnotify), so skip it to find the window
+	 * that was focused when the spawn happened ("the current one"). */
+	wl_list_for_each(w, &fstack, flink) {
+		if (w == c)
+			continue;
+		if (!VISIBLEON(w, m) || w->isfloating || w->isfullscreen || !w->world.set)
+			continue;
+		f = w;
+		break;
+	}
+	if (f) {
+		/* An x just past the focused column so the left-to-right sort inserts it
+		 * immediately to the right; arrange_columns compacts the real position. */
+		c->world.x = f->world.x + f->geom.width * 0.5f + 1.0f;
+		c->world.y = 0;
+		c->world.set = true;
+		return;
+	}
+
+	/* Fallback: first window / no focus -> rightmost new column (legacy). */
 	col = get_rightmost_column(m);
-	
-	/* Niri-like behavior: new toplevels open in a NEW column to the right. */
 	if (col.window_count == 0 && col.x == 0) {
-		/* First tiled window */
 		c->world.x = 0;
 		c->world.y = 0;
 	} else {
-		/* Always create a new column to the right of current rightmost edge. */
 		c->world.x = col.right + COLUMN_GAP;
 		c->world.y = 0;
 	}
-	
 	c->world.set = true;
-	wlr_log(WLR_DEBUG, "Niri-layout: placed window at (%.0f, %.0f)", 
-		c->world.x, c->world.y);
 }
 
 /* Move focused window to adjacent column in the horizontal strip (Niri-like). */
@@ -230,6 +301,139 @@ move_column(const Arg *arg)
 	c->world.y = 0;
 	c->world.set = true;
 	arrange(selmon);
+}
+
+/* Same-column stack neighbour of c: the window directly above (up=1) or below. */
+static Client *
+stack_neighbor(Monitor *m, Client *c, int up)
+{
+	Client *w, *best = NULL;
+	wl_list_for_each(w, &clients, link) {
+		if (w == c || !VISIBLEON(w, m) || w->isfloating || w->isfullscreen || !w->world.set)
+			continue;
+		if (!same_column_x(w->world.x, c->world.x))
+			continue;
+		if (up) {
+			if (w->world.y < c->world.y && (!best || w->world.y > best->world.y))
+				best = w;
+		} else {
+			if (w->world.y > c->world.y && (!best || w->world.y < best->world.y))
+				best = w;
+		}
+	}
+	return best;
+}
+
+/* x of the column immediately left of c (nearest smaller distinct x). */
+static int
+left_column_x(Monitor *m, Client *c, float *out)
+{
+	Client *w;
+	float best = 0;
+	int found = 0;
+	wl_list_for_each(w, &clients, link) {
+		if (w == c || !VISIBLEON(w, m) || w->isfloating || w->isfullscreen || !w->world.set)
+			continue;
+		if (same_column_x(w->world.x, c->world.x) || w->world.x >= c->world.x)
+			continue;
+		if (!found || w->world.x > best) {
+			best = w->world.x;
+			found = 1;
+		}
+	}
+	if (found)
+		*out = best;
+	return found;
+}
+
+/*
+ * Carry the focused window through the grid (Super+Ctrl+Arrows).
+ *  - up/down: reorder within the column stack; up at the top consumes into the
+ *    left column, placed on top (the user's rule). down at the bottom is a no-op.
+ *  - left/right: swap grid slots with the nearest window that way, so the window
+ *    walks across the grid; with no neighbour, open a new column on that side.
+ * Focus stays on the moved window so it visibly travels.
+ */
+void
+move_window_dir(const Arg *arg)
+{
+	Client *c, *n, *w;
+	Monitor *m;
+	int dir;
+	float leftx, tx, ty, edge;
+	int have;
+
+	if (!selmon || !arg)
+		return;
+	c = focustop(selmon);
+	if (!c || c->isfloating || c->isfullscreen)
+		return;
+	m = c->mon;
+	if (!m || m->w.width <= 0 || m->w.height <= 0)
+		return;
+	if (!c->world.set)
+		place_window_column(c, m);
+	dir = arg->i;
+
+	if (dir == DIR_UP || dir == DIR_DOWN) {
+		n = stack_neighbor(m, c, dir == DIR_UP);
+		if (n) {
+			ty = n->world.y;
+			n->world.y = c->world.y;
+			c->world.y = ty;
+		} else if (dir == DIR_UP && left_column_x(m, c, &leftx)) {
+			c->world.x = leftx;
+			c->world.y = column_min_y(m, leftx, c) - 1.0f;
+		} else {
+			/* Top with no left column, or bottom edge: nothing to do. */
+			return;
+		}
+		spawn_cursor_set_stack(c);
+	} else {
+		n = nearest_in_direction(c, dir);
+		if (n) {
+			tx = n->world.x;
+			ty = n->world.y;
+			n->world.x = c->world.x;
+			n->world.y = c->world.y;
+			c->world.x = tx;
+			c->world.y = ty;
+		} else {
+			/* No neighbour that way: open a new column on that side. */
+			edge = 0;
+			have = 0;
+			wl_list_for_each(w, &clients, link) {
+				if (w == c || !VISIBLEON(w, m) || w->isfloating || w->isfullscreen || !w->world.set)
+					continue;
+				if (dir == DIR_RIGHT) {
+					float r = w->world.x + w->geom.width;
+					if (!have || r > edge) { edge = r; have = 1; }
+				} else {
+					if (!have || w->world.x < edge) { edge = w->world.x; have = 1; }
+				}
+			}
+			if (dir == DIR_RIGHT)
+				c->world.x = have ? edge + COLUMN_GAP : 0;
+			else
+				c->world.x = have ? edge - (c->geom.width + COLUMN_GAP) : 0;
+			c->world.y = 0;
+		}
+		spawn_cursor.mode = SPAWN_RIGHT_OF_FOCUS;
+	}
+
+	c->world.set = true;
+	arrange(selmon);
+}
+
+/* Reset the adaptive spawn cursor when focus lands outside its column. */
+void
+spawn_cursor_on_focus(Client *c)
+{
+	if (spawn_cursor.mode != SPAWN_STACK_TOP)
+		return;
+	if (!c || !client_is_live(spawn_cursor.anchor)
+			|| !same_column_x(c->world.x, spawn_cursor.anchor->world.x))
+		spawn_cursor.mode = SPAWN_RIGHT_OF_FOCUS;
 }
 
 /* Arrange windows: niri-style vertical stacking in columns */

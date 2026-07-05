@@ -3,6 +3,167 @@
 Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 Dates are absolute.
 
+## 2026-07-06 — modularization step 2: extract keyboard event dispatch to modules/input/keyboard.c
+
+Moved `keypress`, `keypressmod`, `keyrepeat` out of `dwl.c` into a new
+`code/src/modules/input/keyboard.c` TU (Makefile: added to `SRCS`). These are
+the actual per-event logic: gesture feeding into the bind engine, Super-held IPC
+broadcast, crop-mode 'r' intercept, and repeat scheduling.
+
+`keybinding()` (the compiled `keys[]` fallback dispatcher) and the wlroots
+keyboard-group lifecycle (`createkeyboard`, `createkeyboardgroup`,
+`destroykeyboardgroup`) **stay in dwl.c** — first attempt moved all 7 functions,
+but `keybinding()`'s fallback loop closes over `keys[]`, whose entries are
+function pointers to dozens of `static` action functions (spawn, focusstack,
+zoom, killclient, setlayout, ...). Extracting it would have forced de-staticizing
+every compiled keybind action just to satisfy the linker — a much bigger, riskier
+change than "extract keyboard input" implies, and it would have undone the
+"minimize extern surface" goal rather than serve it. `keybinding()` was instead
+made non-static (called cross-TU from keyboard.c) and stays put; the group
+lifecycle functions are pure wlroots boilerplate coupled to `config.h`'s
+xkb_rules/repeat_rate/repeat_delay, so they stay with the config they read.
+
+Mechanically this was low-risk: `kalin.h` already had a `DWL_INTERNAL`-gated
+extern block anticipating most of this (KeyboardGroup type, `kb_group`/`seat`/
+`locked`/`idle_notifier` externs, even the 6 function prototypes) — evidence a
+prior pass scaffolded the interface but never finished the extraction. Needed:
+de-static `locked`, `idle_notifier`, `seat` in dwl.c (kb_group reverted back to
+static since it turned out unneeded cross-TU); add a missing `ipc_broadcast_state`
+and `viewport_fit_all` prototype to kalin.h (gaps in the pre-existing interface).
+Also deleted `code/include/input.h`, an orphaned, unused, never-included header
+from an earlier abandoned extraction attempt (duplicated the `Key`/`Button`
+typedefs already in kalin.h; the only file still referencing it was a dead
+backup under `backups/`).
+
+Build clean, 20/20 unit tests green. VM-verified: tap Super → launcher, Super+T
+chord → foot (no launcher), hold Super 1.3s → window menu — all unchanged after
+the split.
+
+## 2026-07-06 — modularization step 1: unify modifier tap/hold gestures in the bind engine
+
+Consolidated all modifier-gesture timing into the bind engine (was split: the
+Super-**tap** launcher lived hardcoded in `dwl.c:keypress()`, the **hold** menu
+in `bind_engine.c` — both independently tracked Super). Now the engine's gesture
+state machine owns both edges via one feeder, `bind_gesture_key(mods,
+is_modifier_key, pressed, time_msec)` (renamed from `bind_hold_key`, +timestamp
+for tap duration). `bind_gesture_interrupt()` cancels an arming gesture on a
+pointer-button press (replaces the old `super_tap.consumed` flag).
+
+- New `tap` dispatch alongside `hold`: `find_hold_bind` → `find_gesture_bind(mods,
+  edge)`; a single modifier can carry both a tap and a hold bind. Tap fires on a
+  press+release within `BIND_TAP_MAX_MS` (250) with no intervening key/button.
+- New action `toggle-launcher` (ACT_TOGGLE_LAUNCHER, strv arg): spawn the launcher
+  or kill its process group if already up — the toggle-close behavior that used to
+  be inline in `keypress`, now a first-class action so `tap Super -> toggle-launcher
+  fuzzel` in the DSL fully replaces the hardcoded path.
+- `keypress` shrank: the whole super_tap struct + tap-spawn block removed; it now
+  just feeds the engine and broadcasts `super_held`. `binds_load` also clears
+  `tap_armed` (dangled into the freed engine on hot reload).
+- Test: `tap_bind` (20 total, all green). VM-verified: tap→launcher, tap→close,
+  Super+T chord doesn't fire the tap, hold 1.3s→menu w/ stationary camera,
+  release→menu hides. (One stuck-menu observation was a dropped QMP
+  input-send-event up, not a compositor bug — a real key event cleared it via the
+  normal release path.)
+
+## 2026-07-04 — freeze investigation: neuter spotlight zoom, clamp camera, fix hold UAF
+
+- Reported symptom: whole session freezes (cursor included) when holding Super /
+  the menu appears; can't even Super+Escape quit. Not reproducible in the
+  [[test-vm]] (software renderer) — every path incl. double-Super+Escape quit
+  works there. Diagnosis: a **real GPU driver hang** from extreme/NaN scene
+  coordinates, which the VM's software path tolerates.
+- **Root cause:** the buggy spotlight camera-zoom (save/restore of a moving
+  target) could push `viewport.zoom` to a bad value → enormous WORLD_TO_SCREEN
+  coords → GPU lockup. The previous "drop the zoom" fix was **shell-side only**;
+  a not-yet-rebuilt Quickshell still sends the `spotlight` IPC command.
+- **Fixes:** (1) the compositor's `spotlight` IPC command is now a **no-op**, so
+  no shell version can trigger the zoom (`ipc.c`). (2) `viewport_tick()` clamps
+  zoom to a finite [0.05, 20] every frame — cheap insurance against any camera
+  bug freezing a real GPU (`viewport_ops.c`). (3) Fixed a **use-after-free**:
+  the hold gesture held raw `Binding*` into the bind table, which config
+  hot-reload frees; `binds_load()` now drops the in-progress hold first.
+- Action for real hardware: rebuild **both** kalin-wm and quickshell, then
+  relogin. Build clean; 18+19 tests green.
+
+## 2026-07-04 — hold-to-show window menu via the bind DSL; drop the buggy zoom
+
+- **`hold` gesture dispatch in the bind engine.** A modifier-only `hold` bind
+  (e.g. `bind hold Super -> window-menu`) fires after the modifier is held for
+  `hold_ms` (default 1000; DSL override `hold 1500 Super`) **uninterrupted by
+  another key press**, and a paired release fires when the modifier lifts.
+  Implemented with a `wl_event_loop` timer in `bind_engine.c`
+  (`bind_hold_key()`); `keypress()` feeds every key event with an
+  `is_modifier_key` flag. Independent of press-chord dispatch. New
+  `bind_invoke_release()` in `dwl.c` is the release half of while-held actions.
+- **`window-menu` action + `menu` IPC flag.** `ACT_WINDOW_MENU` sets/clears a
+  new `menu_shown` global, broadcast in `ipc_build_state()`. The timing/logic
+  lives entirely in the bind file + engine; the compositor just exposes the
+  show/hide.
+- **Dropped the spotlight camera-zoom from the menu.** It saved a *moving*
+  animation target and snapped the camera to the wrong place on release.
+  `WindowActions.qml` no longer runs its 180ms `holdTimer` or calls
+  `spotlight()`; it mirrors `KalinViewport.menuShown` and shows the radial in
+  place. `spotlight_enter/exit` remain in the tree, just untriggered.
+- **Cancel rule:** another key press (or releasing Super early / adding a
+  modifier) cancels the arming; mouse clicks don't. Super-**tap** launcher is
+  unchanged and coexists (tap<250ms → launcher, hold≥1s → menu).
+- Tests: +2 parser cases (`hold Super`, `hold 1500 Super`); suite 18+19 green.
+  Note: existing user `binds.conf` needs regenerating to gain `hold Super` and
+  the `move-window` binds (the compositor never overwrites a valid file).
+
+## 2026-07-04 — 2D graph tiling: 4-way window movement + adaptive spawn memory
+
+- **Carry a window through the grid.** New `move_window_dir()` in
+  `layout_world.c`, bound to `Super+Ctrl+Arrows` (added to `default_binds.h`;
+  DSL action `move-window <dir>`). up/down reorder within the column stack;
+  **up at the top consumes into the left column, on top** (the user's rule);
+  left/right **swap** the focused window with the nearest neighbour that way so
+  it walks across the grid (new column if there's no neighbour); down at the
+  bottom edge is a no-op. Reuses a new `nearest_in_direction()` factored from the
+  directional-focus cone search (`dwl.c`).
+- **Spawn relative to focus.** `place_window_column()` now opens a new window to
+  the **right of the currently-focused window** (reading the previously-focused
+  entry from `fstack`, since the new client is already at its front) instead of
+  always the far-right column.
+- **Adaptive spawn cursor ("memory of last relation").** A small `SpawnCursor`
+  in `layout_world.c`: after a vertical move it flips to `SPAWN_STACK_TOP` so the
+  **next window stacks on top of that column**; `focusclient` resets it (via
+  `spawn_cursor_on_focus`) once focus leaves the column. Window *positions*
+  already persist across restarts via world coords in `persistence.c` — no change
+  there. De-static'd `fstack` for the layout TU.
+- **Tests:** +2 parser cases (`move-window` arg parse + bad dir); suite 18+17
+  green; changed files build warning-clean. Verified live in the [[test-vm]].
+
+## 2026-07-04 — runtime bind engine + custom bind DSL (Stage 1)
+
+- **Decision: a custom DSL, compositor-owned.** Keybinds move from compile-time
+  `static const keys[]`/`buttons[]` (raw function pointers) to a runtime engine
+  reading `~/.config/kalin-wm/binds.conf`, hot-reloaded on save via inotify. The
+  compositor owns parse + dispatch (it's the only thing that sees raw input
+  first); a future Quickshell UI (Stages 2–3) will edit over IPC. Format is a
+  purpose-built DSL: `bind [tap|hold] Mods+Key -> action args`, `mode name { }`
+  blocks, and reserved `gamepad`/`swipe.*` triggers. See [[bind-engine]].
+- **New module `code/src/modules/binds/`:** `bind_actions.c` (name→ActionId
+  registry + pure arg parsers, no wlroots — unit-testable), `bind_parser.c`
+  (DSL lexer/parser → heap `BindEngine`), `bind_engine.c` (table swap, dispatch
+  with active-mode→default fall-through, file load, embedded default, inotify
+  reload). Types in `code/include/binds.h` (self-contained; `Arg` guarded so it
+  co-includes with `kalin.h`). `bind_invoke()` in `dwl.c` maps ActionId→the
+  existing (often static) action functions, translating semantic ints
+  (directions, layout index) to the wlroots enums/pointers.
+- **Stage 1 scope:** dispatches single-step chords, pointer buttons, scroll
+  (closes the old `axisnotify` TODO), and mode switching. Tap/hold, leader
+  sequences, gestures, and `gamepad` lines are *parsed and stored inactive* so
+  the file format is frozen ahead of Stages 4–5. `keybinding`/`buttonpress`
+  fall back to compiled `keys[]`/`buttons[]` only if no engine loaded (safety
+  net; a bad user file also falls back to the embedded default).
+- **Tests:** 14 new parser unit tests (`code/tests/test_binds.c`, links
+  xkbcommon) covering chords, literals, pointer/scroll, mode blocks, sequences,
+  arg parsing, and error paths. Suite 18+14 green; bind modules build warning-clean.
+- Remaining: Stage 2 IPC CRUD + capture, Stage 3 Quickshell editor, Stage 4
+  sequences/tap-hold/gestures dispatch, Stage 5 evdev gamepad. Compiled
+  `keys[]`/`buttons[]` retired once DSL parity is battle-tested.
+
 ## 2026-07-03 — smooth animation + crisp high-res zoom
 
 - **Frame-synced window glide.** The window spring now steps inside

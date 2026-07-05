@@ -30,7 +30,7 @@ LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
 # modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
 # commit_size.c is compiled as its own translation unit. The other listed files
 # (util/crash_report/persistence) are independent translation units.
-SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/foreign_toplevel.c code/src/modules/viewport/viewport_ops.c code/src/modules/layout/layout_world.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/ipc.c code/src/modules/capture.c code/src/crash_report.c code/src/persistence.c
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/foreign_toplevel.c code/src/modules/viewport/viewport_ops.c code/src/modules/layout/layout_world.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/ipc.c code/src/modules/capture.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
 DEPS = $(OBJS:.o=.d)
@@ -105,7 +105,7 @@ uninstall:
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f kalin-wm
-	rm -f tests/test_client_lifecycle tests/*.gcda tests/*.gcno tests/*.gcov
+	rm -f tests/test_client_lifecycle tests/test_binds tests/*.gcda tests/*.gcno tests/*.gcov
 
 distclean: clean
 	rm -f code/config/config.h
@@ -121,6 +121,10 @@ release: kalin-wm
 test-unit:
 	@echo "=== Running Unit Tests ==="
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_client_lifecycle code/tests/test_client_lifecycle.c -lm && tests/test_client_lifecycle
+	@echo "=== Running Bind DSL Tests ==="
+	@gcc -Wall -Wextra -Wshadow -O1 -g -Icode/include -Icode/config -o tests/test_binds \
+		code/tests/test_binds.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_actions.c \
+		`pkg-config --cflags --libs xkbcommon` && tests/test_binds
 
 test-unit-coverage:
 	@echo "=== Running Unit Tests with Coverage ==="
