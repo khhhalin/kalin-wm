@@ -1,8 +1,38 @@
 # kalin-wm
 
-A personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). kalin-wm keeps the suckless philosophy — minimal dependencies, hackable C — and replaces fixed workspaces with an **infinite 2D canvas** navigated by a viewport camera. Windows are free-positioned at persistent world coordinates and linked into a **connection graph** (up to 8 neighbor connections per window, one per compass direction) instead of a tiled/floating layout mode: the graph drives group-drag, directional swap, gap-closing on close, and push-out-of-the-way on growth.
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+![Language: C](https://img.shields.io/badge/language-C-555555.svg)
+![wlroots](https://img.shields.io/badge/wlroots-0.20-orange.svg)
+![Wayland compositor](https://img.shields.io/badge/Wayland-compositor-1793d1.svg)
 
-A [Quickshell](https://github.com/khhhalin/quickshell)-based companion shell provides the bar, overview, docked panels, and notifications. A [QEMU/KVM test VM](https://github.com/khhhalin/test-vm) drives real DRM/GL testing entirely from the host.
+A personal Wayland compositor, forked from [dwl](https://codeberg.org/dwl/dwl) and grown far past it: an **infinite 2D canvas** navigated by a viewport camera instead of fixed workspaces. Windows are free-positioned at persistent world coordinates and linked into a **connection graph** (up to 8 neighbor connections per window, one per compass direction) instead of a tiled/floating layout mode — the graph drives group-drag, directional swap, gap-closing on close, and push-out-of-the-way on growth.
+
+**Part of the kalin-wm stack:** **kalin-wm** (compositor, this repo) · [quickshell](https://github.com/khhhalin/quickshell) (companion shell — bar, overview, docked panels, notifications) · [test-vm](https://github.com/khhhalin/test-vm) (hardware-accurate QEMU/KVM test harness)
+
+## Engineering highlights
+
+- **Wayland protocol implementations from spec**, on top of wlroots'
+  lower-level primitives: `ext-session-lock-v1`,
+  `wlr-foreign-toplevel-management-unstable-v1`,
+  `hyprland-toplevel-export-v1` (live window previews), and read/write
+  output control via `wlr-output-management-v1`.
+- **A runtime bind DSL** (parser, hot-reload, and a full-coverage
+  validator): every action in the registry must be bound or explicitly
+  `unbind`, checked at both startup (fatal on a bad config) and live
+  reload (soft-fail, keeps the last-known-good config) — a stale config
+  can no longer silently drift out of sync with the compositor's own
+  evolving action set.
+- **A host-driven, hardware-accurate test harness**: the companion
+  [test-vm](https://github.com/khhhalin/test-vm) boots this compositor as
+  the real session compositor on a virtual GPU and drives it entirely from
+  the host over QMP (input) and VNC (screenshot capture) — no nested
+  compositor limitations, no guest-side tooling required.
+- **A connection-graph window model**: windows are nodes in an up-to-8-way
+  directional graph instead of a tiled/floating hierarchy, with the graph
+  itself (not just position/size) persisted across restarts.
+- **A dated engineering ledger** (`obsidian/ledger.md`) tracking design
+  decisions, bugs, and their root causes as the project evolved — not just
+  a changelog, a running record of *why*.
 
 ## Features
 
