@@ -1,143 +1,107 @@
 # kalin-wm
 
-A personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). kalin-wm keeps the suckless philosophy — compile-time configuration, minimal dependencies, hackable C — and replaces fixed workspaces with an infinite 2D canvas plus Niri-style column tiling. A Quickshell-based companion shell in `~/environment/quickshell` provides the bar, overview, and notifications.
+A personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). kalin-wm keeps the suckless philosophy — minimal dependencies, hackable C — and replaces fixed workspaces with an **infinite 2D canvas** navigated by a viewport camera. Windows are free-positioned at persistent world coordinates and linked into a **connection graph** (up to 8 neighbor connections per window, one per compass direction) instead of a tiled/floating layout mode: the graph drives group-drag, directional swap, gap-closing on close, and push-out-of-the-way on growth.
+
+A [Quickshell](https://github.com/khhhalin/quickshell)-based companion shell provides the bar, overview, docked panels, and notifications. A [QEMU/KVM test VM](https://github.com/khhhalin/test-vm) drives real DRM/GL testing entirely from the host.
+
+## Features
+
+- **Infinite canvas + camera**: pan, zoom, follow-focus, follow-new-windows, fit-all.
+- **Connection graph**: directional swap, spliced gap-closing, growth-overlap push, persisted across restarts.
+- **Native overview mode** (`Super+O`): fit-all promoted to a toggle with click-to-jump, no separate renderer.
+- **Crop mode**: clip a window to a sub-region.
+- **Interactive screenshot UI** (`Super+Shift+S`): niri-style region select, save to disk and/or clipboard.
+- **Session lock** (`ext-session-lock-v1`): works with any lock client, e.g. `swaylock`.
+- **Window docking primitive**: the shell can embed a real, fully-interactive client (not a rendered texture) at a fixed screen rect — used for docked bar panels.
+- **Runtime bind DSL**: `~/.config/kalin-wm/binds.conf`, hot-reloaded, with full-coverage validation (every action must be bound or explicitly `unbind`— the compositor refuses to start on a stale/incomplete config).
+- **IPC socket**: camera state/commands, window list, per-output settings (read/write via `wlr-output-management`), and brightness control (via logind, not raw sysfs) for TUI/shell clients.
+- **Foreign-toplevel export** (`wlr-foreign-toplevel-management-unstable-v1` + `hyprland-toplevel-export-v1`): window list and live previews for the shell.
 
 ## Quick start
 
 ### Build
 
 ```bash
-cd /home/kalin/environment/kalin-wm
 nix develop -c make clean all
-```
-
-Run unit tests:
-
-```bash
 make test-unit
 ```
 
 ### Run nested (inside an existing graphical session)
 
 ```bash
-./scripts/run-nested
-```
-
-If the script hangs, use the underlying command directly:
-
-```bash
 WLR_BACKENDS=wayland ./build/kalin-wm -d
 ```
 
-To test with the Quickshell bar loaded:
+With the Quickshell bar loaded (requires the [quickshell](https://github.com/khhhalin/quickshell) repo checked out alongside this one):
 
 ```bash
-QS_CONFIG_PATH=/home/kalin/environment/quickshell \
-  WLR_BACKENDS=wayland ./build/kalin-wm -d -s 'qs & foot --server'
+QS_CONFIG_PATH=../quickshell WLR_BACKENDS=wayland ./build/kalin-wm -d -s 'qs & foot --server'
 ```
-
-### Run on a TTY
-
-```bash
-./scripts/run-tty [secs]
-```
-
-Default timeout is 30 s; use `0` to disable it. Logs go to `/tmp/kalin-wm-<timestamp>.log`.
-
-### Automated real-VT test on tty3
-
-```bash
-./scripts/test-tty3 [secs]
-```
-
-Starts kalin-wm on VT 3 with Quickshell + foot, captures logs, and returns to the original VT. Requires membership in the `tty` group (configured in `~/home-config/users.nix`).
-
-## Shell aliases
-
-If you use the home-managed Zsh config, these aliases are available after `sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook` and opening a new terminal:
-
-| Alias | What it does |
-|-------|--------------|
-| `kalin-code` | `cd ~/environment/kalin-wm` |
-| `kalin-shell` | `cd ~/environment/quickshell` |
-| `kalin-vm` | `cd ~/environment/test-vm` |
-| `kalin-home` | `cd ~/home-config` |
-| `kalin-build` | build kalin-wm |
-| `kalin-test` | run unit tests |
-| `kalin-nested` | run nested compositor |
-| `kalin-tty` | run on current TTY |
-| `kalin-tty3` | automated VT 3 test |
-| `kalin-vm-build` | build the test VM |
-| `kalin-vm-run` | run the test VM headless for 60 s |
-| `kalin-vm-logs` | tail VM compositor + Quickshell logs |
-| `kalin-rebuild` | `sudo nixos-rebuild switch ...` |
-| `kalin-rebuild-build` | `nixos-rebuild build ...` |
 
 ### Test with the real QEMU/KVM VM
 
-The safest end-to-end test is the VM in `~/environment/test-vm`. It boots a real NixOS system with kalin-wm as the session compositor on a virtual DRM GPU, so it exercises seat/input/GL without touching the host.
+The trustworthy end-to-end test is [test-vm](https://github.com/khhhalin/test-vm): it boots kalin-wm as the actual session compositor on a virtual DRM/GL GPU, driven entirely from the host (input injection + screenshot capture over QMP/VNC, no guest-side tooling). See that repo's README.
+
+### Run on a TTY / as a login session
 
 ```bash
-cd ~/environment/test-vm
-nix build .#vm
-mkdir -p /tmp/kalin-vm/shared
-QEMU_OPTS="-display none -serial stdio" ./result/bin/run-kalin-test-vm
+./scripts/run-tty [secs]      # foreground on the current VT, logs to /tmp
+./scripts/test-tty3 [secs]    # automated: switches to VT3, captures logs, switches back
 ```
 
-Logs stream to the host at `/tmp/kalin-vm/kalin-wm.log` and `/tmp/kalin-vm/quickshell.log`. Remove `QEMU_OPTS` to see the graphical window.
-
-### Activate the NixOS login session on the host
-
-Only after VM tests pass:
-
-```bash
-sudo nixos-rebuild switch --flake /home/kalin/home-config#KalinBook
-```
-
-Then select **kalin-wm** from `ly` at login.
+To make it available as a login-manager session entry, install the package and write a `.desktop` file under `/etc/wayland-sessions/` (see `docs/desktop/` for the template) — see your distro's session-management docs for the specifics.
 
 ## Default keybindings
 
-`Super` is the Windows/Command key.
+`Super` is the Windows/Command key. This table covers the shipped defaults (`code/config/default_binds.h`, written to `~/.config/kalin-wm/binds.conf` on first run only); edit that file to customize — see `obsidian/keybindings.md` for the full bind DSL grammar.
 
 | Key | Action |
 |-----|--------|
-| `Super+T` | Open terminal (`foot`) |
-| `Super+P` | Open launcher (`fuzzel`) |
-| `Super+O` | Toggle Quickshell overview |
-| `Super+Escape` | Quit the compositor |
+| `Super+T` | Terminal (`foot`) |
+| `Super+P` | Launcher (`fuzzel`) |
+| `Super+O` | Toggle overview mode |
 | `Super+Q` | Close focused window |
+| `Super+C` | Crop mode (`Super+Shift+R` to cancel) |
 | `Super+E` | Toggle fullscreen |
-| `Super+Arrows` | Directional focus |
+| `Super+F` | Fit width (grows/shrinks evenly from center) |
+| `Super+Shift+F` | Fit height |
+| `Super+M` | Toggle maximized |
+| `Super+Shift+T` | Toggle always-on-top |
+| `Super+Shift+O` | Toggle overlap (let a window overlap its graph neighbors) |
+| `Super+L` | Link-pick: arm a connection source, click another window to link |
+| `Super+N` | Toggle minimized |
+| `Super+grave` | Toggle scratchpad terminal |
+| `Super+Arrows` | Directional focus (cone search) |
+| `Super+Ctrl+Arrows` | Swap focused window with its graph neighbor in that direction |
+| `Super+J` / `Super+K` | Cycle focus through the window stack |
 | `Super+Shift+Arrows` / `Super+Shift+HJKL` | Pan camera |
-| `Super+equal` / `Super+minus` | Zoom in / out |
+| `Super+Ctrl+equal` / `Super+Ctrl+minus` | Zoom camera |
 | `Super+0` | Fit all windows |
 | `Super+BackSpace` | Reset camera |
 | `Super+Z` / `Super+Shift+Z` | Toggle follow mode / follow-new-windows |
-| `Ctrl+Left` / `Ctrl+Right` | Move focused window between columns |
-| `Super+[` / `Super+]` | Narrow / widen focused window |
-| `Super+Shift+{` / `Super+Shift+}` | Shorten / lengthen focused window |
-| `Super+C` | Enter crop mode (Escape or `Super+Shift+R` to cancel) |
-
-See `code/config/config.h` for the full configuration.
+| `Super+equal`/`minus`, `Super+bracketleft`/`bracketright` | Narrow / widen focused window |
+| `Super+Shift+plus`/`underscore` | Shorten / lengthen focused window |
+| `Super+Shift+S` | Interactive screenshot UI |
+| `Super+Print` | Screenshot (whole monitor, immediate) |
+| `Super+V` | Clipboard history picker |
+| `Super+comma` / `Super+period` | Focus monitor left / right |
+| `tap Super` | Toggle launcher |
+| `hold Super` | Window-action menu |
+| `Super+Escape` | Quit the compositor |
 
 ## Project layout
 
-- `code/src/dwl.c` + `code/src/modules/` — compositor source
-- `code/include/` — headers (`kalin.h` is the umbrella)
-- `code/config/` — compile-time configuration
-- `scripts/` — development helpers (`run-nested`, `run-tty`, `build`, `test`)
-- `tests/` — unit and integration tests
-- `obsidian/` — design vault and project text model
-- `docs/` — man page, desktop entry, changelog, manual testing guide
+- `code/src/dwl.c` + `code/src/modules/` — compositor source (dwl.c is the shrinking core; most features live in `modules/`: `viewport/`, `layout/`, `crop/`, `input/`, `ui/`, `screenshot/`, `protocols/`, `binds/`, plus `ipc.c`, `foreign_toplevel.c`, `backlight.c`, `capture.c`, `session_lock.c`, `persistence.c`, `crash_report.c`)
+- `code/include/` — headers (`kalin.h` is the shared umbrella for the modules)
+- `code/config/` — compile-time config + the default bind DSL
+- `scripts/` — development helpers
+- `code/tests/` — unit tests (`make test-unit`)
+- `obsidian/` — design vault: goal note, ledger (dated decision log), and one note per subsystem — the actual source of truth for how this project works, more current than this README
+- `.claude/skills/kalin-wm/` — a [Claude Code](https://claude.com/claude-code) skill with the build/test/run/VM workflow, if you use Claude Code on this repo
 
 ## Status
 
-**Version:** 0.8-dev  
-**MVP:** complete (infinite canvas, pan/zoom, column + anchored windows, crop mode, multi-monitor, Quickshell integration)  
-**v1.0:** in progress
-
-See `obsidian/roadmap.md` for open work and `obsidian/ledger.md` for recent progress.
+**Version:** 0.8-dev — MVP complete, v1.0 in progress. See `obsidian/roadmap.md` for open work and `obsidian/ledger.md` for the dated history of how it got here.
 
 ---
 
