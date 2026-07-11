@@ -4,9 +4,10 @@
 
 ## Status
 
-Paused: **Deferred** - Decision postponed until implementation phase.
+**Decided and shipped** (2026-07-07). See [[overview-mode]] for the live behavior and
+`code/src/modules/viewport/overview.c` for the implementation.
 
-## Options
+## Options considered
 
 | Option | Description | Pros | Cons |
 |--------|-------------|------|------|
@@ -15,15 +16,16 @@ Paused: **Deferred** - Decision postponed until implementation phase.
 | C | Full overview (Niri) | Interactive, draggable | Complex |
 | D | Minimap corner | Always visible | Screen real estate |
 
-## Considerations
-
-- How many windows does user typically have?
-- Is directional focus + pan sufficient?
-- Do we need drag-and-drop in overview?
-
 ## Decision
 
-To be decided when implementing v1.0 features.
+**B, but it turns out B and C converge here rather than trading off against each
+other.** kalin-wm already has a real camera over a real 2D canvas (unlike niri's
+workspace-strip model) — [[fit-all]] already *is* option B, and reusing it as a
+toggle-that-remembers-and-restores gets essentially all of option C's interactivity
+(click-to-focus, drag, at-any-zoom hit-testing) for free, since it's the same live
+scene, not a re-flowed thumbnail grid. No separate renderer, no drag-and-drop to build
+specially — dragging already works at any zoom level. Option D (minimap) stays a
+separate, unrelated post-v1.0 idea (see [[roadmap]]).
 
 ---
 

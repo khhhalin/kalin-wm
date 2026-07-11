@@ -4,7 +4,7 @@
  * ToplevelManager) so a shell can build a taskbar / dock, drive window peek
  * thumbnails (combined with screencopy), and activate/close windows. This file
  * Separately-compiled TU: relies on dwl.c's externed globals and functions
- * (clients, mons, focustop, focusclient, arrange, setfullscreen,
+ * (clients, mons, focustop, focusclient, arrange, setfullscreen, setminimized,
  * foreign_toplevel_mgr, LISTEN) via kalin.h, and the client_* accessors from
  * client_inline.h. */
 #include "kalin.h"
@@ -17,12 +17,19 @@ ftl_request_activate(struct wl_listener *listener, void *data)
 	(void)data;
 	if (!c || !c->mon)
 		return;
+	/* setminimized(c, 0) itself calls focusclient(c, 1) when unminimizing (see
+	 * dwl.c), so this covers both the "was minimized" and plain-refocus cases —
+	 * without it, clicking a minimized window's taskbar icon focused it in name
+	 * only: the scene node stays disabled (setminimized() disables it) so
+	 * nothing actually reappears. */
+	if (c->minimized)
+		setminimized(c, 0);
+	else
+		focusclient(c, 1);
 	/* Focus the requested window and fly the camera to it, so clicking a window
 	 * in the shell exposé/taskbar brings it into view on the infinite canvas. */
-	focusclient(c, 1);
-	if (c->world.set)
-		viewport_center_on(c);
-	arrange(c->mon);
+	viewport_center_on(c);
+	arrange_mark_dirty(c->mon);
 }
 
 static void
@@ -43,6 +50,15 @@ ftl_request_fullscreen(struct wl_listener *listener, void *data)
 		setfullscreen(c, event->fullscreen);
 }
 
+static void
+ftl_request_minimize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, foreign_minimize);
+	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
+	if (c && event)
+		setminimized(c, event->minimized);
+}
+
 void
 ftl_update_title(Client *c)
 {
@@ -59,7 +75,10 @@ ftl_update_title(Client *c)
 void
 ftl_create(Client *c)
 {
-	if (!foreign_toplevel_mgr || !c || c->foreign_toplevel)
+	/* Panels (c->ispanel — see kalin.h) never get a handle: this protocol is
+	 * how the shell builds its taskbar, and a docked panel is shell chrome,
+	 * not a user window to list there. */
+	if (!foreign_toplevel_mgr || !c || c->foreign_toplevel || c->ispanel)
 		return;
 	c->foreign_toplevel = wlr_foreign_toplevel_handle_v1_create(foreign_toplevel_mgr);
 	if (!c->foreign_toplevel) {
@@ -77,6 +96,8 @@ ftl_create(Client *c)
 			&c->foreign_close, ftl_request_close);
 	LISTEN(&c->foreign_toplevel->events.request_fullscreen,
 			&c->foreign_fullscreen, ftl_request_fullscreen);
+	LISTEN(&c->foreign_toplevel->events.request_minimize,
+			&c->foreign_minimize, ftl_request_minimize);
 }
 
 void
@@ -87,6 +108,7 @@ ftl_destroy(Client *c)
 	wl_list_remove(&c->foreign_activate.link);
 	wl_list_remove(&c->foreign_close.link);
 	wl_list_remove(&c->foreign_fullscreen.link);
+	wl_list_remove(&c->foreign_minimize.link);
 	wlr_foreign_toplevel_handle_v1_destroy(c->foreign_toplevel);
 	c->foreign_toplevel = NULL;
 }
@@ -110,6 +132,8 @@ ftl_sync_state(void)
 					c == focused);
 			wlr_foreign_toplevel_handle_v1_set_fullscreen(c->foreign_toplevel,
 					c->isfullscreen);
+			wlr_foreign_toplevel_handle_v1_set_minimized(c->foreign_toplevel,
+					c->minimized);
 		}
 	}
 }
