@@ -48,31 +48,26 @@ static const float overlay_clock_bg[]       = COLOR(0x000000a6);
 /* exit confirmation - require double-press within this many seconds */
 #define EXIT_CONFIRMATION_SECONDS 2
 
-/* logging */
-static int log_level = WLR_ERROR;
+/* logging. __attribute__((unused)): config.h is now included by more than
+ * just dwl.c (e.g. modules/layout/client_anim.c, for anim_stiffness/
+ * anim_damping) — those TUs don't reference log_level, which would
+ * otherwise warn. */
+static int log_level __attribute__((unused)) = WLR_ERROR;
 
 static const Rule rules[] = {
-	/* app_id             title       isfloating   monitor */
-	{ "vesktop",          NULL,       1,           -1 }, /* float so client can restore its preferred size */
-	{ "Gimp_EXAMPLE",     NULL,       1,           -1 }, /* example: start floating */
-	{ "firefox_EXAMPLE",  NULL,       0,           -1 }, /* example: tiled on the canvas */
+	/* app_id             title       monitor */
+	{ "kalin-scratchpad", NULL,       -1 }, /* scratchpad terminal (toggle-scratchpad) */
+	{ "firefox_EXAMPLE",  NULL,       -1 }, /* example: fixed-monitor rule */
     /* default/example rule: can be changed but cannot be eliminated; at least one rule must exist */
-};
-
-/* layout(s) - only infinite scrolling layout */
-static const Layout layouts[] = {
-	/* symbol     arrange function */
-	{ "[∞]",      infinite }, /* infinite scrollable layout (like Niri but 2D) */
-	{ "><>",      NULL },    /* floating behavior */
 };
 
 /* monitors */
 /* (x=-1, y=-1) is reserved as an "autoconfigure" monitor position indicator */
 static const MonitorRule monrules[] = {
-   /* name        scale layout       rotate/reflect                x    y
+   /* name        scale rotate/reflect                x    y
     * example of a HiDPI laptop monitor:
-    { "eDP-1",    2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, */
-	{ NULL,       1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, /* infinite layout */
+    { "eDP-1",    2,    WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 }, */
+	{ NULL,       1,    WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 	/* default monitor rule: can be changed but cannot be eliminated; at least one monitor rule must exist */
 };
 
@@ -131,117 +126,9 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 */
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
-/* Use Super (Windows) key as MODKEY */
-#define MODKEY WLR_MODIFIER_LOGO
-
-
-/* helper for spawning shell commands in the pre dwm-5.0 fashion */
-#define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
-
-/* commands */
-/* Bare command names so the default resolves via $PATH on any distro. Copy
- * this file to config.h to override with absolute paths if desired. */
-static const char *termcmd[] = { "foot", NULL };
-static const char *menucmd[] = { "fuzzel", NULL };
-/* Toggle the shell's exposé/overview overlay (quickshell). No-op if no shell. */
-static const char *overviewcmd[] = { "qs", "ipc", "call", "windows-bar", "toggleOverview", NULL };
-
-/* Viewport pan direction arrays - passed to viewport_pan */
-static const float pan_left[]  = {-50, 0};
-static const float pan_right[] = {50, 0};
-static const float pan_up[]    = {0, -50};
-static const float pan_down[]  = {0, 50};
-
-/* Keyboard resize deltas: [ ] adjust width, { } adjust height */
-static const int resize_narrow[] = {-40, 0};
-static const int resize_wide[]   = {40, 0};
-static const int resize_short[]  = {0, -40};
-static const int resize_tall[]   = {0, 40};
-
-/* Pan speed configuration */
-#define PAN_SPEED 50.0f
-#define PAN_SPEED_FAST 200.0f
-
-static const Key keys[] = {
-	/* Note that Shift changes certain key codes: 2 -> at, etc. */
-	/* modifier                  key                  function          argument */
-	{ MODKEY,                    XKB_KEY_p,           spawn,            {.v = menucmd} },
-	{ MODKEY,                    XKB_KEY_Print,       capture_screenshot, {0} }, /* Super+PrtSc = 2x hi-res PNG */
-	{ MODKEY,                    XKB_KEY_t,           spawn,            {.v = termcmd} }, /* Super+T = terminal */
-	{ MODKEY,                    XKB_KEY_o,           spawn,            {.v = overviewcmd} }, /* Super+O = overview */
-	{ MODKEY,                    XKB_KEY_j,           focusstack,       {.i = +1} },
-	{ MODKEY,                    XKB_KEY_k,           focusstack,       {.i = -1} },
-	{ MODKEY,                    XKB_KEY_Return,      zoom,             {0} },
-	{ MODKEY,                    XKB_KEY_q,           killclient,       {0} }, /* Super+Q = close window */
-	{ MODKEY,                    XKB_KEY_c,           cropbegin,        {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_r,           cropcancel,       {0} },
-	{ MODKEY,                    XKB_KEY_i,           setlayout,        {.v = &layouts[0]} }, /* infinite layout (default) */
-	{ MODKEY,                    XKB_KEY_f,           setlayout,        {.v = &layouts[1]} }, /* floating */
-	{ MODKEY,                    XKB_KEY_space,       setlayout,        {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space,       togglefloating,   {0} },
-	{ MODKEY,                    XKB_KEY_e,           togglefullscreen, {0} },
-	{ MODKEY,                    XKB_KEY_d,           opacityadjust,    {.f = -0.1f} }, /* dim focused window */
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_D,           opacityadjust,    {.f = +0.1f} }, /* brighten focused window */
-	{ MODKEY,                    XKB_KEY_comma,       focusmon,         {.i = WLR_DIRECTION_LEFT} },
-	{ MODKEY,                    XKB_KEY_period,      focusmon,         {.i = WLR_DIRECTION_RIGHT} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_less,        tagmon,           {.i = WLR_DIRECTION_LEFT} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_greater,     tagmon,           {.i = WLR_DIRECTION_RIGHT} },
-	{ MODKEY,                    XKB_KEY_Escape,      quit,             {0} }, /* Super+Esc = quit wm */
-	
-	/* Camera pan (Super+Shift+Arrows) */
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Left,        viewport_pan,     {.v = pan_left} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Right,       viewport_pan,     {.v = pan_right} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Up,          viewport_pan,     {.v = pan_up} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Down,        viewport_pan,     {.v = pan_down} },
-
-	/* Camera pan Vim keys (Super+Shift+H/J/K/L) */
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_H,           viewport_pan,     {.v = pan_left} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_L,           viewport_pan,     {.v = pan_right} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_K,           viewport_pan,     {.v = pan_up} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_J,           viewport_pan,     {.v = pan_down} },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_equal,       viewport_zoom,    {.f = 1.1f} },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_minus,       viewport_zoom,    {.f = 0.9f} },
-	{ MODKEY,                    XKB_KEY_0,           viewport_fit_all, {0} }, /* Super+0 = fit all windows */
-	{ MODKEY,                    XKB_KEY_BackSpace,   viewport_reset,   {0} },
-	{ MODKEY,                    XKB_KEY_z,           viewport_toggle_follow, {0} }, /* toggle camera follow */
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Z,           viewport_toggle_follow_new, {0} }, /* toggle auto-pan to new windows */
-	
-	/* Move focused window between columns (Ctrl+Left/Right, Niri-style) */
-	{ WLR_MODIFIER_CTRL,         XKB_KEY_Left,        move_column,      {.i = -1} },
-	{ WLR_MODIFIER_CTRL,         XKB_KEY_Right,       move_column,      {.i = +1} },
-	
-	/* Directional focus navigation (Super + Arrow Keys) */
-	{ MODKEY,                    XKB_KEY_Left,        focus_directional, {.i = DIR_LEFT} },
-	{ MODKEY,                    XKB_KEY_Right,       focus_directional, {.i = DIR_RIGHT} },
-	{ MODKEY,                    XKB_KEY_Up,          focus_directional, {.i = DIR_UP} },
-	{ MODKEY,                    XKB_KEY_Down,        focus_directional, {.i = DIR_DOWN} },
-
-
-
-	/* Resize focused window: Super+=/- width, Super+Shift+=/- (plus/underscore) height.
-	 * Also keep the bracket binds for width/height. */
-	{ MODKEY,                    XKB_KEY_equal,       resizefocused,    {.v = resize_wide} },
-	{ MODKEY,                    XKB_KEY_minus,       resizefocused,    {.v = resize_narrow} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_plus,        resizefocused,    {.v = resize_tall} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_underscore,  resizefocused,    {.v = resize_short} },
-	{ MODKEY,                    XKB_KEY_bracketleft, resizefocused,    {.v = resize_narrow} },
-	{ MODKEY,                    XKB_KEY_bracketright,resizefocused,    {.v = resize_wide} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft,   resizefocused,    {.v = resize_short} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceright,  resizefocused,    {.v = resize_tall} },
-
-	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
-	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
-	/* Ctrl-Alt-Fx is used to switch to another VT, if you don't know what a VT is
-	 * do not remove them.
-	 */
-#define CHVT(n) { WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_XF86Switch_VT_##n, chvt, {.ui = (n)} }
-	CHVT(1), CHVT(2), CHVT(3), CHVT(4), CHVT(5), CHVT(6),
-	CHVT(7), CHVT(8), CHVT(9), CHVT(10), CHVT(11), CHVT(12),
-};
-
-static const Button buttons[] = {
-	{ MODKEY, BTN_LEFT,   moveresize,     {.ui = CurMove} },
-	{ MODKEY, BTN_MIDDLE, togglefloating, {0} },
-	{ MODKEY, BTN_RIGHT,  moveresize,     {.ui = CurResize} },
-	{ MODKEY|WLR_MODIFIER_CTRL, BTN_RIGHT, moveresize, {.ui = CurResize} },
-};
+/* All keyboard/pointer bindings now live exclusively in the bind DSL —
+ * see default_binds.h (embedded default, bootstrapped to
+ * ~/.config/kalin-wm/binds.conf on first run) and binds.conf itself for the
+ * live, hot-reloaded set. The compiled keys[]/buttons[] tables that used to
+ * live here were removed once the DSL reached full parity with them; keeping
+ * two parallel binding systems in sync was pure upkeep cost for no benefit. */

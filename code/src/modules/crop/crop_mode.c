@@ -3,8 +3,7 @@
  * Separately-compiled TU: owns the shared `crop_editor` UI state, reads the
  * `viewport` camera, and links against dwl.c's externed globals/functions
  * (clients, selmon, cursor, layers, focustop, resize, arrange, printstatus)
- * plus same_column_x from the layout TU, all via kalin.h; client_* accessors
- * come from client_inline.h. */
+ * via kalin.h; client_* accessors come from client_inline.h. */
 #include "kalin.h"
 #include "client_inline.h"
 
@@ -14,56 +13,28 @@
 #define CROP_HANDLE_SIZE 12         /* Corner handle size in pixels */
 #define CROP_BORDER_WIDTH 2         /* Border line thickness */
 
-static void
-crop_adjust_column_after_height_change(Client *changed, int delta_h)
-{
-	Client *c;
-
-	if (!changed || !changed->mon || delta_h == 0)
-		return;
-	if (changed->isfloating || changed->isfullscreen || !changed->world.set)
-		return;
-
-	wl_list_for_each(c, &clients, link) {
-		if (c == changed)
-			continue;
-		if (!VISIBLEON(c, changed->mon) || c->isfloating || c->isfullscreen)
-			continue;
-		if (!c->world.set)
-			continue;
-		if (!same_column_x(c->world.x, changed->world.x))
-			continue;
-		if (c->world.y > changed->world.y)
-			c->world.y += delta_h;
-	}
-}
-
-/* Restore a client to its saved uncropped/base size and clear its crop rect,
- * pulling the rest of the column back up. No-op if no base size was captured. */
+/* Restore a client to its saved uncropped/base size and clear its crop rect.
+ * No-op if no base size was captured. */
 static void
 crop_restore_base(Client *c)
 {
 	struct wlr_box resetgeo;
-	int old_h, delta_h;
 
 	if (!c || !c->crop.saved_base || c->crop.base_w <= 0 || c->crop.base_h <= 0)
 		return;
 
-	old_h = c->geom.height;
 	resetgeo.x = c->geom.x;
 	resetgeo.y = c->geom.y;
 	resetgeo.width = c->crop.base_w;
 	resetgeo.height = c->crop.base_h;
 	resize(c, resetgeo, 0);
-	delta_h = resetgeo.height - old_h;
-	crop_adjust_column_after_height_change(c, delta_h);
 	c->crop.active = false;
 	c->crop.x = 0.0f;
 	c->crop.y = 0.0f;
 	c->crop.w = 1.0f;
 	c->crop.h = 1.0f;
 	if (c->mon)
-		arrange(c->mon);
+		arrange_mark_dirty(c->mon);
 }
 
 void
@@ -140,7 +111,7 @@ cropbegin(const Arg *arg)
 	flash_rect = NULL;
 	
 	wlr_log(WLR_INFO, "Crop mode started - drag to select region, press Super+Shift+R to cancel");
-	printstatus();
+	status_mark_dirty();
 }
 
 void
@@ -182,12 +153,12 @@ cropcancel(const Arg *arg)
 	crop_editor.dragging = false;
 	
 	wlr_log(WLR_INFO, "Crop mode cancelled");
-	printstatus();
+	status_mark_dirty();
 }
 
 /* Reset the crop target to its uncropped/base size and leave crop mode. Bound
  * to an unmodified 'r' while crop mode is active; dispatched from keypress()
- * rather than keys[] so 'r' still types normally outside crop mode. */
+ * directly (not a normal bind) so 'r' still types normally outside crop mode. */
 void
 cropreset(const Arg *arg)
 {
@@ -207,7 +178,6 @@ cropend(const Arg *arg)
 	int wx, wy, ww, wh;
 	int base_w, base_h;
 	int screen_wx, screen_wy;
-	int delta_h;
 	float cx, cy, cw, ch;
 	struct wlr_box newgeo;
 	
@@ -283,10 +253,8 @@ cropend(const Arg *arg)
 		newgeo.width = MAX(1 + 2 * (int)c->bw, newgeo.width);
 		newgeo.height = MAX(1 + 2 * (int)c->bw, newgeo.height);
 		resize(c, newgeo, 0);
-		delta_h = newgeo.height - base_h;
-		crop_adjust_column_after_height_change(c, delta_h);
 		if (c->mon)
-			arrange(c->mon);
+			arrange_mark_dirty(c->mon);
 		
 		wlr_log(WLR_INFO, "Crop applied: window '%s' visible region %dx%d (base %dx%d)", 
 			client_get_title(c), newgeo.width, newgeo.height, base_w, base_h);

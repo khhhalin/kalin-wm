@@ -1,11 +1,11 @@
 /* Keyboard event dispatch: key press/release, modifier notify, and repeat.
  *
- * The wlroots keyboard-group lifecycle (create/destroy) and the compiled
- * keys[]/buttons[] fallback (keybinding()) stay in dwl.c: they're coupled to
- * config.h's compile-time config values and the static action functions
- * (spawn, focusstack, zoom, ...) that only dwl.c defines. This TU owns the
- * per-event logic instead: gesture feeding, crop-mode intercept, and repeat
- * scheduling, calling keybinding() as an extern dispatch.
+ * The wlroots keyboard-group lifecycle (create/destroy) and keybinding()
+ * (which just resolves through the bind DSL) stay in dwl.c: they're coupled
+ * to the static action functions (spawn, focusstack, zoom, ...) that only
+ * dwl.c defines. This TU owns the per-event logic instead: gesture feeding,
+ * crop-mode intercept, and repeat scheduling, calling keybinding() as an
+ * extern dispatch.
  *
  * Separately-compiled TU: pulls the shared data model, globals, and
  * prototypes from kalin.h (without DWL_INTERNAL, so it sees the extern
@@ -89,18 +89,72 @@ keypress(struct wl_listener *listener, void *data)
 			}
 		} else if (super_held) {
 			super_held = 0;
+			/* A pending menu-armed connection (Super+L) only makes sense
+			 * while Super is still down — releasing it without clicking a
+			 * target cancels rather than leaving it silently armed for a
+			 * later, unrelated click. */
+			connect_pick_cancel();
 			ipc_broadcast_state();
 		}
 	}
 
 	/* While crop mode is active, an unmodified 'r' resets the target window to
-	 * its uncropped size and leaves crop mode. Handled here (not via keys[]) so
-	 * a bare 'r' is only captured during crop mode and types normally otherwise. */
+	 * its uncropped size and leaves crop mode. Handled here (not via a normal
+	 * bind) so a bare 'r' is only captured during crop mode and types
+	 * normally otherwise. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
 			&& crop_editor.active && CLEANMASK(mods) == 0) {
 		for (i = 0; i < nsyms; i++) {
 			if (xkb_keysym_to_lower(syms[i]) == XKB_KEY_r) {
 				cropreset(NULL);
+				handled = 1;
+				break;
+			}
+		}
+	}
+
+	/* Same pattern: while the overview is open, a bare Escape closes it
+	 * (restoring the camera) instead of reaching whatever client is focused;
+	 * otherwise Escape types normally. */
+	if (!handled && !locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
+			&& overview_is_active() && CLEANMASK(mods) == 0) {
+		for (i = 0; i < nsyms; i++) {
+			if (syms[i] == XKB_KEY_Escape) {
+				overview_exit();
+				handled = 1;
+				break;
+			}
+		}
+	}
+
+	/* Screenshot UI intercepts its own key scheme (matching niri exactly)
+	 * ahead of the normal bind dispatch, the same way crop-mode and overview
+	 * grab their bare keys above: Escape cancels; Space/Enter confirms with
+	 * a disk write; Ctrl+C confirms clipboard-only; P toggles pointer
+	 * visibility. Anything else passes through unhandled (falls through to
+	 * normal bind dispatch, e.g. arrow keys still do nothing special here). */
+	if (!handled && !locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
+			&& screenshot_ui.active) {
+		uint32_t clean = CLEANMASK(mods);
+		for (i = 0; i < nsyms; i++) {
+			if (syms[i] == XKB_KEY_Escape) {
+				screenshotui_cancel(NULL);
+				handled = 1;
+				break;
+			}
+			if (clean == 0 && (syms[i] == XKB_KEY_space || syms[i] == XKB_KEY_Return)) {
+				screenshotui_confirm(true);
+				handled = 1;
+				break;
+			}
+			if (clean == WLR_MODIFIER_CTRL
+					&& xkb_keysym_to_lower(syms[i]) == XKB_KEY_c) {
+				screenshotui_confirm(false);
+				handled = 1;
+				break;
+			}
+			if (clean == 0 && xkb_keysym_to_lower(syms[i]) == XKB_KEY_p) {
+				screenshotui_toggle_pointer();
 				handled = 1;
 				break;
 			}
@@ -114,7 +168,11 @@ keypress(struct wl_listener *listener, void *data)
 			handled = keybinding(mods, syms[i]) || handled;
 	}
 
-	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
+	/* A non-repeatable action (any one-shot toggle) must never arm the repeat
+	 * timer at all — re-firing it on every repeat tick while the key happens
+	 * to be held a little too long flips it back and forth, and releasing on
+	 * the wrong parity leaves it in the wrong state. See keybinding_repeatable(). */
+	if (handled && keybinding_repeatable() && group->wlr_group->keyboard.repeat_info.delay > 0) {
 		xkb_keysym_t *repeat_syms = NULL;
 		if (nsyms > 0) {
 			repeat_syms = ecalloc((size_t)nsyms, sizeof(*repeat_syms));
