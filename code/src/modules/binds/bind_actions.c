@@ -24,25 +24,32 @@ static const struct { const char *name; int id; } action_names[] = {
     { "viewport.reset",       ACT_VIEWPORT_RESET },
     { "viewport.follow",      ACT_VIEWPORT_FOLLOW },
     { "viewport.follow-new",  ACT_VIEWPORT_FOLLOW_NEW },
-    { "move-column",          ACT_MOVE_COLUMN },
+    { "viewport.pan-grab",    ACT_VIEWPORT_PAN_GRAB },
     { "focus",                ACT_FOCUS_DIR },
-    { "move-window",          ACT_MOVE_WINDOW },
+    { "swap-dir",             ACT_SWAP_DIR },
     { "focus-stack",          ACT_FOCUS_STACK },
     { "focus-monitor",        ACT_FOCUS_MONITOR },
     { "move-monitor",         ACT_MOVE_MONITOR },
-    { "toggle-floating",      ACT_TOGGLE_FLOATING },
     { "toggle-fullscreen",    ACT_TOGGLE_FULLSCREEN },
-    { "master-zoom",          ACT_MASTER_ZOOM },
-    { "layout",               ACT_LAYOUT },
+    { "toggle-maximized",     ACT_TOGGLE_MAXIMIZED },
+    { "fit-width",            ACT_FIT_WIDTH },
+    { "fit-height",           ACT_FIT_HEIGHT },
+    { "toggle-overview",      ACT_TOGGLE_OVERVIEW },
     { "opacity",              ACT_OPACITY },
     { "crop",                 ACT_CROP },
     { "crop-cancel",          ACT_CROP_CANCEL },
     { "screenshot",           ACT_SCREENSHOT },
+    { "screenshot-ui",        ACT_SCREENSHOT_UI },
     { "pointer-move",         ACT_POINTER_MOVE },
     { "pointer-resize",       ACT_POINTER_RESIZE },
     { "chvt",                 ACT_CHVT },
     { "quit",                 ACT_QUIT },
     { "window-menu",          ACT_WINDOW_MENU },
+    { "toggle-minimized",     ACT_TOGGLE_MINIMIZED },
+    { "toggle-scratchpad",    ACT_TOGGLE_SCRATCHPAD },
+    { "toggle-ontop",         ACT_TOGGLE_ONTOP },
+    { "toggle-overlap",       ACT_TOGGLE_OVERLAP },
+    { "link-pick",            ACT_LINK_PICK },
     { "mode",                 ACT_MODE },
 };
 
@@ -54,6 +61,41 @@ bind_action_lookup(const char *name)
         if (strcmp(action_names[i].name, name) == 0)
             return action_names[i].id;
     return -1;
+}
+
+const char *
+bind_action_name(int action_id)
+{
+    size_t i;
+    for (i = 0; i < sizeof(action_names) / sizeof(action_names[0]); i++)
+        if (action_names[i].id == action_id)
+            return action_names[i].name;
+    return "?";
+}
+
+/* Whitelist of actions safe to auto-repeat while a key is held (pan/zoom/resize/
+ * focus-cycling-style holds). Everything else — in particular every one-shot
+ * toggle (fullscreen, floating, maximized, minimized, ...) — defaults to
+ * non-repeatable: repeating a toggle just flips it back and forth, and if the
+ * key is released on the wrong parity the window is left in the wrong state
+ * (this is exactly what happened before this existed: holding Super+F a little
+ * too long re-fired toggle-maximized multiple times). A whitelist is safer than
+ * a blacklist here since a newly added toggle action defaults to correctly not
+ * repeating without anyone having to remember to list it. */
+int
+bind_action_is_repeatable(int action_id)
+{
+    switch (action_id) {
+    case ACT_RESIZE:
+    case ACT_VIEWPORT_ZOOM:
+    case ACT_VIEWPORT_PAN:
+    case ACT_FOCUS_DIR:
+    case ACT_FOCUS_STACK:
+    case ACT_OPACITY:
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 static int
@@ -181,6 +223,7 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
     switch (action_id) {
     case ACT_SPAWN:
     case ACT_TOGGLE_LAUNCHER:
+    case ACT_TOGGLE_SCRATCHPAD:
         return parse_spawn(argc, argv, out, errbuf, errlen);
     case ACT_RESIZE:
         return parse_resize(argc, argv, out, errbuf, errlen);
@@ -194,13 +237,6 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         }
         out->arg.f = f;
         return 0;
-    case ACT_MOVE_COLUMN:
-        if (argc != 1 || parse_step_dir(argv[0], &v) != 0) {
-            snprintf(errbuf, errlen, "move-column needs left|right|<n>");
-            return -1;
-        }
-        out->arg.i = v;
-        return 0;
     case ACT_FOCUS_STACK:
         if (argc != 1 || parse_step_dir(argv[0], &v) != 0) {
             snprintf(errbuf, errlen, "focus-stack needs next|prev|<n>");
@@ -209,7 +245,7 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         out->arg.i = v;
         return 0;
     case ACT_FOCUS_DIR:
-    case ACT_MOVE_WINDOW:
+    case ACT_SWAP_DIR:
         v = -1;
         if (argc == 1) {
             if (strcmp(argv[0], "left") == 0) v = 0;
@@ -232,19 +268,6 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         }
         if (v < 0) {
             snprintf(errbuf, errlen, "monitor action needs left|right");
-            return -1;
-        }
-        out->arg.i = v;
-        return 0;
-    case ACT_LAYOUT:
-        v = -2;
-        if (argc == 1) {
-            if (strcmp(argv[0], "infinite") == 0) v = 0;
-            else if (strcmp(argv[0], "floating") == 0) v = 1;
-            else if (strcmp(argv[0], "toggle") == 0) v = -1;
-        }
-        if (v == -2) {
-            snprintf(errbuf, errlen, "layout needs infinite|floating|toggle");
             return -1;
         }
         out->arg.i = v;

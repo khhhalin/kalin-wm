@@ -57,25 +57,34 @@ typedef enum {
     ACT_VIEWPORT_RESET,    /* none */
     ACT_VIEWPORT_FOLLOW,   /* none */
     ACT_VIEWPORT_FOLLOW_NEW,/* none */
-    ACT_MOVE_COLUMN,       /* i: -1/+1 */
+    ACT_VIEWPORT_PAN_GRAB, /* none: hold to drag-pan the camera (background only) */
     ACT_FOCUS_DIR,         /* i: DIR_* 0..3 */
-    ACT_MOVE_WINDOW,       /* i: DIR_* 0..3 (carry window through the grid) */
+    ACT_SWAP_DIR,          /* i: DIR_* 0..3 — swap with connection-graph neighbor */
     ACT_FOCUS_STACK,       /* i: -1/+1 */
     ACT_FOCUS_MONITOR,     /* i: 0=left 1=right */
     ACT_MOVE_MONITOR,      /* i: 0=left 1=right */
-    ACT_TOGGLE_FLOATING,   /* none */
     ACT_TOGGLE_FULLSCREEN, /* none */
-    ACT_MASTER_ZOOM,       /* none (dwl master swap) */
-    ACT_LAYOUT,            /* i: 0=infinite 1=floating -1=toggle */
+    ACT_TOGGLE_MAXIMIZED,  /* none: fill mon->w, keep border/bar, unlike fullscreen */
+    ACT_FIT_WIDTH,         /* none: stretch to monitor width, keep height/y */
+    ACT_FIT_HEIGHT,        /* none: stretch to monitor height, keep width/x */
+    ACT_TOGGLE_OVERVIEW,   /* none: zoom out to frame every window, toggle back */
     ACT_OPACITY,           /* f */
     ACT_CROP,              /* none */
     ACT_CROP_CANCEL,       /* none */
     ACT_SCREENSHOT,        /* none */
+    ACT_SCREENSHOT_UI,     /* none: niri-style interactive region/monitor screenshot */
     ACT_POINTER_MOVE,      /* none (drag-move, buttons) */
     ACT_POINTER_RESIZE,    /* none (drag-resize, buttons) */
     ACT_CHVT,              /* ui: vt number */
     ACT_QUIT,              /* none */
     ACT_WINDOW_MENU,       /* none; while-held: shown on hold, hidden on release */
+    ACT_TOGGLE_MINIMIZED,  /* none */
+    ACT_TOGGLE_SCRATCHPAD, /* strv: spawn a floating scratchpad terminal, or hide/show it */
+    ACT_TOGGLE_ONTOP,      /* none: pin/unpin a window above all others */
+    ACT_TOGGLE_OVERLAP,    /* none: let a window overlap its connection-graph neighbors */
+    ACT_LINK_PICK,         /* none: arm the focused window as a pending connection
+                             * source; the next click on another window links them
+                             * (see connect_pick_arm(), connection_graph.c) */
     ACT_MODE,              /* blob char* target mode name (engine-internal) */
     ACT_COUNT
 } ActionId;
@@ -126,11 +135,23 @@ typedef struct {
     BindMode *modes;
     int nmodes;
     int active_mode;       /* index into modes; 0 == "default" */
+    /* Set by the "unbind <action-name>" DSL directive — an explicit,
+     * intentional "this action has no key on purpose" declaration. Checked
+     * by bind_parse()'s end-of-file coverage pass: every ACT_* must be
+     * either bound somewhere (any mode) or explicitly unbound here, or
+     * parsing fails — see that pass's comment for why (a config that merely
+     * *doesn't mention* an action can't be told apart from "forgot this
+     * exists" otherwise, which is exactly how Super+Shift+F silently went
+     * unbound for a real user). */
+    unsigned char unbound[ACT_COUNT];
 } BindEngine;
 
 /* --- Registry (bind_actions.c) --- */
 /* Returns action id or -1 if name unknown. */
 int bind_action_lookup(const char *name);
+/* Reverse of bind_action_lookup(): the DSL name for an action id, for error
+ * messages (e.g. listing which actions a config forgot to cover). */
+const char *bind_action_name(int action_id);
 /*
  * Parse the remaining tokens (argv[0..argc-1]) into out->arg / out->arg_kind /
  * out->owned for the given action. Returns 0 on success, -1 on error (with an
@@ -138,6 +159,8 @@ int bind_action_lookup(const char *name);
  */
 int bind_action_parse_arg(int action_id, int argc, char **argv,
                           Binding *out, char *errbuf, size_t errlen);
+/* Whitelist check: is this action safe to auto-repeat while its key is held? */
+int bind_action_is_repeatable(int action_id);
 
 /* --- Parser (bind_parser.c) --- */
 /*
@@ -147,6 +170,11 @@ int bind_action_parse_arg(int action_id, int argc, char **argv,
  */
 BindEngine *bind_parse(const char *text, char *errbuf, size_t errlen);
 void bind_engine_free(BindEngine *e);
+/* Every ACT_* must be bound (any mode) or explicitly "unbind"-declared, or
+ * this fails — see its definition for why this is separate from bind_parse()
+ * itself. 0 if fully covered, -1 with errbuf set (every missing action
+ * listed) otherwise. */
+int bind_check_coverage(const BindEngine *e, char *errbuf, size_t errlen);
 
 /* --- Engine (bind_engine.c) --- */
 void binds_init(void);                 /* bootstrap default file + load + watch */
@@ -155,6 +183,11 @@ int  binds_active(void);               /* nonzero once an engine is loaded */
 int  bind_dispatch_key(uint32_t mods, xkb_keysym_t sym);
 int  bind_dispatch_button(uint32_t mods, uint32_t button);
 int  bind_dispatch_scroll(uint32_t mods, uint32_t dir);
+/* action_id resolved by the most recent bind_dispatch_*() call that actually
+ * matched a binding, or -1 if the last call matched nothing. Lets callers (e.g.
+ * keyboard.c's repeat handling) check bind_action_is_repeatable() without
+ * bind_dispatch_key() itself needing a wider return-value contract. */
+int  bind_dispatch_last_action(void);
 /* Feed every key event so the engine can time modifier `tap`/`hold` gestures.
  * time_msec is the event timestamp (used to measure the tap duration). */
 void bind_gesture_key(uint32_t mods, int is_modifier_key, int pressed,

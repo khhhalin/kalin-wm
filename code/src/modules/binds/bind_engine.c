@@ -5,8 +5,10 @@
  * fall-through to "default"), and calls dwl.c's bind_invoke() to run the action.
  * Bootstraps ~/.config/kalin-wm/binds.conf from an embedded default and watches
  * the directory with inotify so edits apply live. On a parse error the previous
- * table is retained (or, at first load, dispatch reports "inactive" so dwl.c
- * falls back to the compiled keys[]/buttons[]).
+ * table is retained (or, at first load, falls back to the parsed embedded
+ * default so a broken user file still boots with working keys — see
+ * binds_init()). This is the sole binding system; there is no compiled-table
+ * fallback.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -35,6 +37,7 @@ _Static_assert(KMOD_CAPS == WLR_MODIFIER_CAPS, "mod bit mismatch");
 #define BIND_CLEANMASK(m) ((m) & ~KMOD_CAPS)
 
 static BindEngine *g_engine;
+static int g_last_action_id = -1;
 /* dir is kept shorter than path so "<dir>/binds.conf" provably fits. */
 static char g_config_dir[PATH_MAX - 64];
 static char g_config_path[PATH_MAX];
@@ -53,6 +56,7 @@ binds_active(void)
 static void
 run_binding(const Binding *b)
 {
+    g_last_action_id = b->action_id;
     if (b->action_id == ACT_MODE) {
         const char *target = b->arg.v;
         int i;
@@ -101,6 +105,7 @@ mode_dispatch(BindMode *mode, TriggerKind kind, uint32_t mods,
 static int
 dispatch(TriggerKind kind, uint32_t mods, xkb_keysym_t sym, uint32_t code)
 {
+    g_last_action_id = -1;
     if (!g_engine)
         return 0;
     if (mode_dispatch(&g_engine->modes[g_engine->active_mode], kind, mods, sym, code))
@@ -109,6 +114,12 @@ dispatch(TriggerKind kind, uint32_t mods, xkb_keysym_t sym, uint32_t code)
             && mode_dispatch(&g_engine->modes[0], kind, mods, sym, code))
         return 1;
     return 0;
+}
+
+int
+bind_dispatch_last_action(void)
+{
+    return g_last_action_id;
 }
 
 int
@@ -284,7 +295,9 @@ int
 binds_load(const char *path)
 {
     char *text = read_file(path);
-    char err[160] = {0};
+    /* Generous: the coverage-check error can list every uncovered action
+     * (up to ACT_COUNT of them) in one message — see bind_parser.c. */
+    char err[1024] = {0};
     BindEngine *e;
 
     if (!text) {
@@ -296,6 +309,11 @@ binds_load(const char *path)
     if (!e) {
         wlr_log(WLR_ERROR, "binds: parse error in %s: %s (keeping previous binds)",
                 path, err);
+        return -1;
+    }
+    if (bind_check_coverage(e, err, sizeof(err)) != 0) {
+        wlr_log(WLR_ERROR, "binds: %s: %s (keeping previous binds)", path, err);
+        bind_engine_free(e);
         return -1;
     }
     /* hold_armed/hold_shown point into the engine we're about to free. Drop any
@@ -361,8 +379,7 @@ binds_init(void)
     else if (home && home[0])
         snprintf(g_config_dir, sizeof(g_config_dir), "%s/.config/kalin-wm", home);
     else {
-        wlr_log(WLR_ERROR, "binds: no HOME/XDG_CONFIG_HOME; using compiled defaults");
-        return;
+        die("binds: neither HOME nor XDG_CONFIG_HOME is set — can't locate binds.conf");
     }
     mkdir_p(g_config_dir);
     snprintf(g_config_path, sizeof(g_config_path), "%s/binds.conf", g_config_dir);
@@ -378,14 +395,19 @@ binds_init(void)
         }
     }
 
-    if (binds_load(g_config_path) != 0) {
-        /* Fall back to the parsed embedded default so a broken user file still
-         * boots with working keys. */
-        char err[160] = {0};
-        g_engine = bind_parse(DEFAULT_BINDS, err, sizeof(err));
-        if (!g_engine)
-            wlr_log(WLR_ERROR, "binds: embedded default failed to parse: %s", err);
-    }
+    /* Deliberately no fallback to the embedded default on failure here (there
+     * used to be one) — a config that fails to parse, or doesn't cover every
+     * action (see bind_parse()'s coverage check), refuses to start instead of
+     * silently substituting different keybinds than what's on disk. The
+     * embedded default above is first-run bootstrap only, not a safety net:
+     * once ~/.config/kalin-wm/binds.conf exists, it's the only source of
+     * truth, and a problem with it should be loud and block startup, not get
+     * quietly papered over — that's exactly how a stale config drifted out of
+     * sync with the compositor's evolving action set without anyone noticing
+     * (see the ledger). binds_load() already logged the specific error. */
+    if (binds_load(g_config_path) != 0)
+        die("binds: %s is invalid — fix it and restart (see the log above for what's wrong)",
+                g_config_path);
 
     ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (ifd < 0) {

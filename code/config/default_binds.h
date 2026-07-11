@@ -1,9 +1,13 @@
 /*
  * default_binds.h - the built-in bind DSL, written to
- * ~/.config/kalin-wm/binds.conf on first run and used as the fallback if a
- * user's file fails to parse. Reproduces the previous compiled keys[]/buttons[]
- * so upgrading keeps full parity. Kept in a shared header so the parser unit
- * test can verify the whole thing parses (guarding against drift).
+ * ~/.config/kalin-wm/binds.conf on first run ONLY — NOT a fallback for a
+ * broken/incomplete user file (there used to be one; binds_init() now
+ * die()s instead, deliberately, so a stale config can't silently drift
+ * out of sync with the compositor's evolving action set — see the ledger).
+ * Kept in a shared header so the parser unit test
+ * (test_shipped_default_parses) can verify the whole thing parses AND
+ * covers every registered action (bind_check_coverage()) — guarding
+ * against a fresh install ever booting with an incomplete default.
  */
 #ifndef KALIN_DEFAULT_BINDS_H
 #define KALIN_DEFAULT_BINDS_H
@@ -15,19 +19,24 @@ static const char DEFAULT_BINDS[] =
 "\n"
 "bind Super+p       -> spawn fuzzel\n"
 "bind Super+t       -> spawn foot\n"
-"bind Super+o       -> spawn qs ipc call windows-bar toggleOverview\n"
+"bind Super+o       -> toggle-overview\n"
 "bind Super+Print   -> screenshot\n"
+"bind Super+Shift+s -> screenshot-ui\n"
+"bind Super+v       -> spawn foot -e kalin-clip-picker\n"
 "bind Super+j       -> focus-stack next\n"
 "bind Super+k       -> focus-stack prev\n"
-"bind Super+Return  -> master-zoom\n"
 "bind Super+q       -> close\n"
 "bind Super+c       -> crop\n"
 "bind Super+Shift+r -> crop-cancel\n"
-"bind Super+i       -> layout infinite\n"
-"bind Super+f       -> layout floating\n"
-"bind Super+space   -> layout toggle\n"
-"bind Super+Shift+space -> toggle-floating\n"
 "bind Super+e       -> toggle-fullscreen\n"
+"bind Super+f       -> fit-width\n"
+"bind Super+Shift+f -> fit-height\n"
+"bind Super+m       -> toggle-maximized\n"
+"bind Super+Shift+t -> toggle-ontop\n"
+"bind Super+Shift+o -> toggle-overlap\n"
+"bind Super+l       -> link-pick\n"
+"bind Super+n       -> toggle-minimized\n"
+"bind Super+grave   -> toggle-scratchpad foot --app-id=kalin-scratchpad\n"
 "bind Super+d       -> opacity -0.1\n"
 "bind Super+Shift+d -> opacity 0.1\n"
 "bind Super+comma   -> focus-monitor left\n"
@@ -57,21 +66,15 @@ static const char DEFAULT_BINDS[] =
 "bind Super+z         -> viewport.follow\n"
 "bind Super+Shift+z   -> viewport.follow-new\n"
 "\n"
-"# Move focused window between columns (Niri-style)\n"
-"bind Ctrl+Left  -> move-column left\n"
-"bind Ctrl+Right -> move-column right\n"
-"\n"
 "# Directional focus\n"
 "bind Super+Left  -> focus left\n"
 "bind Super+Right -> focus right\n"
 "bind Super+Up    -> focus up\n"
 "bind Super+Down  -> focus down\n"
-"\n"
-"# Carry the focused window through the grid (swap; up-at-top consumes left)\n"
-"bind Super+Ctrl+Left  -> move-window left\n"
-"bind Super+Ctrl+Right -> move-window right\n"
-"bind Super+Ctrl+Up    -> move-window up\n"
-"bind Super+Ctrl+Down  -> move-window down\n"
+"bind Super+Ctrl+Left  -> swap-dir left\n"
+"bind Super+Ctrl+Right -> swap-dir right\n"
+"bind Super+Ctrl+Up    -> swap-dir up\n"
+"bind Super+Ctrl+Down  -> swap-dir down\n"
 "\n"
 "# Resize focused window: Super+=/- width, Super+Shift+=/- (plus/underscore) height\n"
 "bind Super+equal  -> resize width 40\n"
@@ -85,9 +88,11 @@ static const char DEFAULT_BINDS[] =
 "\n"
 "# Pointer (drag to move/resize the focused window)\n"
 "bind Super+BTN_LEFT       -> pointer-move\n"
-"bind Super+BTN_MIDDLE     -> toggle-floating\n"
 "bind Super+BTN_RIGHT      -> pointer-resize\n"
 "bind Super+Ctrl+BTN_RIGHT -> pointer-resize\n"
+"# Grab the empty canvas background to drag-pan the camera (the world point\n"
+"# under the cursor at grab-start stays under the cursor as you drag).\n"
+"bind Super+Ctrl+BTN_LEFT  -> viewport.pan-grab\n"
 "\n"
 "# VT switching / emergency quit (do not remove)\n"
 "bind Ctrl+Alt+Terminate_Server -> quit\n"
@@ -102,6 +107,12 @@ static const char DEFAULT_BINDS[] =
 "bind Ctrl+Alt+XF86Switch_VT_9  -> chvt 9\n"
 "bind Ctrl+Alt+XF86Switch_VT_10 -> chvt 10\n"
 "bind Ctrl+Alt+XF86Switch_VT_11 -> chvt 11\n"
-"bind Ctrl+Alt+XF86Switch_VT_12 -> chvt 12\n";
+"bind Ctrl+Alt+XF86Switch_VT_12 -> chvt 12\n"
+"\n"
+"# Named-mode transitions (\"mode <name> { ... }\" blocks) aren't used by any\n"
+"# default bind yet — the engine supports them (see bind_parser.c), nothing\n"
+"# ships a mode block to enter one. Explicit so the coverage check doesn't\n"
+"# read as an oversight.\n"
+"unbind mode\n";
 
 #endif /* KALIN_DEFAULT_BINDS_H */

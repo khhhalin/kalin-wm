@@ -224,18 +224,17 @@ test_default_binds_full_parse(void)
         "bind Super+p -> spawn fuzzel\n"
         "bind Super+o -> spawn qs ipc call windows-bar toggleOverview\n"
         "bind Super+Ctrl+equal -> viewport.zoom 1.1\n"
-        "bind Ctrl+Left -> move-column left\n"
         "bind Super+Left -> focus left\n"
         "bind Super+Shift+plus -> resize height 40\n"
         "bind Ctrl+Alt+XF86Switch_VT_2 -> chvt 2\n"
         "bind Super+comma -> focus-monitor left\n"
-        "bind Super+i -> layout infinite\n"
+        "bind Super+Ctrl+BTN_LEFT -> viewport.pan-grab\n"
         "bind Super+d -> opacity -0.1\n";
     BindEngine *e = bind_parse(cfg, err, sizeof(err));
     ASSERT(e != NULL);
     if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
     BindMode *d = find_mode(e, "default");
-    ASSERT(d && d->count == 10);
+    ASSERT(d && d->count == 9);
     /* spawn strv should be NULL-terminated with the split argv */
     Binding *ov = &d->binds[1];
     const char *const *strv = ov->arg.v;
@@ -245,27 +244,52 @@ test_default_binds_full_parse(void)
 }
 
 static void
-test_move_window_dir(void)
+test_toggle_minimized_bind(void)
 {
     char err[160] = {0};
-    BindEngine *e = bind_parse("bind Super+Ctrl+Up -> move-window up\n"
-                               "bind Super+Ctrl+Left -> move-window left\n", err, sizeof(err));
+    BindEngine *e = bind_parse("bind Super+n -> toggle-minimized\n", err, sizeof(err));
     ASSERT(e != NULL);
-    if (!e) return;
+    if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
     BindMode *d = find_mode(e, "default");
-    ASSERT(d && d->count == 2);
-    ASSERT(d->binds[0].action_id == ACT_MOVE_WINDOW);
-    ASSERT(d->binds[0].arg.i == 2);   /* up  -> DIR_UP */
-    ASSERT(d->binds[1].arg.i == 0);   /* left -> DIR_LEFT */
+    ASSERT(d && d->count == 1);
+    ASSERT(d->binds[0].action_id == ACT_TOGGLE_MINIMIZED);
+    ASSERT(d->binds[0].arg_kind == ARGK_NONE);
     bind_engine_free(e);
 }
 
 static void
-test_move_window_bad_dir(void)
+test_action_repeatable(void)
+{
+    ASSERT(bind_action_is_repeatable(ACT_RESIZE));
+    ASSERT(bind_action_is_repeatable(ACT_VIEWPORT_PAN));
+    ASSERT(bind_action_is_repeatable(ACT_VIEWPORT_ZOOM));
+    ASSERT(bind_action_is_repeatable(ACT_FOCUS_STACK));
+    ASSERT(!bind_action_is_repeatable(ACT_TOGGLE_MAXIMIZED));
+    ASSERT(!bind_action_is_repeatable(ACT_TOGGLE_FULLSCREEN));
+    ASSERT(!bind_action_is_repeatable(ACT_TOGGLE_MINIMIZED));
+    ASSERT(!bind_action_is_repeatable(ACT_TOGGLE_ONTOP));
+}
+
+static void
+test_toggle_scratchpad_bind(void)
 {
     char err[160] = {0};
-    BindEngine *e = bind_parse("bind Super+Ctrl+Up -> move-window sideways\n", err, sizeof(err));
-    ASSERT(e == NULL);
+    BindEngine *e = bind_parse(
+        "bind Super+grave -> toggle-scratchpad foot --app-id=kalin-scratchpad\n",
+        err, sizeof(err));
+    ASSERT(e != NULL);
+    if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
+    BindMode *d = find_mode(e, "default");
+    ASSERT(d && d->count == 1);
+    ASSERT(d->binds[0].action_id == ACT_TOGGLE_SCRATCHPAD);
+    ASSERT(d->binds[0].arg_kind == ARGK_STRV);
+    {
+        const char *const *strv = d->binds[0].arg.v;
+        ASSERT(strcmp(strv[0], "foot") == 0);
+        ASSERT(strcmp(strv[1], "--app-id=kalin-scratchpad") == 0);
+        ASSERT(strv[2] == NULL);
+    }
+    bind_engine_free(e);
 }
 
 static void
@@ -323,14 +347,79 @@ test_tap_bind(void)
 static void
 test_shipped_default_parses(void)
 {
-    /* The actual embedded default (written to the user's config) must parse. */
-    char err[160] = {0};
+    /* The actual embedded default (written to the user's config) must parse
+     * AND cover every action (bind_check_coverage()) — it's what a fresh
+     * install boots with, so it has to be a genuinely complete config on its
+     * own, not just syntactically valid. Catches a new ACT_* added to
+     * bind_actions.c without a matching bind/unbind line added here. */
+    char err[1024] = {0};
     BindEngine *e = bind_parse(DEFAULT_BINDS, err, sizeof(err));
     ASSERT(e != NULL);
     if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
     BindMode *d = find_mode(e, "default");
     /* Every default line is a single active key/button binding (no modes). */
     ASSERT(d && d->count > 50);
+    ASSERT(bind_check_coverage(e, err, sizeof(err)) == 0);
+    if (err[0]) fprintf(stderr, "    coverage err: %s\n", err);
+    bind_engine_free(e);
+}
+
+static void
+test_unbind_directive(void)
+{
+    char err[160] = {0};
+    BindEngine *e = bind_parse("unbind toggle-overlap\n", err, sizeof(err));
+    ASSERT(e != NULL);
+    if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
+    ASSERT(e->unbound[ACT_TOGGLE_OVERLAP] == 1);
+    ASSERT(e->unbound[ACT_LINK_PICK] == 0);
+    bind_engine_free(e);
+}
+
+static void
+test_unbind_unknown_action(void)
+{
+    char err[160] = {0};
+    BindEngine *e = bind_parse("unbind not-a-real-action\n", err, sizeof(err));
+    ASSERT(e == NULL);
+}
+
+static void
+test_coverage_catches_missing_action(void)
+{
+    /* A single bind covers exactly one action; everything else is missing —
+     * bind_check_coverage() must fail and name at least one of them. */
+    char err[1024] = {0};
+    BindEngine *e = bind_parse("bind Super+q -> close\n", err, sizeof(err));
+    ASSERT(e != NULL);
+    if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
+    ASSERT(bind_check_coverage(e, err, sizeof(err)) != 0);
+    ASSERT(strstr(err, "no bind or unbind") != NULL);
+    bind_engine_free(e);
+}
+
+static void
+test_coverage_bind_or_unbind_satisfies(void)
+{
+    /* Every action either bound or explicitly unbound: coverage passes even
+     * though most of them are "unbind". */
+    char cfg[4096] = "bind Super+q -> close\n";
+    size_t off = strlen(cfg);
+    char err[1024] = {0};
+    BindEngine *e;
+    int i;
+
+    for (i = 0; i < ACT_COUNT; i++) {
+        if (i == ACT_CLOSE)
+            continue;
+        off += (size_t)snprintf(cfg + off, sizeof(cfg) - off,
+                "unbind %s\n", bind_action_name(i));
+    }
+    e = bind_parse(cfg, err, sizeof(err));
+    ASSERT(e != NULL);
+    if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
+    ASSERT(bind_check_coverage(e, err, sizeof(err)) == 0);
+    if (err[0]) fprintf(stderr, "    coverage err: %s\n", err);
     bind_engine_free(e);
 }
 
@@ -352,12 +441,17 @@ main(void)
     RUN_TEST(error_missing_arrow);
     RUN_TEST(error_bad_arg);
     RUN_TEST(default_binds_full_parse);
-    RUN_TEST(move_window_dir);
-    RUN_TEST(move_window_bad_dir);
+    RUN_TEST(toggle_minimized_bind);
+    RUN_TEST(action_repeatable);
+    RUN_TEST(toggle_scratchpad_bind);
     RUN_TEST(hold_bind);
     RUN_TEST(hold_bind_custom_ms);
     RUN_TEST(tap_bind);
     RUN_TEST(shipped_default_parses);
+    RUN_TEST(unbind_directive);
+    RUN_TEST(unbind_unknown_action);
+    RUN_TEST(coverage_catches_missing_action);
+    RUN_TEST(coverage_bind_or_unbind_satisfies);
 
     printf("\n===================================\n");
     printf("Results: %d passed, %d total\n", test_passed, test_total);

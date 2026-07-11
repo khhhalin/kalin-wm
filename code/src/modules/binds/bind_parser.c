@@ -3,12 +3,25 @@
  *
  * Grammar (one directive per line, '#' starts a comment):
  *   bind [tap|hold] <trigger-steps...> -> <action> [args...]
+ *   unbind <action-name>                         # explicitly no key for this
  *   gamepad <trigger> -> <action> [args...]      # parsed, dispatched later
  *   mode <name> { ... }                          # block of bind lines
  *
  * A trigger step is `Mod+Mod+Key`; multiple space-separated steps form a leader
  * sequence. Key is an xkb keysym name, a punctuation glyph, a mouse button
  * (BTN_LEFT / Mouse1..3), or ScrollUp/Down/Left/Right. See default binds.
+ *
+ * Coverage: every action in the registry (bind_actions.c) should be covered
+ * by at least one "bind" line (any mode) or by "unbind" — see
+ * bind_check_coverage() below, called separately from bind_parse() itself
+ * (not baked into parsing — see that function's comment for why) by the real
+ * runtime loader. This exists so a config can't silently drift out of sync
+ * with the compositor's own evolving action set: a config written against an
+ * older binary just keeps compiling and running, quietly missing whatever
+ * actions got added since, with no signal that anything's wrong. "unbind" is
+ * the escape hatch for "I know about this action, I deliberately don't want
+ * it on a key" — the point isn't that everything must be bound, it's that
+ * every action must be a *conscious* decision, not an oversight.
  *
  * Pure C + xkbcommon only (unit-testable). Builds a heap BindEngine.
  */
@@ -321,6 +334,14 @@ parse_bind_line(BindEngine *e, int mode_idx, int is_gamepad,
         return -1;
     }
     ab[0] = '\0';
+    /* Invariant this relies on: bind_action_parse_arg() must not allocate
+     * (set b->action_arg.owned) until it's sure it will succeed — this
+     * failure path returns without freeing b->action_arg or incrementing
+     * modes[mode_idx].count, so an action type that allocated earlier and
+     * then failed on a later argument would leak silently (mode_add_binding()
+     * already grew the array; not incrementing count just makes this slot
+     * unreachable to any cleanup pass that iterates 0..count). True for
+     * every action type today — keep it true for any new one. */
     if (bind_action_parse_arg(action_id, ntok - (arrow + 2), &tokens[arrow + 2],
                               b, ab, sizeof(ab)) != 0) {
         snprintf(errbuf, errlen, "line %d: %s", lineno, ab);
@@ -422,6 +443,20 @@ bind_parse(const char *text, char *errbuf, size_t errlen)
                 goto fail;
             continue;
         }
+        if (strcmp(tokens[0], "unbind") == 0) {
+            int action_id;
+            if (ntok != 2) {
+                snprintf(errbuf, errlen, "line %d: expected 'unbind <action-name>'", lineno);
+                goto fail;
+            }
+            action_id = bind_action_lookup(tokens[1]);
+            if (action_id < 0) {
+                snprintf(errbuf, errlen, "line %d: unbind: unknown action '%s'", lineno, tokens[1]);
+                goto fail;
+            }
+            e->unbound[action_id] = 1;
+            continue;
+        }
 
         snprintf(errbuf, errlen, "line %d: unknown directive '%s'", lineno, tokens[0]);
         goto fail;
@@ -439,4 +474,41 @@ fail:
     free(buf);
     bind_engine_free(e);
     return NULL;
+}
+
+/* Every action must be either bound somewhere (any mode) or explicitly
+ * "unbind"-declared — see this file's top comment for why. Separate from
+ * bind_parse() itself (which stays purely about DSL grammar, no opinion on
+ * whether a *particular* parsed result is a complete runtime config) so
+ * targeted parser unit tests can keep constructing small, partial fixtures
+ * without also having to enumerate every action via "unbind" just to
+ * satisfy a check that isn't what they're testing. The real runtime loader
+ * (bind_engine.c's binds_load()) calls this after a successful bind_parse()
+ * — that's the actual "is this a valid config to run with" gate.
+ *
+ * Collects *every* uncovered action into one message rather than failing on
+ * the first, so fixing a stale config is one edit instead of a
+ * fail/fix/reload loop per missing action. Returns 0 if fully covered, -1
+ * with errbuf set otherwise. */
+int
+bind_check_coverage(const BindEngine *e, char *errbuf, size_t errlen)
+{
+    unsigned char covered[ACT_COUNT] = {0};
+    int m, b, a;
+    size_t off = 0;
+    int nmissing = 0;
+
+    for (m = 0; m < e->nmodes; m++)
+        for (b = 0; b < e->modes[m].count; b++)
+            covered[e->modes[m].binds[b].action_id] = 1;
+
+    for (a = 0; a < ACT_COUNT; a++) {
+        if (covered[a] || e->unbound[a])
+            continue;
+        off += (size_t)snprintf(errbuf + off, off < errlen ? errlen - off : 0,
+                "%s%s", nmissing ? ", " : "action(s) with no bind or unbind: ",
+                bind_action_name(a));
+        nmissing++;
+    }
+    return nmissing > 0 ? -1 : 0;
 }
