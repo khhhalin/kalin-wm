@@ -31,8 +31,9 @@ wallpaper_build_blue_room_tile(struct wlr_scene_tree *tile, int tile_size)
 	struct wlr_scene_rect *r;
 
 	/*
-	 * Original “blue room” repeating tile: cool wall panels + warm floor.
-	 * This is an original geometric pattern (no asset copying).
+	 * "Blue room" repeating tile, recolored to a warm amber/ochre "study"
+	 * palette (oranges/yellows/browns) to match the rest of the rice — same
+	 * original geometric pattern, just retinted (see the ledger for when).
 	 */
 	wall_h = (int)(tile_size * 0.68f);
 	floor_h = tile_size - wall_h;
@@ -40,53 +41,53 @@ wallpaper_build_blue_room_tile(struct wlr_scene_tree *tile, int tile_size)
 	stripe_w = 10;
 
 	/* Base */
-	r = wlr_scene_rect_create(tile, tile_size, tile_size, (float[]){0.06f, 0.07f, 0.10f, 1.0f});
+	r = wlr_scene_rect_create(tile, tile_size, tile_size, (float[]){0.09f, 0.06f, 0.03f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 0, 0);
 
 	/* Wall */
-	r = wlr_scene_rect_create(tile, tile_size, wall_h, (float[]){0.10f, 0.14f, 0.24f, 1.0f});
+	r = wlr_scene_rect_create(tile, tile_size, wall_h, (float[]){0.22f, 0.14f, 0.07f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 0, 0);
 
 	/* Wall panel stripes */
 	for (x = 0; x < tile_size; x += 80) {
-		r = wlr_scene_rect_create(tile, stripe_w, wall_h, (float[]){0.12f, 0.17f, 0.29f, 1.0f});
+		r = wlr_scene_rect_create(tile, stripe_w, wall_h, (float[]){0.29f, 0.18f, 0.08f, 1.0f});
 		wlr_scene_node_set_position(&r->node, x + 18, 0);
-		r = wlr_scene_rect_create(tile, 2, wall_h, (float[]){0.05f, 0.07f, 0.12f, 0.85f});
+		r = wlr_scene_rect_create(tile, 2, wall_h, (float[]){0.12f, 0.07f, 0.03f, 0.85f});
 		wlr_scene_node_set_position(&r->node, x + 18 + stripe_w + 6, 0);
 	}
 
 	/* Baseboard */
-	r = wlr_scene_rect_create(tile, tile_size, baseboard_h, (float[]){0.18f, 0.12f, 0.08f, 1.0f});
+	r = wlr_scene_rect_create(tile, tile_size, baseboard_h, (float[]){0.30f, 0.19f, 0.09f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 0, wall_h - baseboard_h);
 
 	/* Floor */
-	r = wlr_scene_rect_create(tile, tile_size, floor_h, (float[]){0.16f, 0.10f, 0.06f, 1.0f});
+	r = wlr_scene_rect_create(tile, tile_size, floor_h, (float[]){0.24f, 0.14f, 0.06f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 0, wall_h);
 
 	/* Floor plank lines */
 	for (x = 0; x < tile_size; x += 48) {
-		r = wlr_scene_rect_create(tile, 2, floor_h, (float[]){0.08f, 0.05f, 0.03f, 0.55f});
+		r = wlr_scene_rect_create(tile, 2, floor_h, (float[]){0.12f, 0.07f, 0.03f, 0.55f});
 		wlr_scene_node_set_position(&r->node, x + 24, wall_h);
 	}
 
-	/* Framed “window” on wall */
-	r = wlr_scene_rect_create(tile, 170, 120, (float[]){0.72f, 0.80f, 0.92f, 1.0f});
+	/* Framed "window" on wall */
+	r = wlr_scene_rect_create(tile, 170, 120, (float[]){0.94f, 0.78f, 0.47f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 96, 72);
-	r = wlr_scene_rect_create(tile, 170, 6, (float[]){0.70f, 0.63f, 0.20f, 1.0f});
+	r = wlr_scene_rect_create(tile, 170, 6, (float[]){0.82f, 0.55f, 0.16f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 96, 72);
-	r = wlr_scene_rect_create(tile, 6, 120, (float[]){0.70f, 0.63f, 0.20f, 1.0f});
+	r = wlr_scene_rect_create(tile, 6, 120, (float[]){0.82f, 0.55f, 0.16f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 96, 72);
-	r = wlr_scene_rect_create(tile, 170, 6, (float[]){0.70f, 0.63f, 0.20f, 1.0f});
+	r = wlr_scene_rect_create(tile, 170, 6, (float[]){0.82f, 0.55f, 0.16f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 96, 72 + 120 - 6);
-	r = wlr_scene_rect_create(tile, 6, 120, (float[]){0.70f, 0.63f, 0.20f, 1.0f});
+	r = wlr_scene_rect_create(tile, 6, 120, (float[]){0.82f, 0.55f, 0.16f, 1.0f});
 	wlr_scene_node_set_position(&r->node, 96 + 170 - 6, 72);
 
 	/* Rug */
-	r = wlr_scene_rect_create(tile, 260, 120, (float[]){0.10f, 0.23f, 0.30f, 0.85f});
+	r = wlr_scene_rect_create(tile, 260, 120, (float[]){0.55f, 0.28f, 0.10f, 0.85f});
 	wlr_scene_node_set_position(&r->node, 110, wall_h + (floor_h / 2) - 60);
-	r = wlr_scene_rect_create(tile, 260, 4, (float[]){0.06f, 0.12f, 0.16f, 0.85f});
+	r = wlr_scene_rect_create(tile, 260, 4, (float[]){0.30f, 0.16f, 0.06f, 0.85f});
 	wlr_scene_node_set_position(&r->node, 110, wall_h + (floor_h / 2) - 60);
-	r = wlr_scene_rect_create(tile, 260, 4, (float[]){0.06f, 0.12f, 0.16f, 0.85f});
+	r = wlr_scene_rect_create(tile, 260, 4, (float[]){0.30f, 0.16f, 0.06f, 0.85f});
 	wlr_scene_node_set_position(&r->node, 110, wall_h + (floor_h / 2) + 56);
 
 	/* Corner vignette */
@@ -140,6 +141,8 @@ wallpaper_configure(int w, int h)
 void
 wallpaper_update(void)
 {
+	static int last_base_x, last_base_y;
+	static int have_last = 0;
 	int base_x;
 	int base_y;
 	int x;
@@ -158,11 +161,21 @@ wallpaper_update(void)
 	cam_x = viewport.x;
 	cam_y = viewport.y;
 
-	/* World-anchored background: apply the same world->screen transform as windows. */
+	/* World-anchored background: apply the same world->screen transform as windows.
+	 * Sub-tile camera motion must move this every call, so this can't be cached. */
 	wlr_scene_node_set_position(&wallpaper.tree->node, (int)(-cam_x), (int)(-cam_y));
 
 	base_x = (int)floorf(cam_x / (float)tile_size) - 1;
 	base_y = (int)floorf(cam_y / (float)tile_size) - 1;
+
+	/* Tiles only need repositioning when the camera crosses a tile boundary
+	 * (base_x/base_y changes) — called every frame from arrange(), so skip the
+	 * loop entirely otherwise. */
+	if (have_last && base_x == last_base_x && base_y == last_base_y)
+		return;
+	last_base_x = base_x;
+	last_base_y = base_y;
+	have_last = 1;
 
 	idx = 0;
 	for (y = 0; y < wallpaper.tiles_y; y++) {

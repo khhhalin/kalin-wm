@@ -20,6 +20,8 @@
         libdrm
         mesa
         seatd
+        systemd # sd-bus, for calling logind's SetBrightness (see ipc.c's
+                # brightness command / kalin.h's backlight_* prototypes)
       ];
     in {
       packages.${system}.default = pkgs.stdenv.mkDerivation {
@@ -66,6 +68,7 @@
           libdrm
           mesa
           seatd
+          systemd
           gdb
           valgrind
         ];
