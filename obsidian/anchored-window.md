@@ -1,13 +1,12 @@
 # Anchored window
 
-An anchored window is a window detached from the [[column-layout]] strip that
-stays at a fixed [[world-coordinates|world position]] on the [[infinite-canvas]].
+**SUPERSEDED — meaningless now.** "Anchored" used to distinguish a window
+detached from the [[column-layout]] from one placed in it. Since every
+window is now free-positioned at all times (see [[connection-graph]]), that
+distinction no longer exists — there's nothing to be anchored *relative to*.
 
-An anchored window keeps its place as the camera pans and zooms; it is not
-repositioned by the column layout. Its position can be moved by keyboard.
+The rest of this note describes the old design, kept for history:
 
-Anchoring is one of the two ways a window lives on the canvas — the other is
-being placed in the [[column-layout]]. [[window-placement]] decides which a new
-window becomes.
-
-Anchored window positions are saved and restored by [[persistence]].
+- An anchored window was a window detached from the [[column-layout]] strip that stayed at a fixed [[world-coordinates|world position]] on the [[infinite-canvas]].
+- It kept its place as the camera panned and zoomed, and was not repositioned by the column layout.
+- Anchoring was one of the two ways a window lived on the canvas — the other was being placed in the [[column-layout]]. [[window-placement]] decided which a new window became.

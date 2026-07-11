@@ -1,15 +1,16 @@
 # Column layout
 
-The column layout auto-places windows in a horizontal strip of columns on the
-[[infinite-canvas]], Niri-style. It is the default layout (the `infinite`
-layout); see [[niri-layout]] for the inspiration.
+**SUPERSEDED — removed entirely.** kalin-wm no longer has a column layout, a
+tiled/floating dichotomy, or any auto-arranging layout mode. Every window is
+free-positioned at a persistent [[world-coordinates|world position]] that
+nothing touches except the user or a [[connection-graph]] operation. See
+[[connection-graph]] for the current model and the [[ledger]] for when/why
+this was replaced.
 
-A new window that is not an [[anchored-window]] is assigned to a column by
-[[window-placement]]. The layout computes each window's [[world-coordinates]]
-from its column index.
+The rest of this note describes the old design, kept for history:
 
-[[move-column]] (`Ctrl+Left` / `Ctrl+Right`) moves the focused window between
-columns. The layout is implemented in the `layout/layout_world.c` runtime module.
-
-The column-layout placement and viewport-navigation choices are recorded as
-[[layout-column|architecture decisions]].
+- The column layout auto-placed windows in a horizontal strip of columns on the [[infinite-canvas]], Niri-style.
+- It was the default layout (the `infinite` layout).
+- A new window that was not an [[anchored-window]] was assigned to a column by [[window-placement]].
+- [[move-column]] (`Ctrl+Left` / `Ctrl+Right`) moved the focused window between columns.
+- Was implemented in `layout/layout_world.c`, since deleted.

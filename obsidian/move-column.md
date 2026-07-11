@@ -1,8 +1,15 @@
 # Move column
 
-Move-column moves the focused window between columns of the [[column-layout]].
-It is bound to `Ctrl+Left` (move to the column on the left) and `Ctrl+Right`
-(move to the column on the right), Niri-style.
+**SUPERSEDED — removed.** No columns exist any more (see [[column-layout]]).
+The nearest current equivalent is `Super+Ctrl+Arrow`
+(`swap_neighbor_dir()`), which trades the focused window's position with its
+[[connection-graph]] neighbor in that direction — see [[connection-graph]]
+and [[keybindings]]. It is a swap, not a reflow into a column; the
+`Ctrl+Left`/`Ctrl+Right` binding itself is gone (freed for other use, no
+conflict with the current `Super+Ctrl+Arrow` swap since it's a different
+chord).
 
-Moving a window across columns reassigns its column index and the layout
-recomputes its [[world-coordinates]].
+The rest of this note describes the old design, kept for history:
+
+- Move-column moved the focused window between columns of the [[column-layout]], bound to `Ctrl+Left`/`Ctrl+Right`.
+- Moving a window across columns reassigned its column index and the layout recomputed its [[world-coordinates]].

@@ -33,11 +33,30 @@ expand_home(const char *path)
 	return (char *)path;
 }
 
+/* mkdir -p: plain mkdir() on CRASH_DIR is non-recursive, and its parent
+ * (~/.local/share/kalin-wm) may not exist yet on a minimal system — the
+ * same bug persistence.c's mkdir_p() fixes for its own state dir. Mutates
+ * path in place temporarily (restored before returning). */
+static void
+mkdir_p(char *path)
+{
+	char *p;
+
+	for (p = path + 1; *p; p++) {
+		if (*p != '/')
+			continue;
+		*p = '\0';
+		mkdir(path, 0755);
+		*p = '/';
+	}
+	mkdir(path, 0755);
+}
+
 void
 crash_reporting_init(void)
 {
 	char *crash_dir = expand_home(CRASH_DIR);
-	mkdir(crash_dir, 0755);
+	mkdir_p(crash_dir);
 	/* ignore errors; directory may already exist */
 }
 
@@ -50,7 +69,7 @@ crash_report_write(const char *msg, int sig)
 	struct tm *tm_info = localtime(&now);
 	FILE *f;
 
-	mkdir(crash_dir, 0755);
+	mkdir_p(crash_dir);
 
 	/* Write timestamped crash report */
 	snprintf(filepath, sizeof(filepath), "%s/crash_%04d%02d%02d_%02d%02d%02d.log",
