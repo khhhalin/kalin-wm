@@ -27,6 +27,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 
 /* fourcc for XRGB8888 (little-endian memory order: B, G, R, X). */
 #ifndef DRM_FORMAT_XRGB8888
@@ -135,17 +139,15 @@ zlib_store(const unsigned char *raw, size_t rawlen, size_t *outlen)
 	return out;
 }
 
-/* Write an RGB PNG from XRGB8888 pixel data (memory order B,G,R,X). */
+/* Write an RGB PNG from XRGB8888 pixel data (memory order B,G,R,X) to an
+ * already-open stream. Shared by the path- and memory-buffer writers below. */
 static int
-write_png_xrgb(const char *path, const unsigned char *px, int w, int h, int stride)
+write_png_xrgb_f(FILE *f, const unsigned char *px, int w, int h, int stride)
 {
-	FILE *f = fopen(path, "wb");
 	unsigned char ihdr[13];
 	unsigned char *raw, *zdat;
 	size_t rawlen, zlen;
 	int y, x;
-	if (!f)
-		return 0;
 
 	static const unsigned char sig[8] = { 0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a };
 	fwrite(sig, 1, 8, f);
@@ -160,7 +162,8 @@ write_png_xrgb(const char *path, const unsigned char *px, int w, int h, int stri
 	/* Filtered raw: each row = filter byte (0) + RGB triples. */
 	rawlen = (size_t)h * (1 + (size_t)w * 3);
 	raw = malloc(rawlen);
-	if (!raw) { fclose(f); return 0; }
+	if (!raw)
+		return 0;
 	for (y = 0; y < h; y++) {
 		unsigned char *row = raw + (size_t)y * (1 + (size_t)w * 3);
 		const unsigned char *src = px + (size_t)y * stride;
@@ -175,21 +178,96 @@ write_png_xrgb(const char *path, const unsigned char *px, int w, int h, int stri
 
 	zdat = zlib_store(raw, rawlen, &zlen);
 	free(raw);
-	if (!zdat) { fclose(f); return 0; }
+	if (!zdat)
+		return 0;
 	png_chunk(f, "IDAT", zdat, zlen);
 	free(zdat);
 
 	png_chunk(f, "IEND", NULL, 0);
-	fclose(f);
 	return 1;
+}
+
+static int
+write_png_xrgb(const char *path, const unsigned char *px, int w, int h, int stride)
+{
+	FILE *f = fopen(path, "wb");
+	int ok;
+	if (!f)
+		return 0;
+	ok = write_png_xrgb_f(f, px, w, h, stride);
+	fclose(f);
+	return ok;
+}
+
+/* Hand a saved PNG file off to wl-copy without ever blocking the compositor's
+ * event loop on a pipe write.
+ *
+ * An earlier version piped the PNG bytes directly into wl-copy's stdin from
+ * this process. That deadlocked: wl-copy must round-trip over Wayland with
+ * *this* compositor to register the clipboard data-control source, but our
+ * single-threaded event loop was blocked inside write() waiting for wl-copy
+ * to drain a multi-MB pipe — a multi-MB screenshot vastly exceeds the ~64KB
+ * pipe buffer, so it never would drain, and the whole compositor hung
+ * (reproduced in the VM: pointer motion stopped updating the framebuffer at
+ * all after a capture). Instead we fork+exec a detached shell that reads the
+ * already-on-disk PNG via `<` redirection — no data ever passes through this
+ * process — and (for a temp file that isn't the user's saved screenshot)
+ * removes it once wl-copy has read it to EOF. We don't waitpid() the fork;
+ * dwl.c's SIGCHLD handler reaps all children already (see the
+ * `sig[] = {SIGCHLD, ...}` setup in dwl.c). */
+static void
+capture_copy_to_clipboard(const char *path, bool unlink_after)
+{
+	pid_t pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "capture: clipboard fork failed: %s", strerror(errno));
+		return;
+	}
+	if (pid == 0) {
+		setsid();
+		if (unlink_after)
+			execlp("sh", "sh", "-c", "wl-copy --type image/png < \"$1\"; rm -f \"$1\"",
+					"sh", path, NULL);
+		else
+			execlp("sh", "sh", "-c", "wl-copy --type image/png < \"$1\"",
+					"sh", path, NULL);
+		wlr_log(WLR_ERROR, "capture: exec wl-copy failed: %s", strerror(errno));
+		_exit(1);
+	}
+}
+
+/* mkdir -p for a two-level path (~/Pictures/Screenshots); tolerates EEXIST. */
+static void
+mkdir_parents(const char *path)
+{
+	char tmp[512];
+	size_t len = strlen(path);
+	size_t i;
+	if (len >= sizeof(tmp))
+		return;
+	memcpy(tmp, path, len + 1);
+	for (i = 1; i < len; i++) {
+		if (tmp[i] != '/')
+			continue;
+		tmp[i] = '\0';
+		if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+			wlr_log(WLR_ERROR, "capture: mkdir %s failed: %s", tmp, strerror(errno));
+		tmp[i] = '/';
+	}
+	if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+		wlr_log(WLR_ERROR, "capture: mkdir %s failed: %s", tmp, strerror(errno));
 }
 
 /* ── capture ──────────────────────────────────────────────────────────────── */
 
-void
-capture_screenshot(const Arg *arg)
+/* Render monitor `m`'s current view at `supersample`x its native resolution
+ * into a malloc'd XRGB8888 buffer via a throwaway headless output. Shared by
+ * capture_screenshot (2x) and capture_export_selection (1x). Caller frees
+ * *out_data. Returns 1 on success. */
+static int
+capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
+                       int *out_w, int *out_h, size_t *out_stride)
 {
-	Monitor *m = selmon;
 	struct wlr_output *hout;
 	struct wlr_scene_output *so;
 	struct wlr_output_state ost;
@@ -198,45 +276,40 @@ capture_screenshot(const Arg *arg)
 	unsigned char *data;
 	int cw, ch;
 	size_t stride;
-	const char *dir;
-	char path[512];
-	time_t t;
-	struct tm tmv;
 	int ok;
-	(void)arg;
 
 	if (!m || !m->wlr_output || !event_loop || !alloc || !drw || !scene) {
 		wlr_log(WLR_ERROR, "capture: not ready");
-		return;
+		return 0;
 	}
 
-	cw = m->wlr_output->width  * CAPTURE_SUPERSAMPLE;
-	ch = m->wlr_output->height * CAPTURE_SUPERSAMPLE;
+	cw = (int)(m->wlr_output->width  * supersample);
+	ch = (int)(m->wlr_output->height * supersample);
 	if (cw <= 0 || ch <= 0)
-		return;
+		return 0;
 
 	/* Throwaway headless backend + output at the supersampled resolution. */
 	struct wlr_backend *hb = wlr_headless_backend_create(event_loop);
 	if (!hb) {
 		wlr_log(WLR_ERROR, "capture: headless backend create failed");
-		return;
+		return 0;
 	}
 	hout = wlr_headless_add_output(hb, cw, ch);
 	if (!hout || !wlr_output_init_render(hout, alloc, drw)) {
 		wlr_log(WLR_ERROR, "capture: output/init_render failed");
 		wlr_backend_destroy(hb);
-		return;
+		return 0;
 	}
 
 	wlr_output_state_init(&ost);
 	wlr_output_state_set_enabled(&ost, true);
 	wlr_output_state_set_custom_mode(&ost, cw, ch, 0);
-	wlr_output_state_set_scale(&ost, m->wlr_output->scale * CAPTURE_SUPERSAMPLE);
+	wlr_output_state_set_scale(&ost, m->wlr_output->scale * supersample);
 	if (!wlr_output_commit_state(hout, &ost)) {
 		wlr_log(WLR_ERROR, "capture: output enable failed");
 		wlr_output_state_finish(&ost);
 		wlr_backend_destroy(hb);
-		return;
+		return 0;
 	}
 	wlr_output_state_finish(&ost);
 
@@ -244,7 +317,7 @@ capture_screenshot(const Arg *arg)
 	so = wlr_scene_output_create(scene, hout);
 	if (!so) {
 		wlr_backend_destroy(hb);
-		return;
+		return 0;
 	}
 	wlr_output_layout_get_box(output_layout, m->wlr_output, &mbox);
 	wlr_scene_output_set_position(so, mbox.x, mbox.y);
@@ -255,7 +328,7 @@ capture_screenshot(const Arg *arg)
 		wlr_output_state_finish(&ost);
 		wlr_scene_output_destroy(so);
 		wlr_backend_destroy(hb);
-		return;
+		return 0;
 	}
 
 	/* Read pixels back from the rendered buffer. */
@@ -274,26 +347,125 @@ capture_screenshot(const Arg *arg)
 	if (tex)
 		wlr_texture_destroy(tex);
 	wlr_output_state_finish(&ost);
+	wlr_scene_output_destroy(so);
+	wlr_backend_destroy(hb);
 
-	if (ok) {
-		dir = getenv("KALIN_SHOT_DIR");
-		if (!dir)
-			dir = getenv("HOME");
+	if (!ok) {
+		wlr_log(WLR_ERROR, "capture: read_pixels failed");
+		free(data);
+		return 0;
+	}
+
+	*out_data = data;
+	*out_w = cw;
+	*out_h = ch;
+	*out_stride = stride;
+	return 1;
+}
+
+void
+capture_screenshot(const Arg *arg)
+{
+	Monitor *m = selmon;
+	unsigned char *data;
+	int cw, ch;
+	size_t stride;
+	const char *dir;
+	char path[512];
+	time_t t;
+	struct tm tmv;
+	(void)arg;
+
+	if (!capture_render_native(m, CAPTURE_SUPERSAMPLE, &data, &cw, &ch, &stride))
+		return;
+
+	dir = getenv("KALIN_SHOT_DIR");
+	if (!dir)
+		dir = getenv("HOME");
+	t = time(NULL);
+	localtime_r(&t, &tmv);
+	snprintf(path, sizeof(path), "%s/kalin-%04d%02d%02d-%02d%02d%02d.png",
+			dir ? dir : "/tmp",
+			tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+			tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+	if (write_png_xrgb(path, data, cw, ch, (int)stride))
+		wlr_log(WLR_INFO, "capture: wrote %dx%d %s", cw, ch, path);
+	else
+		wlr_log(WLR_ERROR, "capture: PNG write failed: %s", path);
+
+	free(data);
+}
+
+void
+capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
+                          bool to_disk, bool to_clipboard)
+{
+	unsigned char *data;
+	int cw, ch;
+	size_t stride;
+	float scale_x, scale_y;
+	int px, py, pw, ph;
+	const unsigned char *crop_base;
+
+	if (sel_w <= 0 || sel_h <= 0)
+		return;
+	if (!capture_render_native(m, 1.0f, &data, &cw, &ch, &stride))
+		return;
+
+	/* Map the selection from screen-pixel space (same space as m->m, the
+	 * monitor's layout box) to the native render buffer's physical pixels. */
+	scale_x = m->m.width  > 0 ? (float)cw / m->m.width  : 1.0f;
+	scale_y = m->m.height > 0 ? (float)ch / m->m.height : 1.0f;
+	px = (int)((sel_x - m->m.x) * scale_x);
+	py = (int)((sel_y - m->m.y) * scale_y);
+	pw = (int)(sel_w * scale_x);
+	ph = (int)(sel_h * scale_y);
+
+	if (px < 0) { pw += px; px = 0; }
+	if (py < 0) { ph += py; py = 0; }
+	if (px + pw > cw) pw = cw - px;
+	if (py + ph > ch) ph = ch - py;
+	if (pw <= 0 || ph <= 0) {
+		free(data);
+		return;
+	}
+
+	crop_base = data + (size_t)py * stride + (size_t)px * 4;
+
+	if (to_disk) {
+		const char *home = getenv("HOME");
+		char dir[512], path[560];
+		time_t t;
+		struct tm tmv;
+		snprintf(dir, sizeof(dir), "%s/Pictures/Screenshots", home ? home : "/tmp");
+		mkdir_parents(dir);
 		t = time(NULL);
 		localtime_r(&t, &tmv);
-		snprintf(path, sizeof(path), "%s/kalin-%04d%02d%02d-%02d%02d%02d.png",
-				dir ? dir : "/tmp",
-				tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+		snprintf(path, sizeof(path), "%s/Screenshot from %04d-%02d-%02d %02d-%02d-%02d.png",
+				dir, tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
 				tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-		if (write_png_xrgb(path, data, cw, ch, (int)stride))
-			wlr_log(WLR_INFO, "capture: wrote %dx%d %s", cw, ch, path);
-		else
-			wlr_log(WLR_ERROR, "capture: PNG write failed: %s", path);
-	} else {
-		wlr_log(WLR_ERROR, "capture: read_pixels failed");
+		if (write_png_xrgb(path, crop_base, pw, ph, (int)stride)) {
+			wlr_log(WLR_INFO, "screenshot: wrote %dx%d %s", pw, ph, path);
+			if (to_clipboard)
+				capture_copy_to_clipboard(path, false);
+		} else {
+			wlr_log(WLR_ERROR, "screenshot: PNG write failed: %s", path);
+		}
+	} else if (to_clipboard) {
+		/* Clipboard-only: stage the PNG in a temp file (never held in this
+		 * process as a buffer to pipe) and let the clipboard helper delete
+		 * it once wl-copy has read it. */
+		const char *tmpdir = getenv("XDG_RUNTIME_DIR");
+		char path[560];
+		snprintf(path, sizeof(path), "%s/kalin-shot-%d-%ld.png",
+				tmpdir ? tmpdir : "/tmp", (int)getpid(), (long)time(NULL));
+		if (write_png_xrgb(path, crop_base, pw, ph, (int)stride)) {
+			capture_copy_to_clipboard(path, true);
+			wlr_log(WLR_INFO, "screenshot: copied %dx%d to clipboard", pw, ph);
+		} else {
+			wlr_log(WLR_ERROR, "screenshot: PNG write failed: %s", path);
+		}
 	}
 
 	free(data);
-	wlr_scene_output_destroy(so);
-	wlr_backend_destroy(hb);
 }
