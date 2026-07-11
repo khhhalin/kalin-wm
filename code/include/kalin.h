@@ -95,7 +95,7 @@ extern struct wl_list clients;
 #define MIN(A, B)               ((A) < (B) ? (A) : (B))
 #define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
 /* One infinite canvas per monitor: a client is "on" a monitor iff assigned to it. */
-#define VISIBLEON(C, M)         ((C) && (M) && (C)->mon == (M))
+#define VISIBLEON(C, M)         ((C) && (M) && (C)->mon == (M) && !(C)->minimized)
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define END(A)                  ((A) + LENGTH(A))
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
@@ -128,7 +128,11 @@ enum {
     CurNormal,      /* Normal cursor operation */
     CurPressed,     /* Mouse button is pressed */
     CurMove,        /* Moving a window */
-    CurResize       /* Resizing a window */
+    CurResize,      /* Resizing a window */
+    CurPan,         /* Dragging the camera (Super+Ctrl+LMB on background) */
+    CurCut          /* Super+LMB pressed on empty canvas: sweeping the cursor
+                      * near/across a connection line severs it (see
+                      * connection_click_hit(), buttonpress()/motionnotify()) */
 };
 
 /**
@@ -145,8 +149,10 @@ enum {
 enum {
     LyrBg,          /* Background layer (wallpaper) */
     LyrBottom,      /* Bottom layer shell surfaces */
-    LyrTile,        /* Tiled windows */
-    LyrFloat,       /* Floating windows */
+    LyrFloat,       /* Every normal window (there's no tiled/floating split
+                     * any more — every window is free-positioned). */
+    LyrFloatTop,    /* Pinned "always on top" windows: above normal windows,
+                     * still below layer-shell LyrTop (bars). */
     LyrTop,         /* Top layer shell surfaces */
     LyrFS,          /* Fullscreen windows */
     LyrOverlay,     /* Overlay layer shell surfaces */
@@ -162,6 +168,22 @@ enum Direction {
     DIR_RIGHT,
     DIR_UP,
     DIR_DOWN
+};
+
+/**
+ * Octant - the 8 compass directions a Client.neighbor[] connection slot can
+ * occupy, assigned by the angle between two windows' centers. Ordered so the
+ * opposite direction is always +4 (mod 8): OCT_N<->OCT_S, OCT_E<->OCT_W, etc.
+ */
+enum Octant {
+    OCT_N,
+    OCT_NE,
+    OCT_E,
+    OCT_SE,
+    OCT_S,
+    OCT_SW,
+    OCT_W,
+    OCT_NW
 };
 
 /* ============================================================================
@@ -182,40 +204,11 @@ typedef union {
 #endif
 
 /**
- * Mouse button binding
- */
-typedef struct {
-    unsigned int mod;           /* Modifier key mask */
-    unsigned int button;        /* Mouse button (BTN_LEFT, etc.) */
-    void (*func)(const Arg *);  /* Function to call */
-    const Arg arg;              /* Argument to pass */
-} Button;
-
-/**
- * Keyboard key binding
- */
-typedef struct {
-    uint32_t mod;               /* Modifier key mask */
-    xkb_keysym_t keysym;        /* Keysym to match */
-    void (*func)(const Arg *);  /* Function to call */
-    const Arg arg;              /* Argument to pass */
-} Key;
-
-/**
- * Layout definition - contains symbol name and arrange function
- */
-typedef struct {
-    const char *symbol;         /* Display symbol for the layout */
-    void (*arrange)(Monitor *); /* Arrangement function */
-} Layout;
-
-/**
  * Monitor rule - configuration for new outputs
  */
 typedef struct {
     const char *name;           /* Output name pattern to match */
     float scale;                /* Output scale */
-    const Layout *lt;           /* Default layout */
     enum wl_output_transform rr;/* Rotation/reflect transform */
     int x, y;                   /* Position (-1, -1 for auto) */
 } MonitorRule;
@@ -226,7 +219,6 @@ typedef struct {
 typedef struct {
     const char *id;             /* App ID pattern to match */
     const char *title;          /* Title pattern to match */
-    int isfloating;             /* Start as floating */
     int monitor;                /* Preferred monitor (-1 for current) */
 } Rule;
 
@@ -239,15 +231,13 @@ typedef struct {
     float w, h;                 /* Normalized crop size [0-1] */
     int base_w, base_h;         /* Uncropped/base window size */
     bool saved_base;            /* True if base size is captured */
-} CropState;
 
-/**
- * World coordinates - persistent position in the infinite canvas
- */
-typedef struct {
-    float x, y;                 /* World position (not screen position) */
-    bool set;                   /* True if world position has been assigned */
-} WorldCoords;
+    /* Cache of the last clip box applied via wlr_scene_subsurface_tree_set_clip()
+     * (client_apply_crop_clip() runs every frame; skip the call when nothing
+     * changed instead of re-issuing an identical clip every frame). */
+    int last_clip_x, last_clip_y, last_clip_w, last_clip_h;
+    bool clip_cached;
+} CropState;
 
 /**
  * Client - represents a window/toplevel surface
@@ -255,13 +245,21 @@ typedef struct {
 struct Client {
     /* Must keep this field first - identifies the client type */
     unsigned int type;          /* XDGShell or LayerShell */
-    
+
     /* Crop state for window cropping functionality */
     CropState crop;             /* Normalized crop rectangle */
-    
-    /* World coordinates for infinite layout */
-    WorldCoords world;          /* Persistent position in canvas */
-    
+
+    /* Connection graph: up to 8 neighbor links, one per compass octant (see
+     * enum Octant below), assigned by the angle between two windows' centers
+     * when the connection forms. Symmetric — if neighbor[DIR_W] == other,
+     * then other->neighbor[DIR_E] == this client. NULL slot = no connection
+     * in that direction. Used for (a) initial spawn placement (new window
+     * connects W/E to whichever window was focused when it was created) and
+     * (b) group-drag (dragging any window in a connected component moves the
+     * whole component together) and (c) Super+Ctrl+Arrow swap-with-neighbor. */
+    Client *neighbor[8];
+    uint32_t id;                 /* stable id, for IPC references */
+
     Monitor *mon;               /* Associated monitor */
     struct wlr_scene_tree *scene;           /* Scene tree node */
     struct wlr_scene_rect *border[4];       /* Border rectangles: top, bottom, left, right */
@@ -294,14 +292,59 @@ struct Client {
     struct wl_listener foreign_activate;
     struct wl_listener foreign_close;
     struct wl_listener foreign_fullscreen;
+    struct wl_listener foreign_minimize;
 
     /* State */
     unsigned int bw;            /* Border width in pixels */
-    int isfloating;             /* Floating state */
+    int isontop;                /* "always on top" pin: stays above other
+                                  * windows regardless of subsequent focus
+                                  * elsewhere. */
+    int allow_overlap;          /* When set, resolve_growth_overlap() skips
+                                  * this client entirely: its growth never
+                                  * pushes connection-graph neighbors out of
+                                  * the way, so it's free to overlap them. */
     int isurgent;               /* Urgency hint */
     int isfullscreen;           /* Fullscreen state */
+    int ismaximized;            /* Maximize-toggle (Super+f): fills mon->w, keeps
+                                  * border/bar/decorations, unlike isfullscreen. */
+    struct wlr_box premax;      /* Geometry before maximizing, for restore */
+    int minimized;              /* Hidden from scene/tiling, process stays alive */
+    int docked;                 /* Pinned into a shell-panel-owned screen rect
+                                  * (see setdocked()): borderless, exempt from
+                                  * the world/camera transform like fullscreen,
+                                  * geometry driven by IPC "dock" instead of the
+                                  * user. Transient — false during the brief
+                                  * undock-then-minimize window a panel passes
+                                  * through on close (see DockedPanel.qml's
+                                  * _close()), so it alone isn't a reliable
+                                  * "this is a panel, not a real window" check;
+                                  * see ispanel below for that. */
+    int ispanel;                 /* Set once, forever, the first time this
+                                  * client is ever docked (setdocked()) —
+                                  * unlike `docked` above, never cleared by an
+                                  * undock. The compositor-wide tag for "this
+                                  * is shell-panel chrome, not a real user
+                                  * window": never gets a foreign-toplevel
+                                  * handle (so it can't appear on a taskbar
+                                  * built from that protocol), never
+                                  * participates in camera-follow/fit-all/
+                                  * overview, connection graph, or directional
+                                  * focus. Checked instead of `docked` by
+                                  * anything that needs to stay correct across
+                                  * that transient undock window too. */
     float opacity;              /* Per-window opacity, 0.1..1.0 */
     uint32_t resize;            /* Configure serial of pending resize */
+    int persist_size_pending;   /* Set when persistence_register_client()
+                                  * restores a saved width/height on a
+                                  * brand-new client — a freshly-mapped
+                                  * client's own first non-initial commit
+                                  * (finalizing whatever size it natively
+                                  * chose) races with that restore and would
+                                  * otherwise silently overwrite it via
+                                  * commitnotify()'s client_accept_requested_
+                                  * size(); consumed (skipping exactly that
+                                  * one commit's accept) the first time
+                                  * commitnotify() sees it set. */
 
     /* Spring-glide animation: the layout writes target_geom; a per-frame tick
      * springs the rendered world position (anim_x/anim_y, with velocity vx/vy)
@@ -368,11 +411,10 @@ struct Monitor {
     struct wlr_box m;                       /* Monitor area, layout-relative */
     struct wlr_box w;                       /* Window area, layout-relative */
     struct wl_list layers[4];               /* LayerSurface lists by layer */
-    const Layout *lt[2];                    /* Selected and previous layout */
-    unsigned int sellt;                     /* Selected layout index */
     int gamma_lut_changed;                  /* Gamma LUT needs update */
-    char ltsymbol[16];                      /* Current layout symbol */
     int asleep;                             /* Power management state */
+    int arrange_dirty;                      /* Needs arrange() before next idle flush
+                                              * (see modules/layout/arrange_sched.c) */
 };
 
 /**
@@ -406,8 +448,26 @@ typedef struct {
     int follow;                 /* 1 = camera follows focused window */
     int follow_new_windows;     /* 1 = auto-pan to new windows */
     int smooth_pan;             /* 1 = animate camera movement */
-    int animating;              /* 1 = moving toward target */
+    int animating;              /* 1 = moving toward target, or coasting (below) */
+    int coasting;                /* 1 = decelerating from a trackpad flick, not
+                                   * easing toward target_x/y (see viewport_tick()
+                                   * and viewport_coast_start(), viewport_ops.c) */
+    float vel_x, vel_y;          /* world-units/sec camera velocity while coasting */
 } Viewport;
+
+/* World<->screen coordinate transforms (pan + zoom), and the minimum gap the
+ * connection-graph spawn/gap-closing logic keeps between edge-connected
+ * windows. Placed here, above the DWL_INTERNAL split below, because both
+ * dwl.c (which defines `viewport` directly) and every separately-compiled
+ * module (which sees it via the `extern Viewport viewport` below) need
+ * these — dwl.c specifically does NOT see anything past the "#ifndef
+ * DWL_INTERNAL" guard below, since it defines those symbols itself. */
+#define VIEWPORT_ZOOM_SAFE    (viewport.zoom > 0.0001f ? viewport.zoom : 0.0001f)
+#define WORLD_TO_SCREEN_X(wx) ((int)(((wx) - viewport.x) * VIEWPORT_ZOOM_SAFE))
+#define WORLD_TO_SCREEN_Y(wy) ((int)(((wy) - viewport.y) * VIEWPORT_ZOOM_SAFE))
+#define SCREEN_TO_WORLD_X(sx) ((float)(sx) / VIEWPORT_ZOOM_SAFE + viewport.x)
+#define SCREEN_TO_WORLD_Y(sy) ((float)(sy) / VIEWPORT_ZOOM_SAFE + viewport.y)
+#define SPAWN_GAP 20
 
 /**
  * Wallpaper - stationary tiled background scene state (owned by dwl.c).
@@ -437,6 +497,23 @@ typedef struct {
     struct wlr_scene_rect *crosshair_h;  /* horizontal center line */
     struct wlr_scene_rect *crosshair_v;  /* vertical center line */
 } CropEditor;
+
+/**
+ * ScreenshotEditor - transient niri-style screenshot-UI state (owned by
+ * dwl.c). Selection coordinates are in the same screen-pixel space as
+ * CropEditor's (cursor->x/y, matching Monitor.m). Opens with the whole
+ * monitor pre-selected; dragging draws a custom rectangle over it.
+ */
+typedef struct {
+    bool active;
+    Monitor *mon;
+    double start_x, start_y;
+    double end_x, end_y;
+    bool dragging;
+    bool show_pointer;
+    struct wlr_scene_rect *overlay;      /* dark fullscreen overlay */
+    struct wlr_scene_rect *border[4];    /* border lines: top, bottom, left, right */
+} ScreenshotEditor;
 
 /* Everything below is the runtime interface (globals + prototypes) that the
  * separately-compiled TUs link against. dwl.c OWNS these symbols (defines them
@@ -497,11 +574,8 @@ extern struct wlr_pointer_constraint_v1 *active_constraint;
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
 
-/* Session lock */
+/* Background */
 extern struct wlr_scene_rect *root_bg;
-extern struct wlr_session_lock_manager_v1 *session_lock_mgr;
-extern struct wlr_scene_rect *locked_bg;
-extern struct wlr_session_lock_v1 *cur_lock;
 
 /* Seat and input */
 extern struct wlr_seat *seat;
@@ -525,6 +599,8 @@ extern const float wallpattern_rgba[4];
 extern Viewport viewport;
 extern Wallpaper wallpaper;
 extern CropEditor crop_editor;
+extern ScreenshotEditor screenshot_ui;
+extern Client *dock_hover_client;
 
 /* State bits the ipc TU mirrors to the shell (hold-Super overlay + exit prompt). */
 extern int super_held;
@@ -559,7 +635,6 @@ extern struct wl_listener request_set_sel;
 extern struct wl_listener request_set_cursor_shape;
 extern struct wl_listener request_start_drag;
 extern struct wl_listener start_drag;
-extern struct wl_listener new_session_lock;
 
 /* ============================================================================
  * Function Declarations - Core
@@ -569,6 +644,15 @@ extern struct wl_listener new_session_lock;
 void applybounds(Client *c, struct wlr_box *bbox);
 void applyrules(Client *c);
 void arrange(Monitor *m);
+void viewport_camera_tick(Monitor *m);
+
+/* Arrangement scheduler (modules/layout/arrange_sched.c): coalesces any number of
+ * arrange()/printstatus()-worthy mutations within one event-loop iteration into a
+ * single real arrange() + printstatus() call, via a deferred idle callback. Call
+ * sites that used to call arrange(m)/printstatus() directly should call these
+ * instead. */
+void arrange_mark_dirty(Monitor *m);
+void status_mark_dirty(void);
 void arrangelayer(Monitor *m, struct wl_list *list,
         struct wlr_box *usable_area, int exclusive);
 void arrangelayers(Monitor *m);
@@ -593,18 +677,40 @@ void pointerfocus(Client *c, struct wlr_surface *surface,
         double sx, double sy, uint32_t time);
 void resize(Client *c, struct wlr_box geo, int interact);
 void resizefocused(const Arg *arg);
-void setfloating(Client *c, int floating);
+void fitwidth(const Arg *arg);
+void fitheight(const Arg *arg);
 void setfullscreen(Client *c, int fullscreen);
+void setmaximized(Client *c, int maximized);
+void setminimized(Client *c, int minimized);
+void setdocked(Client *c, int docked, struct wlr_box rect);
+Client *client_find_by_appid(const char *appid);
+void dockprep_register(const char *appid, struct wlr_box rect);
+int dockprep_consume(const char *appid, struct wlr_box *out);
+Monitor *monitor_find_by_name(const char *name);
+int ipc_set_output(const char *name, int width, int height, float refresh,
+        float scale, int x, int y, int enabled);
+int backlight_get(int *value, int *max);
+int backlight_set(int value);
 void setopacity(Client *c, float opacity);
 void opacityadjust(const Arg *arg);
 void setmon(Client *c, Monitor *m);
 void tagmon(const Arg *arg);
-void togglefloating(const Arg *arg);
 void togglefullscreen(const Arg *arg);
+void togglemaximized(const Arg *arg);
+void toggleontop(const Arg *arg);
+void toggleoverlap(const Arg *arg);
+void sever_connection(uint32_t id_a, uint32_t id_b);
+void connect_clients(Client *a, Client *b);
+void resolve_growth_overlap(Client *c);
+void connect_pick_arm(void);
+void connect_pick_cancel(void);
+void connect_pick_complete(Client *target);
+Client *connect_pick_pending(void);
+void toggleminimize(const Arg *arg);
+void togglescratchpad(const Arg *arg);
 void unmapnotify(struct wl_listener *listener, void *data);
 void updatetitle(struct wl_listener *listener, void *data);
 void urgent(struct wl_listener *listener, void *data);
-void zoom(const Arg *arg);
 
 /* Monitor management */
 void cleanupmon(struct wl_listener *listener, void *data);
@@ -619,9 +725,6 @@ Monitor *xytomon(double x, double y);
 void xytonode(double x, double y, struct wlr_surface **psurface,
         Client **pc, LayerSurface **pl, double *nx, double *ny);
 
-/* Layout functions */
-void infinite(Monitor *m);
-
 /* Layer shell */
 void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 void createlayersurface(struct wl_listener *listener, void *data);
@@ -635,6 +738,7 @@ KeyboardGroup *createkeyboardgroup(void);
 void destroykeyboardgroup(struct wl_listener *listener, void *data);
 void inputdevice(struct wl_listener *listener, void *data);
 int keybinding(uint32_t mods, xkb_keysym_t sym);
+int keybinding_repeatable(void);
 void keypress(struct wl_listener *listener, void *data);
 void keypressmod(struct wl_listener *listener, void *data);
 int keyrepeat(void *data);
@@ -664,25 +768,43 @@ void outputmgrapply(struct wl_listener *listener, void *data);
 void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 void outputmgrtest(struct wl_listener *listener, void *data);
 
-/* Session lock */
-void createlocksurface(struct wl_listener *listener, void *data);
-void destroylock(SessionLock *lock, int unlocked);
+/* Session lock (modules/session_lock.c) */
 void destroylocksurface(struct wl_listener *listener, void *data);
-void destroysessionlock(struct wl_listener *listener, void *data);
-void locksession(struct wl_listener *listener, void *data);
-void unlocksession(struct wl_listener *listener, void *data);
+void session_lock_init(void);
+void session_lock_resize(void);
+void session_lock_configure_output(Monitor *m);
+void session_lock_cleanup(void);
 
 /* Viewport and navigation (kalin-wm specific) */
+void viewport_kick(void);
 void viewport_pan(const Arg *arg);
+void viewport_coast_start(float vx, float vy);
 void viewport_fit_all(const Arg *arg);
 void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_center_on(Client *c);
+void viewport_menu_reveal(Client *c);
 void viewport_focus_window(Client *c);
 void viewport_animate_to(float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
+void viewport_pan_grab_start(void);
+void viewport_pan_grab_update(void);
+
+/* Overview (modules/viewport/overview.c): Super+O zooms out to frame every
+ * window (reuses viewport_fit_all()'s shot) and remembers the camera so it
+ * can snap back on toggle, click-to-focus, or bare Escape. */
+void toggle_overview(const Arg *arg);
+void overview_exit(void);
+void overview_select(Client *c);
+int overview_is_active(void);
+
+/* hyprland-toplevel-export-v1 (modules/protocols/toplevel_export.c): per-window
+ * frame capture for Quickshell's taskbar hover-preview and Overview thumbnails —
+ * see that file's header comment for why this specific (non-wlroots-wrapped)
+ * protocol is required. */
+void toplevel_export_init(struct wl_display *display);
 
 /* Hold-Super spotlight: focus the active window and recede the rest (defined in
  * dwl.c, driven by the shell via the "spotlight" IPC command). */
@@ -692,12 +814,29 @@ void spotlight_exit(void);
 /* High-res screenshot (capture TU) */
 void capture_screenshot(const Arg *arg);
 
+/* Region/selection export used by the screenshot UI (capture TU): renders
+ * monitor `m` at native resolution, crops to the selection box (in the same
+ * screen-pixel space as ScreenshotEditor), and writes to disk
+ * (~/Pictures/Screenshots/) and/or the Wayland clipboard (via wl-copy). */
+void capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
+                               bool to_disk, bool to_clipboard);
+
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);
 void cropreset(const Arg *arg);
 void cropend(const Arg *arg);
 void cropdraw(void);
+
+/* Niri-style screenshot UI (screenshot_ui TU): Super+Shift+S opens a
+ * drag-to-select overlay pre-filled with the whole focused monitor. Escape
+ * cancels; Space/Enter confirms (save to disk + clipboard); Ctrl+C confirms
+ * clipboard-only; P toggles pointer visibility in the capture. */
+void screenshotui_begin(const Arg *arg);
+void screenshotui_cancel(const Arg *arg);
+void screenshotui_confirm(bool write_to_disk);
+void screenshotui_toggle_pointer(void);
+void screenshotui_draw(void);
 
 /* Spring-glide animation: layout sets a client's target world geometry and the
  * compositor tick slides it there (defined in dwl.c). */
@@ -707,23 +846,8 @@ void client_set_target_geom(Client *c, struct wlr_box geo);
  * viewport_tick() on camera settle (defined in dwl.c). */
 void client_apply_zoom_scale(void);
 
-/* Column layout helpers (layout_world TU) */
-void infinite(Monitor *m);
-void arrange_columns(Monitor *m);
-void place_window_column(Client *c, Monitor *m);
-void move_column(const Arg *arg);
-int same_column_x(float a, float b);
-float nearest_column_x(Monitor *m, Client *exclude, float drop_x);
-
-/* Carry the focused window through the grid (Super+Ctrl+Arrows). */
-void move_window_dir(const Arg *arg);
-/* Reset the adaptive spawn cursor when focus moves to a new column. */
-void spawn_cursor_on_focus(Client *c);
-
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);
-/* Nearest tiled window to `from` in direction dir (DIR_*); defined in dwl.c. */
-Client *nearest_in_direction(Client *from, int dir);
 
 /* Wallpaper (kalin-wm specific) */
 void wallpaper_init(void);
@@ -737,9 +861,6 @@ void cropdraw(void);
 /* Selection and clipboard */
 void setpsel(struct wl_listener *listener, void *data);
 void setsel(struct wl_listener *listener, void *data);
-
-/* Layout */
-void setlayout(const Arg *arg);
 
 /* Shell IPC socket (defined in the separately-compiled modules/ipc.c TU). */
 void ipc_broadcast_state(void);

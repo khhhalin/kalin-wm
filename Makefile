@@ -13,8 +13,11 @@ WLR_FLAGS  = `pkg-config --cflags wlroots-0.20`
 WLR_LIBS   = `pkg-config --libs wlroots-0.20`
 WL_FLAGS   = `pkg-config --cflags wayland-server xkbcommon libinput`
 WL_LIBS    = `pkg-config --libs wayland-server xkbcommon libinput`
+# sd-bus, for calling logind's SetBrightness (see ipc.c's brightness command).
+SD_FLAGS   = `pkg-config --cflags libsystemd`
+SD_LIBS    = `pkg-config --libs libsystemd`
 
-CFLAGS   = $(WLR_FLAGS) $(WL_FLAGS) -I. -Icode/config -Icode/include -Icode/include/protocols -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L
+CFLAGS   = $(WLR_FLAGS) $(WL_FLAGS) $(SD_FLAGS) -I. -Icode/config -Icode/include -Icode/include/protocols -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L
 CFLAGS  += -DVERSION=\"0.8-dev\"
 CFLAGS  += -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement
 CFLAGS  += -Wno-unused-parameter -Wshadow -Wunused-macros
@@ -24,13 +27,13 @@ CFLAGS  += -Werror=incompatible-pointer-types -Wfloat-conversion -O1
 # (headers AND the modules dwl.c #include's directly) trigger a rebuild.
 CFLAGS  += -MMD -MP
 
-LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) -lm
+LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) $(SD_LIBS) -lm
 
 # Source files. dwl.c is the core translation unit; it #include's the feature
 # modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
 # commit_size.c is compiled as its own translation unit. The other listed files
 # (util/crash_report/persistence) are independent translation units.
-SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/foreign_toplevel.c code/src/modules/viewport/viewport_ops.c code/src/modules/layout/layout_world.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/ipc.c code/src/modules/capture.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/input/gestures.c code/src/modules/input/pty.c code/src/modules/foreign_toplevel.c code/src/modules/protocols/toplevel_export.c code/include/protocols/hyprland-toplevel-export-v1-protocol-code.c code/include/protocols/wlr-foreign-toplevel-management-unstable-v1-protocol-code.c code/src/modules/viewport/viewport_ops.c code/src/modules/viewport/overview.c code/src/modules/layout/arrange_sched.c code/src/modules/layout/window_size_history.c code/src/modules/layout/connection_graph.c code/src/modules/layout/directional_focus.c code/src/modules/layout/client_anim.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/screenshot/screenshot_ui.c code/src/modules/ipc.c code/src/modules/backlight.c code/src/modules/capture.c code/src/modules/session_lock.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
 DEPS = $(OBJS:.o=.d)
@@ -45,7 +48,8 @@ PROTO_HDRS = code/include/protocols/xdg-shell-protocol.h \
 	     code/include/protocols/wlr-layer-shell-unstable-v1-protocol.h \
 	     code/include/protocols/wlr-output-power-management-unstable-v1-protocol.h \
 	     code/include/protocols/pointer-constraints-unstable-v1-protocol.h \
-	     code/include/protocols/cursor-shape-v1-protocol.h
+	     code/include/protocols/cursor-shape-v1-protocol.h \
+	     code/include/protocols/hyprland-toplevel-export-v1-protocol.h
 
 # Main target
 all: $(BIN)
@@ -84,6 +88,24 @@ code/include/protocols/%-protocol.h: protocols/%.xml
 	@mkdir -p $(dir $@)
 	$(WAYLAND_SCANNER) server-header $< $@
 
+# hyprland-toplevel-export-v1 is the one vendored protocol not otherwise known
+# to wlroots/wayland-protocols, so (unlike the others above) the actual
+# wl_interface/wl_message data tables aren't linked in for free — generate
+# the code, not just the header, and compile it as an ordinary source file
+# (see SRCS). Its capture_toplevel_with_wlr_toplevel_handle request references
+# zwlr_foreign_toplevel_handle_v1 as an argument type, so the generated code
+# also needs *that* protocol's own wl_interface symbol at link time — hence
+# wlr-foreign-toplevel-management-unstable-v1 is vendored+generated the same
+# way purely to provide that symbol. kalin-wm's actual foreign-toplevel
+# protocol *implementation* stays entirely wlroots-internal
+# (wlr_foreign_toplevel_manager_v1_create() in dwl.c, see
+# modules/foreign_toplevel.c) — this generated copy is never registered as
+# its own wl_global and never used to create real resources, only linked in
+# for the interface descriptor.
+code/include/protocols/%-protocol-code.c: protocols/%.xml
+	@mkdir -p $(dir $@)
+	$(WAYLAND_SCANNER) private-code $< $@
+
 # Config
 check-config:
 	@-[ -f code/config/config.h ] || cp code/config/config.def.h code/config/config.h
@@ -105,7 +127,7 @@ uninstall:
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f kalin-wm
-	rm -f tests/test_client_lifecycle tests/test_binds tests/*.gcda tests/*.gcno tests/*.gcov
+	rm -f tests/test_client_lifecycle tests/test_binds tests/test_growth_overlap tests/test_connection_graph tests/test_viewport_ops tests/*.gcda tests/*.gcno tests/*.gcov
 
 distclean: clean
 	rm -f code/config/config.h
@@ -121,6 +143,12 @@ release: kalin-wm
 test-unit:
 	@echo "=== Running Unit Tests ==="
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_client_lifecycle code/tests/test_client_lifecycle.c -lm && tests/test_client_lifecycle
+	@echo "=== Running Growth-Overlap Tests ==="
+	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_growth_overlap code/tests/test_growth_overlap.c -lm && tests/test_growth_overlap
+	@echo "=== Running Connection-Graph Tests ==="
+	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_connection_graph code/tests/test_connection_graph.c -lm && tests/test_connection_graph
+	@echo "=== Running Viewport-Ops Tests ==="
+	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_viewport_ops code/tests/test_viewport_ops.c -lm && tests/test_viewport_ops
 	@echo "=== Running Bind DSL Tests ==="
 	@gcc -Wall -Wextra -Wshadow -O1 -g -Icode/include -Icode/config -o tests/test_binds \
 		code/tests/test_binds.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_actions.c \

@@ -1,6 +1,6 @@
 # Project structure
 
-The kalin-wm repository is organized by role:
+- The kalin-wm repository is organized by role:
 
 - `code/` — the code tree: `code/config/` ([[compile-time-config]]),
   `code/include/` (headers; `kalin.h` is the umbrella), `code/include/protocols/`
@@ -17,6 +17,5 @@ The kalin-wm repository is organized by role:
   [[research/README|research subtree]].
 - `backups/` — local snapshots, not active code.
 
-Root holds build entrypoints (`Makefile`, `flake.nix`), `AGENTS.md`,
-`README.md`, licenses, and changelogs. This note supersedes the old
-`docs/PROJECT_STRUCTURE.md`.
+- Root holds build entrypoints (`Makefile`, `flake.nix`), `AGENTS.md`, `README.md`, licenses, and changelogs.
+- This note supersedes the old `docs/PROJECT_STRUCTURE.md`.

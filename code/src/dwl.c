@@ -6,9 +6,6 @@
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -92,18 +89,90 @@
  * instance, so it has external linkage. */
 CropEditor crop_editor;
 
+/* Screenshot UI state. Type lives in kalin.h; the screenshot_ui TU links
+ * against this instance, so it has external linkage. */
+ScreenshotEditor screenshot_ui;
+
+/* Whichever docked client (see setdocked()) the cursor is currently over, or
+ * NULL. Updated in motionnotify(); read by ipc.c to mirror into the state
+ * broadcast so a shell panel can auto-hide a docked terminal when the cursor
+ * leaves it — the compositor is the only thing that can know this, since a
+ * docked client is a real toplevel and its own hover state isn't visible to
+ * the shell any other way. External linkage so ipc.c can read it. */
+Client *dock_hover_client;
+
+/* Pending "this app_id's next map should dock straight into this rect"
+ * requests, registered via the "dockprep" IPC command before a shell panel
+ * spawns its backing terminal. Consumed (matched + removed) in mapnotify(),
+ * which then skips normal placement/connection-graph/camera-follow handling
+ * for that client entirely and docks it immediately — so a docked panel's
+ * first-ever spawn never flashes at a default floating position and never
+ * drags the camera along with it (see the follow_new_windows check in
+ * mapnotify()). Fixed-size: one entry per known panel type is plenty, and an
+ * unmatched register() just overwrites the oldest slot rather than growing
+ * unbounded. */
+#define DOCKPREP_MAX 8
+struct dockprep_entry {
+	char appid[256];
+	struct wlr_box rect;
+	int used;
+};
+static struct dockprep_entry dockprep_pending[DOCKPREP_MAX];
+
+void
+dockprep_register(const char *appid, struct wlr_box rect)
+{
+	int i, slot = 0;
+
+	if (!appid || !*appid)
+		return;
+	for (i = 0; i < DOCKPREP_MAX; i++) {
+		if (dockprep_pending[i].used && strcmp(dockprep_pending[i].appid, appid) == 0) {
+			slot = i;
+			goto set;
+		}
+		if (!dockprep_pending[i].used) {
+			slot = i;
+			goto set;
+		}
+	}
+	/* All slots full and none matched — overwrite slot 0 rather than drop
+	 * the request silently; this shouldn't happen in practice (panel count
+	 * is well under DOCKPREP_MAX), but a stuck stale slot is worse than
+	 * evicting one. */
+set:
+	snprintf(dockprep_pending[slot].appid, sizeof(dockprep_pending[slot].appid), "%s", appid);
+	dockprep_pending[slot].rect = rect;
+	dockprep_pending[slot].used = 1;
+}
+
+/* Matches and consumes (one-shot) a pending dockprep request for `appid`.
+ * Returns 1 and fills *out on a match, 0 otherwise. */
+int
+dockprep_consume(const char *appid, struct wlr_box *out)
+{
+	int i;
+
+	if (!appid || !*appid)
+		return 0;
+	for (i = 0; i < DOCKPREP_MAX; i++) {
+		if (dockprep_pending[i].used && strcmp(dockprep_pending[i].appid, appid) == 0) {
+			*out = dockprep_pending[i].rect;
+			dockprep_pending[i].used = 0;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* 2D Viewport state - global view transform. Type lives in kalin.h; the
  * viewport/layout/crop/ipc TUs link against this instance (external linkage). */
-Viewport viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0 };
+Viewport viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0, 0, 0, 0 };
 
-/* True scene-zoom transform: screen = (world - camera) * zoom. Defined here so
- * input handlers, crop, and the layout (#included later) all share it. Window
- * SIZES are scaled by zoom in resize(); positions by these macros. */
-#define VIEWPORT_ZOOM_SAFE    (viewport.zoom > 0.0001f ? viewport.zoom : 0.0001f)
-#define WORLD_TO_SCREEN_X(wx) ((int)(((wx) - viewport.x) * VIEWPORT_ZOOM_SAFE))
-#define WORLD_TO_SCREEN_Y(wy) ((int)(((wy) - viewport.y) * VIEWPORT_ZOOM_SAFE))
-#define SCREEN_TO_WORLD_X(sx) ((float)(sx) / VIEWPORT_ZOOM_SAFE + viewport.x)
-#define SCREEN_TO_WORLD_Y(sy) ((float)(sy) / VIEWPORT_ZOOM_SAFE + viewport.y)
+/* True scene-zoom transform: screen = (world - camera) * zoom. Now shared via
+ * kalin.h (VIEWPORT_ZOOM_SAFE, WORLD_TO_SCREEN_X/Y, SCREEN_TO_WORLD_X/Y)
+ * since modules/layout/connection_graph.c needs them too. Window SIZES are
+ * scaled by zoom in resize(); positions by these macros. */
 
 /* Exit confirmation state */
 static struct {
@@ -117,6 +186,12 @@ static struct {
 int super_held = 0;
 int exit_pending = 0;
 int menu_shown = 0;   /* hold-Super window menu visible (broadcast to the shell) */
+/* Stable per-client id, assigned once at map time — used to reference clients
+ * in the IPC connection-graph broadcast/sever command (appid+title isn't
+ * unique across multiple instances of the same app). */
+static uint32_t next_client_id = 1;
+/* SPAWN_GAP (gap between a new window and its spawn-parent) is now in
+ * kalin.h — modules/layout/connection_graph.c needs it too. */
 /* Clears exit_pending/exit_confirm after the confirmation window so each fresh
  * arming re-broadcasts a 0->1 edge the shell can flash on. */
 static struct wl_event_source *exit_confirm_timer;
@@ -125,25 +200,17 @@ static struct wl_event_source *exit_confirm_timer;
  * against this instance (external linkage). */
 Wallpaper wallpaper;
 
-#define WINDOW_SIZE_HISTORY_MAX 256
-#define WINDOW_SIZE_KEY_MAX 256
-typedef struct {
-	char key[WINDOW_SIZE_KEY_MAX];
-	int width;
-	int height;
-	unsigned long stamp;
-} WindowSizeHistoryEntry;
-
-static struct {
-	WindowSizeHistoryEntry entries[WINDOW_SIZE_HISTORY_MAX];
-	unsigned long stamp;
-} window_size_history;
+/* Window-size-history lookup (defined in the separately-compiled
+ * modules/layout/window_size_history.c TU). */
 
 
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
 void arrange(Monitor *m);
+void viewport_camera_tick(Monitor *m);
+void arrange_mark_dirty(Monitor *m);
+void status_mark_dirty(void);
 static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
 static void arrangelayers(Monitor *m);
@@ -155,6 +222,7 @@ static void cleanup(void);
 static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
 static void closemon(Monitor *m);
+static int collect_component(Client *start, Client **out, int max);
 static void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 static void commitnotify(struct wl_listener *listener, void *data);
 int client_accept_requested_size(Client *c);
@@ -164,11 +232,11 @@ static void createidleinhibitor(struct wl_listener *listener, void *data);
 static void createkeyboard(struct wlr_keyboard *keyboard);
 static KeyboardGroup *createkeyboardgroup(void);
 static void createlayersurface(struct wl_listener *listener, void *data);
-static void createlocksurface(struct wl_listener *listener, void *data);
 static void createmon(struct wl_listener *listener, void *data);
 static void createnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
+void gestures_attach(struct wlr_pointer *pointer);
 static void createpopup(struct wl_listener *listener, void *data);
 static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
@@ -177,11 +245,8 @@ static void destroydecoration(struct wl_listener *listener, void *data);
 static void destroydragicon(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
-static void destroylock(SessionLock *lock, int unlocked);
-static void destroylocksurface(struct wl_listener *listener, void *data);
 static void destroynotify(struct wl_listener *listener, void *data);
 static void destroypointerconstraint(struct wl_listener *listener, void *data);
-static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
 void focusclient(Client *c, int lift);
@@ -194,15 +259,15 @@ static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
 static void killclient(const Arg *arg);
-static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
-static int window_size_history_make_key(Client *c, char *buf, size_t buflen);
-static int window_size_history_load(Client *c, int *width, int *height);
-static void window_size_history_store(Client *c, int width, int height);
+int window_size_history_load(Client *c, int *width, int *height);
+void window_size_history_store(Client *c, int width, int height);
 
 static void motionabsolute(struct wl_listener *listener, void *data);
-static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
+/* Not static: session_lock.c's destroylock() calls this (with all-zero args)
+ * to refresh pointer focus right after a session unlock. */
+void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
 static void moveresize(const Arg *arg);
@@ -224,12 +289,22 @@ void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
+void viewport_menu_reveal(Client *c);
 void viewport_focus_window(Client *c);
 void viewport_animate_to(float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
+void viewport_pan_grab_start(void);
+void viewport_pan_grab_update(void);
 void viewport_tick(void);
+/* Defined in the separately-compiled overview TU. */
+void toggle_overview(const Arg *arg);
+void overview_exit(void);
+void overview_select(Client *c);
+int overview_is_active(void);
+/* Defined in the separately-compiled toplevel_export TU. */
+void toplevel_export_init(struct wl_display *display);
 /* Defined in the separately-compiled wallpaper TU. */
 void wallpaper_configure(int w, int h);
 void wallpaper_update(void);
@@ -242,19 +317,40 @@ void cropcancel(const Arg *arg);
 void cropreset(const Arg *arg);
 void cropend(const Arg *arg);
 void cropdraw(void);
+
+/* Defined in the separately-compiled screenshot_ui TU. */
+void screenshotui_begin(const Arg *arg);
+void screenshotui_cancel(const Arg *arg);
+void screenshotui_confirm(bool write_to_disk);
+void screenshotui_toggle_pointer(void);
+void screenshotui_draw(void);
+
+/* Defined in the separately-compiled session_lock TU. */
+void destroylocksurface(struct wl_listener *listener, void *data);
+void session_lock_init(void);
+void session_lock_resize(void);
+void session_lock_configure_output(Monitor *m);
+void session_lock_cleanup(void);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void client_apply_crop_clip(Client *c);
+static void client_apply_zoom_frame(Client *c);
 void resize(Client *c, struct wlr_box geo, int interact);
+void client_set_target_geom(Client *c, struct wlr_box geo);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
-static void setfloating(Client *c, int floating);
 void setfullscreen(Client *c, int fullscreen);
-static void setlayout(const Arg *arg);
+void setmaximized(Client *c, int maximized);
+static void setontop(Client *c, int ontop);
+void setminimized(Client *c, int minimized);
+void setdocked(Client *c, int docked, struct wlr_box rect);
+Client *client_find_by_appid(const char *appid);
 void resizefocused(const Arg *arg);
+void fitwidth(const Arg *arg);
+void fitheight(const Arg *arg);
 static void setmon(Client *c, Monitor *m);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
@@ -262,10 +358,12 @@ static void setup(void);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
 static void tagmon(const Arg *arg);
-void infinite(Monitor *m);
-static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
-static void unlocksession(struct wl_listener *listener, void *data);
+void togglemaximized(const Arg *arg);
+void toggleontop(const Arg *arg);
+void toggleoverlap(const Arg *arg);
+void toggleminimize(const Arg *arg);
+void togglescratchpad(const Arg *arg);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
@@ -276,12 +374,14 @@ static void virtualpointer(struct wl_listener *listener, void *data);
 static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
-static void zoom(const Arg *arg);
 
 static pid_t launcher_pid = -1;
 
-/* forward declare PTY registration so spawn_pid can call it */
-static void pty_register(pid_t pid, int master_fd, const char *cmd);
+/* PTY process tracking (defined in the separately-compiled
+ * modules/input/pty.c TU); pty_register() is called by spawn_pid() below,
+ * the rest (pty_inject/pty_log_for/pty_child_reaped) are declared in
+ * kalin.h for other modules. */
+void pty_register(pid_t pid, int master_fd, const char *cmd);
 
 static pid_t
 spawn_pid(const Arg *arg)
@@ -341,7 +441,7 @@ spawn_pid(const Arg *arg)
 static pid_t child_pid = -1;
 int locked;  /* extern; consumed by modules/input/keyboard.c */
 static void *exclusive_focus;
-static struct wl_display *dpy;
+struct wl_display *dpy;  /* extern; consumed by modules/session_lock.c */
 struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
 struct wlr_scene *scene;
@@ -378,9 +478,6 @@ struct wlr_cursor *cursor;
 struct wlr_xcursor_manager *cursor_mgr;
 
 static struct wlr_scene_rect *root_bg;
-static struct wlr_session_lock_manager_v1 *session_lock_mgr;
-static struct wlr_scene_rect *locked_bg;
-static struct wlr_session_lock_v1 *cur_lock;
 
 struct wlr_seat *seat;  /* extern; consumed by modules/input/keyboard.c */
 static KeyboardGroup *kb_group;
@@ -389,7 +486,7 @@ static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 
 struct wlr_output_layout *output_layout;
-static struct wlr_box sgeom;
+struct wlr_box sgeom;  /* extern; consumed by modules/session_lock.c */
 struct wl_list mons;
 Monitor *selmon;
 
@@ -421,17 +518,15 @@ static struct wl_listener request_set_sel = {.notify = setsel};
 static struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 static struct wl_listener request_start_drag = {.notify = requeststartdrag};
 static struct wl_listener start_drag = {.notify = startdrag};
-static struct wl_listener new_session_lock = {.notify = locksession};
 
-/* Directional focus navigation - forward declaration for config.h */
-static void focus_directional(const Arg *arg);
-
-/* Column movement (Niri-style) - forward declaration for config.h */
-void move_column(const Arg *arg);
-
-/* Grid window movement + adaptive spawn cursor (defined in layout_world.c). */
-void move_window_dir(const Arg *arg);
-void spawn_cursor_on_focus(Client *c);
+/* Directional focus navigation (defined in the separately-compiled
+ * modules/layout/directional_focus.c TU) - forward declaration for
+ * config.h. */
+void focus_directional(const Arg *arg);
+/* Connection-graph (defined in the separately-compiled
+ * modules/layout/connection_graph.c TU) - forward declaration for config.h,
+ * same as focus_directional above. */
+void swap_neighbor_dir(const Arg *arg);
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -439,159 +534,28 @@ void spawn_cursor_on_focus(Client *c);
 /* attempt to encapsulate suck into one file */
 #include "client_inline.h"
 
-/* PTY process tracking */
-typedef struct PTYProc {
-	pid_t pid;
-	int master_fd;
-	struct wl_event_source *source;
-	char *cmd;
-	char *logbuf;
-	size_t loglen;
-	struct PTYProc *next;
-} PTYProc;
+/* PTY process tracking (defined in the separately-compiled
+ * modules/input/pty.c TU). */
 
-static PTYProc *pty_list = NULL;
-
-static PTYProc *
-pty_find(pid_t pid)
-{
-	PTYProc *p;
-
-	for (p = pty_list; p; p = p->next) {
-		if (p->pid == pid)
-			return p;
-	}
-
-	return NULL;
-}
-
-static int
-pty_append_log(PTYProc *p, const char *buf, size_t len)
-{
-	char *newbuf;
-	size_t newlen;
-
-	if (!p || !buf || len == 0)
-		return -1;
-	newlen = p->loglen + len;
-	newbuf = realloc(p->logbuf, newlen + 1);
-	if (!newbuf)
-		return -1;
-	p->logbuf = newbuf;
-	memcpy(p->logbuf + p->loglen, buf, len);
-	p->loglen = newlen;
-	p->logbuf[p->loglen] = '\0';
-	return 0;
-}
-
-int
-pty_inject(pid_t pid, const char *text)
-{
-	PTYProc *p = pty_find(pid);
-	size_t len;
-
-	if (!p || p->master_fd < 0 || !text)
-		return -1;
-	len = strlen(text);
-	return (int)write(p->master_fd, text, len);
-}
-
-const char *
-pty_log_for(pid_t pid)
-{
-	PTYProc *p = pty_find(pid);
-
-	if (!p)
-		return NULL;
-	return p->logbuf;
-}
-
-static int
-pty_read_cb(int fd, uint32_t mask, void *data)
-{
-	PTYProc *p = data;
-	char buf[1024];
-	ssize_t n;
-
-	(void)mask;
-	if (!p) return 0;
-	n = read(fd, buf, sizeof(buf) - 1);
-	if (n > 0) {
-		buf[n] = '\0';
-		wlr_log(WLR_INFO, "pty[%d]: %s", p->pid, buf);
-		pty_append_log(p, buf, (size_t)n);
-		return 1; /* keep the source */
-	}
-
-	/* EOF or error - unregister */
-	if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-		if (p->source)
-			wl_event_source_remove(p->source);
-		if (p->master_fd >= 0)
-			close(p->master_fd);
-		/* remove from list */
-		PTYProc **pp = &pty_list;
-		while (*pp) {
-			if (*pp == p) {
-				*pp = p->next;
-				break;
-			}
-			pp = &(*pp)->next;
-		}
-		free(p->cmd);
-		free(p->logbuf);
-		free(p);
-	}
-	return 0;
-}
-
-static void
-pty_register(pid_t pid, int master_fd, const char *cmd)
-{
-	PTYProc *p = calloc(1, sizeof(*p));
-	if (!p) return;
-	p->pid = pid;
-	p->master_fd = master_fd;
-	p->cmd = cmd ? strdup(cmd) : NULL;
-	p->logbuf = NULL;
-	p->loglen = 0;
-	p->next = pty_list;
-	pty_list = p;
-	if (event_loop) {
-		p->source = wl_event_loop_add_fd(event_loop, master_fd, WL_EVENT_READABLE, pty_read_cb, p);
-	}
-}
-
-void
-pty_child_reaped(pid_t pid)
-{
-	PTYProc *p = pty_list;
-	PTYProc *prev = NULL;
-	while (p) {
-		if (p->pid == pid) {
-			if (p->source)
-				wl_event_source_remove(p->source);
-			if (p->master_fd >= 0)
-				close(p->master_fd);
-			if (prev)
-				prev->next = p->next;
-			else
-				pty_list = p->next;
-			free(p->cmd);
-			free(p->logbuf);
-			free(p);
-			return;
-		}
-		prev = p;
-		p = p->next;
-	}
-}
-
-/* Layout functions (defined in the separately-compiled layout_world TU).
- * same_column_x is shared: the crop module (still #included here) also uses it. */
-void infinite(Monitor *m);
-int same_column_x(float a, float b);
-float nearest_column_x(Monitor *m, Client *exclude, float drop_x);
+/* Connection-graph (defined in the separately-compiled
+ * modules/layout/connection_graph.c TU). kalin.h also declares
+ * connect_clients()/resolve_growth_overlap()/sever_connection() for other
+ * modules (resize_actions.c, ipc.c) — but dwl.c itself doesn't see that
+ * section of kalin.h (it's guarded by "#ifndef DWL_INTERNAL", which dwl.c
+ * defines, since dwl.c owns these symbols' *other* declarations there
+ * directly), so every one of these functions dwl.c calls needs its own
+ * forward declaration here too, independent of kalin.h's copy. */
+void connect_clients(Client *a, Client *b);
+void resolve_growth_overlap(Client *c);
+void sever_connection(uint32_t id_a, uint32_t id_b);
+int opposite_octant(int oct);
+int connection_click_hit(double sx, double sy, uint32_t *out_a, uint32_t *out_b);
+void close_gap(Client *a, Client *b);
+int collect_component(Client *start, Client **out, int max);
+void connect_pick_arm(void);
+void connect_pick_cancel(void);
+void connect_pick_complete(Client *target);
+Client *connect_pick_pending(void);
 
 /* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
 void ftl_create(Client *c);
@@ -652,7 +616,6 @@ applyrules(Client *c)
 	for (r = rules; r < END(rules); r++) {
 		if ((!r->title || strstr(title, r->title))
 				&& (!r->id || strstr(appid, r->id))) {
-			c->isfloating = r->isfloating;
 			i = 0;
 			wl_list_for_each(m, &mons, link) {
 				if (r->monitor == i++)
@@ -661,106 +624,9 @@ applyrules(Client *c)
 		}
 	}
 
-	c->isfloating |= client_is_float_type(c);
 	setmon(c, mon);
 }
 
-int
-window_size_history_make_key(Client *c, char *buf, size_t buflen)
-{
-	const char *appid;
-	const char *title;
-
-	if (!c || !buf || buflen == 0)
-		return 0;
-
-	appid = client_get_appid(c);
-	if (appid && appid[0] != '\0' && strcmp(appid, "broken") != 0) {
-		snprintf(buf, buflen, "app:%s", appid);
-		return 1;
-	}
-
-	title = client_get_title(c);
-	if (title && title[0] != '\0' && strcmp(title, "broken") != 0) {
-		snprintf(buf, buflen, "title:%s", title);
-		return 1;
-	}
-
-	return 0;
-}
-
-int
-window_size_history_load(Client *c, int *width, int *height)
-{
-	char key[WINDOW_SIZE_KEY_MAX];
-	int i;
-
-	if (!width || !height)
-		return 0;
-	if (!window_size_history_make_key(c, key, sizeof(key)))
-		return 0;
-
-	for (i = 0; i < WINDOW_SIZE_HISTORY_MAX; i++) {
-		if (window_size_history.entries[i].key[0] == '\0')
-			continue;
-		if (strcmp(window_size_history.entries[i].key, key) != 0)
-			continue;
-		if (window_size_history.entries[i].width <= 0 || window_size_history.entries[i].height <= 0)
-			return 0;
-
-		*width = window_size_history.entries[i].width;
-		*height = window_size_history.entries[i].height;
-		window_size_history.entries[i].stamp = ++window_size_history.stamp;
-		return 1;
-	}
-
-	return 0;
-}
-
-void
-window_size_history_store(Client *c, int width, int height)
-{
-	char key[WINDOW_SIZE_KEY_MAX];
-	int i;
-	int target;
-	int first_empty;
-
-	if (width <= 0 || height <= 0)
-		return;
-	if (!window_size_history_make_key(c, key, sizeof(key)))
-		return;
-
-	first_empty = -1;
-	target = -1;
-
-	for (i = 0; i < WINDOW_SIZE_HISTORY_MAX; i++) {
-		if (window_size_history.entries[i].key[0] == '\0') {
-			if (first_empty < 0)
-				first_empty = i;
-			continue;
-		}
-		if (strcmp(window_size_history.entries[i].key, key) == 0) {
-			target = i;
-			break;
-		}
-	}
-
-	if (target < 0)
-		target = first_empty;
-	if (target < 0) {
-		target = 0;
-		for (i = 1; i < WINDOW_SIZE_HISTORY_MAX; i++) {
-			if (window_size_history.entries[i].stamp < window_size_history.entries[target].stamp)
-				target = i;
-		}
-	}
-
-	snprintf(window_size_history.entries[target].key,
-		sizeof(window_size_history.entries[target].key), "%s", key);
-	window_size_history.entries[target].width = width;
-	window_size_history.entries[target].height = height;
-	window_size_history.entries[target].stamp = ++window_size_history.stamp;
-}
 
 void
 arrange(Monitor *m)
@@ -782,26 +648,137 @@ arrange(Monitor *m)
 	wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
 			(c = focustop(m)) && c->isfullscreen);
 
-	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", m->lt[m->sellt]->symbol);
-
-	/* We move all clients (except fullscreen and unmanaged) to LyrTile while
-	 * in floating layout to avoid "real" floating clients be always on top */
-	wl_list_for_each(c, &clients, link) {
-		if (c->mon != m || c->scene->node.parent == layers[LyrFS])
-			continue;
-
-		wlr_scene_node_reparent(&c->scene->node,
-				(!m->lt[m->sellt]->arrange && c->isfloating)
-						? layers[LyrTile]
-						: (m->lt[m->sellt]->arrange && c->isfloating)
-								? layers[LyrFloat]
-								: c->scene->node.parent);
-	}
-
-	if (m->lt[m->sellt]->arrange)
-		m->lt[m->sellt]->arrange(m);
+	/* Every window is free-positioned now (no layout modes to switch between),
+	 * so the only remaining z-order concern is fullscreen/pin-on-top, which
+	 * setfullscreen()/setontop() already keep correct on their own transitions
+	 * — no per-arrange reparenting sweep needed here any more. */
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	checkidleinhibitor(NULL);
+}
+
+/* Position and size a client's frame (scene-node origin, border rects, focus
+ * ring) for the current camera zoom/pan — everything resize() derives from
+ * c->geom that ISN'T the client's actual configured buffer size (that part,
+ * cfg_w/cfg_h, is zoom-independent — the client always renders at its native
+ * logical size; only the *displayed* frame and border thickness scale, via
+ * this and via client_set_buffer_scale()'s dest_size).
+ *
+ * Shared by resize() (on a real geometry change) and viewport_camera_tick()
+ * (every frame during a camera-only pan/zoom). Without the latter, a smooth
+ * camera zoom left the border/focus-ring rects at whatever size the last real
+ * resize() computed — client_set_buffer_scale() already rescales the buffer
+ * every frame in rendermon(), so the content tracked the zoom but the frame
+ * around it didn't, visibly lagging/mismatched until the next resize() (e.g.
+ * on animation settle) caught it up. Most noticeable on a big, sudden zoom
+ * like the overview's fit-all jump. */
+static void
+client_apply_zoom_frame(Client *c)
+{
+	int view_x, view_y;
+	float zf;
+	int z_bw, z_w, z_h, z_inner_h;
+
+	if (!c->scene || !c->border[0] || !c->border[1] || !c->border[2] || !c->border[3])
+		return;
+
+	/* Fullscreen always fills the physical monitor 1:1, regardless of camera
+	 * pan/zoom — c->geom is already the monitor's own output-layout rect
+	 * (set from c->mon->m in setfullscreen()), and that rect must land
+	 * exactly on the monitor's own region of the shared layout space for
+	 * wlr_scene_output to actually show it full-screen; running it through
+	 * the WORLD_TO_SCREEN camera transform would shift/shrink it away from
+	 * the monitor's real position whenever the camera isn't at pan=(0,0)
+	 * zoom=1, and out of position often enough to render partially off the
+	 * monitor's output region entirely.
+	 *
+	 * Maximized (setmaximized()) needs the exact same bypass: c->geom there
+	 * is c->mon->w (also output-layout/screen space, not world space), for
+	 * the same reason — it's meant to visually fill the monitor's work area
+	 * as-is, not "fill the world-space region currently under the camera".
+	 *
+	 * Docked (setdocked()) needs it too: c->geom there is a screen-space rect
+	 * a shell panel handed the compositor over IPC, and it must stay glued to
+	 * that panel's on-screen position regardless of the canvas being panned
+	 * or zoomed underneath it. */
+	if (c->isfullscreen || c->ismaximized || c->docked) {
+		view_x = c->geom.x;
+		view_y = c->geom.y;
+		zf = 1.0f;
+	} else {
+		view_x = WORLD_TO_SCREEN_X(c->geom.x);
+		view_y = WORLD_TO_SCREEN_Y(c->geom.y);
+		zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	}
+	z_bw = (int)lroundf(c->bw * zf);
+	z_w  = MAX(1, (int)lroundf(c->geom.width * zf));
+	z_h  = MAX(1, (int)lroundf(c->geom.height * zf));
+	z_inner_h = MAX(0, z_h - 2 * z_bw);
+
+	wlr_scene_node_set_position(&c->scene->node, view_x, view_y);
+	wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+	wlr_scene_rect_set_size(c->border[0], z_w, z_bw);
+	wlr_scene_rect_set_size(c->border[1], z_w, z_bw);
+	wlr_scene_rect_set_size(c->border[2], z_bw, z_inner_h);
+	wlr_scene_rect_set_size(c->border[3], z_bw, z_inner_h);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, z_h - z_bw);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, z_bw);
+	wlr_scene_node_set_position(&c->border[3]->node, z_w - z_bw, z_bw);
+
+	if (focusringpx > 0 && c->focus_ring[0]) {
+		int ring = MAX(1, (int)lroundf(focusringpx * zf));
+		int ring_w = z_w + 2 * ring;
+		int ring_h = z_h + 2 * ring;
+		wlr_scene_rect_set_size(c->focus_ring[0], ring_w, ring);
+		wlr_scene_rect_set_size(c->focus_ring[1], ring_w, ring);
+		wlr_scene_rect_set_size(c->focus_ring[2], ring, ring_h);
+		wlr_scene_rect_set_size(c->focus_ring[3], ring, ring_h);
+		wlr_scene_node_set_position(&c->focus_ring[0]->node, -ring, -ring);
+		wlr_scene_node_set_position(&c->focus_ring[1]->node, -ring, z_h);
+		wlr_scene_node_set_position(&c->focus_ring[2]->node, -ring, -ring);
+		wlr_scene_node_set_position(&c->focus_ring[3]->node, z_w, -ring);
+	}
+}
+
+/* Camera-only refresh: the parts of arrange() that actually depend on
+ * viewport.x/y/zoom, and nothing else. A pure camera pan or zoom never
+ * changes any window's own geometry, so re-running all of arrange() on every
+ * ~60Hz animation tick while panning/zooming would be pure waste.
+ *
+ * But the frame's on-screen *position* is WORLD_TO_SCREEN(c->geom), which
+ * depends on viewport.x/y/zoom directly and must be re-applied every tick
+ * regardless — skipping that (an earlier version of this function did) made
+ * windows sit frozen at their old screen position for the whole animation,
+ * only snapping into place at settle when the full arrange() next ran,
+ * because nothing else reliably re-applies it mid-animation (a client's own
+ * surface commits happening to trigger resize() is incidental, not
+ * guaranteed, and made most idle windows look stuck/janky during any pan).
+ * viewport_tick() calls this per tick instead of arrange(), and still calls
+ * the full arrange() once when the camera settles, to catch anything a
+ * camera-only refresh doesn't cover (layout, borders, clip, buffer scale). */
+void
+viewport_camera_tick(Monitor *m)
+{
+	Client *c;
+
+	if (!m || !m->wlr_output->enabled)
+		return;
+	wallpaper_update();
+
+	wl_list_for_each(c, &clients, link) {
+		/* Clients already gliding via clients_anim_step() (rendermon(), a
+		 * column-layout move in progress) reposition themselves every frame
+		 * from their own spring state — skip them here to avoid stepping on
+		 * that with a stale c->geom (this runs before clients_anim_step() in
+		 * rendermon()'s per-frame order). */
+		if (c->mon != m || c->animating || !c->scene)
+			continue;
+		client_apply_zoom_frame(c);
+	}
+
+	/* World content slides under a stationary screen-space cursor while
+	 * panning, so which window/surface is "under" the pointer can change even
+	 * though the pointer itself hasn't moved — needs a re-check every tick. */
+	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
 void
@@ -843,7 +820,7 @@ arrangelayers(Monitor *m)
 
 	if (!wlr_box_equal(&usable_area, &m->w)) {
 		m->w = usable_area;
-		arrange(m);
+		arrange_mark_dirty(m);
 	}
 
 	/* Arrange non-exclusive surfaces from top->bottom */
@@ -913,7 +890,6 @@ buttonpress(struct wl_listener *listener, void *data)
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
 	Client *c;
-	const Button *b;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
@@ -937,24 +913,78 @@ buttonpress(struct wl_listener *listener, void *data)
 			return;
 		}
 
+		/* Screenshot UI: start drawing a custom selection on left click
+		 * (overrides the whole-monitor default it opened with). */
+		if (screenshot_ui.active && event->button == BTN_LEFT) {
+			screenshot_ui.dragging = true;
+			screenshot_ui.start_x = cursor->x;
+			screenshot_ui.start_y = cursor->y;
+			screenshot_ui.end_x = cursor->x;
+			screenshot_ui.end_y = cursor->y;
+			screenshotui_draw();
+			return;
+		}
+
+		/* Click-to-sever a spawn-connection line: only while Super is held
+		 * (matching when quickshell actually draws the lines) and only on
+		 * BTN_LEFT, and only if the click didn't land on a client (a real
+		 * window always takes priority over a line running behind/near it).
+		 * Entering CurCut here (rather than just testing this one point) lets
+		 * motionnotify() keep re-testing every subsequent cursor position for
+		 * the rest of the drag, so severing a line no longer needs a precise
+		 * single click — sweeping the cursor near/across it while the button
+		 * is held cuts it too (a plain click is just the zero-motion case of
+		 * the same sweep). */
+		if (super_held && event->button == BTN_LEFT) {
+			Client *hit, *pending = connect_pick_pending();
+			xytonode(cursor->x, cursor->y, NULL, &hit, NULL, NULL, NULL);
+			if (!hit) {
+				uint32_t id_a, id_b;
+				if (pending)
+					connect_pick_cancel();
+				if (connection_click_hit(cursor->x, cursor->y, &id_a, &id_b))
+					sever_connection(id_a, id_b);
+				cursor_mode = CurCut;
+				return;
+			} else if (pending && hit != pending) {
+				/* Menu-armed create: the pending source was set by
+				 * connect_pick_arm() (Super+L, WindowActions.qml's "Link"
+				 * button). The next click on a *different* window completes
+				 * it; connect_clients() already no-ops on an occupied slot
+				 * or an existing link, so this is safe to always attempt. */
+				connect_pick_complete(hit);
+				return;
+			}
+		}
+
 		/* Change focus if the button was _pressed_ over a client */
 		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
-		if (c && (!client_is_unmanaged(c) || client_wants_focus(c)))
+		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			focusclient(c, 1);
+			/* Clicking a window while the overview is open both focuses it
+			 * (above) and pans/zooms the camera to it at 1.0 zoom — jumping
+			 * to what you clicked, rather than restoring the pre-Super+O view
+			 * (that's what closing without clicking, overview_exit(), does). */
+			if (overview_is_active())
+				overview_select(c);
+		}
 
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-		if (binds_active()) {
-			if (bind_dispatch_button(mods, event->button))
+		if (bind_dispatch_button(mods, event->button)) {
+			/* bind_dispatch_button() returning true only means a bind
+			 * MATCHED this chord, not that its action actually grabbed
+			 * anything — pointer-move/pointer-resize/viewport.pan-grab all
+			 * silently no-op if there's nothing under the cursor to act on
+			 * (see moveresize()/the ACT_VIEWPORT_PAN_GRAB case), leaving
+			 * cursor_mode at CurPressed. Swallowing the click unconditionally
+			 * here meant a Super-held click could NEVER reach a client
+			 * surface sitting where nothing was grabbable (e.g. a quickshell
+			 * overlay's own clickable area) — every Super+click was eaten
+			 * before wlr_seat_pointer_notify_button() ever ran. Only swallow
+			 * it when a grab genuinely started. */
+			if (cursor_mode == CurMove || cursor_mode == CurResize || cursor_mode == CurPan)
 				return;
-			break;
-		}
-		for (b = buttons; b < END(buttons); b++) {
-			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
-					event->button == b->button && b->func) {
-				b->func(&b->arg);
-				return;
-			}
 		}
 		break;
 	case WL_POINTER_BUTTON_STATE_RELEASED:
@@ -965,28 +995,33 @@ buttonpress(struct wl_listener *listener, void *data)
 			cropend(NULL);
 			return;
 		}
-		
-		/* If you released any buttons, we exit interactive move/resize mode. */
+
+		/* Screenshot UI: releasing just fixes the drawn selection — the mode
+		 * stays open until an explicit confirm/cancel key (matching niri). */
+		if (screenshot_ui.active && event->button == BTN_LEFT && screenshot_ui.dragging) {
+			screenshot_ui.end_x = cursor->x;
+			screenshot_ui.end_y = cursor->y;
+			screenshot_ui.dragging = false;
+			screenshotui_draw();
+			return;
+		}
+
+		/* If you released any buttons, we exit interactive move/resize/pan mode. */
 		/* TODO: should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
 			int was_move = (cursor_mode == CurMove);
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
-			/* Drop the window off on its new monitor */
-			selmon = xytomon(cursor->x, cursor->y);
-			setmon(grabc, selmon);
-			/* A moved window snaps back into the column strip at the drop
-			 * position (re-tile); Phase 1 then glides it into place. A resized
-			 * window keeps its new free size. */
-			if (was_move && grabc && grabc->mon && !grabc->isfullscreen
-					&& grabc->mon->lt[grabc->mon->sellt]->arrange == infinite) {
-				grabc->world.x = nearest_column_x(grabc->mon, grabc,
-						SCREEN_TO_WORLD_X(cursor->x));
-				grabc->world.y = SCREEN_TO_WORLD_Y(cursor->y);
-				grabc->world.set = true;
-				grabc->isfloating = 0;
-				wlr_scene_node_reparent(&grabc->scene->node, layers[LyrTile]);
-				arrange(grabc->mon);
+			if (grabc) {
+				/* Drop the window off on its new monitor */
+				selmon = xytomon(cursor->x, cursor->y);
+				setmon(grabc, selmon);
+				/* Every window is free-positioned now — a drag just ends
+				 * wherever it was dropped, no re-tile/snap. Persist it (and
+				 * anything dragged along via the connection graph) right
+				 * away so the position survives a restart. */
+				if (was_move)
+					persistence_save();
 			}
 			grabc = NULL;
 			return;
@@ -1108,7 +1143,7 @@ cleanuplisteners(void)
 	wl_list_remove(&request_set_cursor_shape.link);
 	wl_list_remove(&request_start_drag.link);
 	wl_list_remove(&start_drag.link);
-	wl_list_remove(&new_session_lock.link);
+	session_lock_cleanup();
 
 	wl_list_for_each_safe(sl, tmp, &static_listeners, link) {
 		wl_list_remove(&sl->listener.link);
@@ -1136,14 +1171,14 @@ closemon(Monitor *m)
 	}
 
 	wl_list_for_each(c, &clients, link) {
-		if (c->isfloating && c->geom.x > m->m.width)
+		if (c->geom.x > m->m.width)
 			resize(c, (struct wlr_box){.x = c->geom.x - m->w.width, .y = c->geom.y,
 					.width = c->geom.width, .height = c->geom.height}, 0);
 		if (c->mon == m)
 			setmon(c, selmon);
 	}
 	focus_top(selmon, 1);
-	printstatus();
+	status_mark_dirty();
 }
 
 void
@@ -1207,12 +1242,21 @@ commitnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	/* Allow floating clients to apply their own requested content size
-	 * (e.g. apps restoring last window size) while compositor still controls
-	 * placement, bounds, fullscreen, and tiled layouts. */
-	client_accept_requested_size(c);
+	/* Allow a client to apply its own requested content size (e.g. an app
+	 * restoring its last window size) while the compositor still controls
+	 * placement, bounds, and fullscreen. Except right after a persisted
+	 * size restore (see persist_size_pending's comment in kalin.h): this
+	 * client's own first post-map commit is finalizing whatever size it
+	 * natively chose *before* it's had a chance to see our restored size
+	 * requested via resize() below, and would silently clobber the
+	 * restore if allowed through — skip exactly that one commit's accept,
+	 * then behave normally again. */
+	if (c->persist_size_pending)
+		c->persist_size_pending = 0;
+	else if (client_accept_requested_size(c))
+		resolve_growth_overlap(c);
 
-	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
+	resize(c, c->geom, 0);
 
 	/* keep a non-opaque window's opacity applied to freshly committed buffers */
 	if (c->opacity < 1.0f)
@@ -1378,25 +1422,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 }
 
 void
-createlocksurface(struct wl_listener *listener, void *data)
-{
-	SessionLock *lock = wl_container_of(listener, lock, new_surface);
-	struct wlr_session_lock_surface_v1 *lock_surface = data;
-	Monitor *m = lock_surface->output->data;
-	struct wlr_scene_tree *scene_tree = lock_surface->surface->data
-			= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
-	m->lock_surface = lock_surface;
-
-	wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
-	wlr_session_lock_surface_v1_configure(lock_surface, m->m.width, m->m.height);
-
-	LISTEN(&lock_surface->events.destroy, &m->destroy_lock_surface, destroylocksurface);
-
-	if (m == selmon)
-		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
-}
-
-void
 createmon(struct wl_listener *listener, void *data)
 {
 	/* This event is raised by the backend when a new output (aka a display or
@@ -1422,9 +1447,6 @@ createmon(struct wl_listener *listener, void *data)
 		if (!r->name || strstr(wlr_output->name, r->name)) {
 			m->m.x = r->x;
 			m->m.y = r->y;
-			m->lt[0] = r->lt;
-			m->lt[1] = &layouts[LENGTH(layouts) > 1 && r->lt != &layouts[1]];
-			snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", m->lt[m->sellt]->symbol);
 			wlr_output_state_set_scale(&state, r->scale);
 			wlr_output_state_set_transform(&state, r->rr);
 			break;
@@ -1447,7 +1469,7 @@ createmon(struct wl_listener *listener, void *data)
 	wlr_output_state_finish(&state);
 
 	wl_list_insert(&mons, &m->link);
-	printstatus();
+	status_mark_dirty();
 
 	/* The xdg-protocol specifies:
 	 *
@@ -1549,6 +1571,7 @@ createpointer(struct wlr_pointer *pointer)
 	}
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
+	gestures_attach(pointer);
 }
 
 void
@@ -1644,6 +1667,17 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, destroy);
 
+	/* Layer-shell surfaces (the quickshell bar, wallpaper, etc.) had no
+	 * destroy/unmap logging at all — a bar disappearing for any reason
+	 * (client exit, client crash, or a bug on our side) left zero trace in
+	 * kalin-wm's own log, only in the client's own stdout if it happened to
+	 * be captured somewhere (see the kalinwm dev launcher's /tmp/kalinwm.log
+	 * and the note on quickshell-shell). This at least records that the
+	 * surface went away and which one, from the compositor's side too. */
+	wlr_log(WLR_INFO, "layer-shell surface destroyed: namespace=\"%s\" layer=%d",
+			l->layer_surface->namespace ? l->layer_surface->namespace : "(null)",
+			l->layer_surface->pending.layer);
+
 	wl_list_remove(&l->link);
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
@@ -1652,50 +1686,6 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	 * automatically by wlroots when the layer surface is destroyed. */
 	wlr_scene_node_destroy(&l->popups->node);
 	free(l);
-}
-
-void
-destroylock(SessionLock *lock, int unlock)
-{
-	wlr_seat_keyboard_notify_clear_focus(seat);
-	if ((locked = !unlock))
-		goto destroy;
-
-	wlr_scene_node_set_enabled(&locked_bg->node, 0);
-
-	focus_top(selmon, 0);
-	motionnotify(0, NULL, 0, 0, 0, 0);
-
-destroy:
-	wl_list_remove(&lock->new_surface.link);
-	wl_list_remove(&lock->unlock.link);
-	wl_list_remove(&lock->destroy.link);
-
-	wlr_scene_node_destroy(&lock->scene->node);
-	cur_lock = NULL;
-	free(lock);
-}
-
-void
-destroylocksurface(struct wl_listener *listener, void *data)
-{
-	Monitor *m = wl_container_of(listener, m, destroy_lock_surface);
-	struct wlr_session_lock_surface_v1 *surface, *lock_surface = m->lock_surface;
-
-	m->lock_surface = NULL;
-	wl_list_remove(&m->destroy_lock_surface.link);
-
-	if (lock_surface->surface != seat->keyboard_state.focused_surface)
-		return;
-
-	if (locked && cur_lock && !wl_list_empty(&cur_lock->surfaces)) {
-		surface = wl_container_of(cur_lock->surfaces.next, surface, link);
-		client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
-	} else if (!locked) {
-		focus_top(selmon, 1);
-	} else {
-		wlr_seat_keyboard_clear_focus(seat);
-	}
 }
 
 void
@@ -1725,13 +1715,6 @@ destroypointerconstraint(struct wl_listener *listener, void *data)
 
 	wl_list_remove(&pointer_constraint->destroy.link);
 	free(pointer_constraint);
-}
-
-void
-destroysessionlock(struct wl_listener *listener, void *data)
-{
-	SessionLock *lock = wl_container_of(listener, lock, destroy);
-	destroylock(lock, 0);
 }
 
 void
@@ -1795,8 +1778,6 @@ focusclient(Client *c, int lift)
 		wl_list_insert(&fstack, &c->flink);
 		selmon = c->mon;
 		c->isurgent = 0;
-		/* Moving focus to a different column resets the adaptive spawn cursor. */
-		spawn_cursor_on_focus(c);
 
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
@@ -1826,7 +1807,7 @@ focusclient(Client *c, int lift)
 			client_activate_surface(old, 0);
 		}
 	}
-	printstatus();
+	status_mark_dirty();
 
 	if (!c) {
 		/* With no client, all we have left is to clear focus */
@@ -1864,20 +1845,29 @@ focusstack(const Arg *arg)
 {
 	/* Focus the next or previous client (in tiling order) on selmon */
 	Client *c, *sel = focustop(selmon);
+	/* While the hold-Super menu is up, focus is locked to whichever window it
+	 * opened on: switching focus out from under it would both reposition the
+	 * menu (see WindowActions.qml's dockMode/arc anchor) and re-pan the
+	 * camera (viewport_follow_focus()) while the user is just trying to read
+	 * the menu's key hints, which felt chaotic more than useful. */
+	if (menu_shown)
+		return;
 	if (!sel || (sel->isfullscreen && !client_has_children(sel)))
 		return;
 	if (arg->i > 0) {
 		wl_list_for_each(c, &sel->link, link) {
 			if (&c->link == &clients)
 				continue; /* wrap past the sentinel node */
-			if (VISIBLEON(c, selmon))
+			/* Panels (c->ispanel) aren't cycle-focus targets — chrome, not
+			 * a window to Super+Tab onto. */
+			if (VISIBLEON(c, selmon) && !c->ispanel)
 				break; /* found it */
 		}
 	} else {
 		wl_list_for_each_reverse(c, &sel->link, link) {
 			if (&c->link == &clients)
 				continue; /* wrap past the sentinel node */
-			if (VISIBLEON(c, selmon))
+			if (VISIBLEON(c, selmon) && !c->ispanel)
 				break; /* found it */
 		}
 	}
@@ -1909,207 +1899,6 @@ focus_top(Monitor *m, int lift)
 	focusclient(top, lift);
 }
 
-/* ===== DIRECTIONAL FOCUS NAVIGATION (Cone Search) ===== */
-
-/**
- * Get the center point of a window in world coordinates
- */
-static void
-window_center(Client *c, float *cx, float *cy)
-{
-	if (!c || !cx || !cy)
-		return;
-	
-	/* Validate geometry to prevent division issues */
-	if (c->geom.width <= 0 || c->geom.height <= 0)
-		return;
-	
-	/* World coordinates are stored in c->world, but we need to account for
-	 * the actual geometry (which includes the border) */
-	if (c->world.set) {
-		*cx = c->world.x + c->geom.width / 2.0f;
-		*cy = c->world.y + c->geom.height / 2.0f;
-	} else {
-		/* Fallback to screen geometry if world coords not set */
-		*cx = c->geom.x + c->geom.width / 2.0f;
-		*cy = c->geom.y + c->geom.height / 2.0f;
-	}
-}
-
-/**
- * Check if a point is within a cone defined by center angle and width
- * Returns the Euclidean distance if inside cone, -1.0f if outside
- */
-static float
-angle_distance_in_cone(float dx, float dy, float center_angle, float cone_width)
-{
-	float angle = atan2f(dy, dx);
-	float diff = fabsf(atan2f(sinf(angle - center_angle), cosf(angle - center_angle)));
-	
-	if (diff <= cone_width / 2.0f) {
-		return sqrtf(dx * dx + dy * dy);
-	}
-	return -1.0f;
-}
-
-/**
- * Core cone search algorithm - find nearest window in specified direction
- * angle: direction in radians (0 = right, PI/2 = down, PI = left, -PI/2 = up)
- * cone_width: width of search cone in radians
- * Returns nearest client or NULL if none found
- */
-static Client *
-cone_search_focus(float angle, float cone_width)
-{
-	Client *c, *nearest = NULL;
-	Client *sel = focustop(selmon);
-	float sel_cx, sel_cy;
-	float min_dist = -1.0f;
-	float c_cx, c_cy, dx, dy, dist;
-	
-	/* Get focus point - current window center or viewport center */
-	if (sel && sel->world.set) {
-		window_center(sel, &sel_cx, &sel_cy);
-	} else {
-		/* No focused window - use viewport center in world coordinates */
-		Monitor *m = selmon;
-		if (!m)
-			return NULL;
-		/* Viewport center in world coords - guard against zero zoom */
-		float zoom = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-		sel_cx = viewport.x + m->w.width / (2.0f * zoom);
-		sel_cy = viewport.y + m->w.height / (2.0f * zoom);
-	}
-	
-	/* Search for nearest window within cone */
-	wl_list_for_each(c, &clients, link) {
-		/* Skip if not visible, floating, fullscreen, or is the current window */
-		if (!VISIBLEON(c, selmon))
-			continue;
-		if (c->isfloating || c->isfullscreen)
-			continue;
-		if (c == sel)
-			continue;
-		if (!c->world.set)
-			continue;
-		
-		window_center(c, &c_cx, &c_cy);
-		
-		/* Calculate vector from focus to target */
-		dx = c_cx - sel_cx;
-		dy = c_cy - sel_cy;
-		
-		/* Check if within cone and get distance */
-		dist = angle_distance_in_cone(dx, dy, angle, cone_width);
-		if (dist >= 0.0f && (min_dist < 0.0f || dist < min_dist)) {
-			min_dist = dist;
-			nearest = c;
-		}
-	}
-	
-	return nearest;
-}
-
-/*
- * Nearest tiled window to `from` in direction `dir` (DIR_*), using the same
- * cone search as directional focus but from an arbitrary origin. Used by
- * move_window_dir() to find the swap partner. Returns NULL if none.
- */
-Client *
-nearest_in_direction(Client *from, int dir)
-{
-	Client *c, *nearest = NULL;
-	float from_cx, from_cy, c_cx, c_cy, dx, dy, dist;
-	float min_dist = -1.0f;
-	float angle, cone;
-	int pass;
-
-	if (!from || !from->world.set)
-		return NULL;
-
-	switch (dir) {
-	case DIR_LEFT:  angle = M_PI; break;
-	case DIR_RIGHT: angle = 0.0f; break;
-	case DIR_UP:    angle = -M_PI / 2.0f; break;
-	case DIR_DOWN:  angle = M_PI / 2.0f; break;
-	default: return NULL;
-	}
-
-	window_center(from, &from_cx, &from_cy);
-
-	/* 90° cone first, widen to 180° if nothing found. */
-	for (pass = 0; pass < 2 && !nearest; pass++) {
-		cone = pass == 0 ? M_PI / 2.0f : M_PI;
-		min_dist = -1.0f;
-		wl_list_for_each(c, &clients, link) {
-			if (c == from || !VISIBLEON(c, from->mon))
-				continue;
-			if (c->isfloating || c->isfullscreen || !c->world.set)
-				continue;
-			window_center(c, &c_cx, &c_cy);
-			dx = c_cx - from_cx;
-			dy = c_cy - from_cy;
-			dist = angle_distance_in_cone(dx, dy, angle, cone);
-			if (dist >= 0.0f && (min_dist < 0.0f || dist < min_dist)) {
-				min_dist = dist;
-				nearest = c;
-			}
-		}
-	}
-	return nearest;
-}
-
-/**
- * Focus the nearest window in the specified direction
- * Uses cone search with 90° initial cone, widening to 180° if no window found
- */
-void
-focus_directional(const Arg *arg)
-{
-	Client *target = NULL;
-	float angle;
-	
-	if (!selmon)
-		return;
-	
-	/* Check if there are any clients to focus */
-	if (wl_list_empty(&clients))
-		return;
-	
-	/* Convert direction to angle in radians */
-	switch (arg->i) {
-	case DIR_LEFT:
-		angle = M_PI;  /* 180 degrees */
-		break;
-	case DIR_RIGHT:
-		angle = 0.0f;  /* 0 degrees */
-		break;
-	case DIR_UP:
-		angle = -M_PI / 2.0f;  /* -90 degrees */
-		break;
-	case DIR_DOWN:
-		angle = M_PI / 2.0f;   /* 90 degrees */
-		break;
-	default:
-		return;
-	}
-	
-	/* First try with 90° cone */
-	target = cone_search_focus(angle, M_PI / 2.0f);
-	
-	/* If no window found, widen to 180° */
-	if (!target) {
-		target = cone_search_focus(angle, M_PI);
-	}
-	
-	if (target) {
-		wlr_log(WLR_DEBUG, "Focus directional: found window at (%.0f, %.0f)", 
-			target->world.x, target->world.y);
-		focusclient(target, 1);
-	}
-}
-
-/* ===== END DIRECTIONAL FOCUS NAVIGATION ===== */
 
 void
 fullscreennotify(struct wl_listener *listener, void *data)
@@ -2183,10 +1972,10 @@ inputdevice(struct wl_listener *listener, void *data)
 }
 
 /*
- * Run a bind-engine action resolved from the DSL. Lives here (not in the engine
- * TU) so the static action functions and the compiled `layouts[]` stay visible.
- * The engine passes semantic ints (directions, layout index); we translate them
- * to the concrete wlroots enums / pointers the functions expect.
+ * Run a bind-engine action resolved from the DSL. Lives here (not in the
+ * engine TU) so the static action functions stay visible. The engine passes
+ * semantic ints (directions, etc.); we translate them to the concrete
+ * wlroots enums / pointers the functions expect.
  */
 void
 bind_invoke(int action_id, const Arg *arg)
@@ -2211,20 +2000,39 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_VIEWPORT_RESET:    viewport_reset(arg); break;
 	case ACT_VIEWPORT_FOLLOW:   viewport_toggle_follow(arg); break;
 	case ACT_VIEWPORT_FOLLOW_NEW: viewport_toggle_follow_new(arg); break;
-	case ACT_MOVE_COLUMN:       move_column(arg); break;
 	case ACT_FOCUS_DIR:         focus_directional(arg); break;
-	case ACT_MOVE_WINDOW:       move_window_dir(arg); break;
+	case ACT_SWAP_DIR:          swap_neighbor_dir(arg); break;
 	case ACT_FOCUS_STACK:       focusstack(arg); break;
-	case ACT_TOGGLE_FLOATING:   togglefloating(arg); break;
 	case ACT_TOGGLE_FULLSCREEN: togglefullscreen(arg); break;
-	case ACT_MASTER_ZOOM:       zoom(arg); break;
+	case ACT_TOGGLE_MAXIMIZED: togglemaximized(arg); break;
+	case ACT_FIT_WIDTH:  fitwidth(arg); break;
+	case ACT_FIT_HEIGHT: fitheight(arg); break;
+	case ACT_TOGGLE_ONTOP:     toggleontop(arg); break;
+	case ACT_TOGGLE_OVERLAP:   toggleoverlap(arg); break;
+	case ACT_LINK_PICK:        connect_pick_arm(); break;
+	case ACT_TOGGLE_OVERVIEW:   toggle_overview(arg); break;
+	case ACT_TOGGLE_MINIMIZED:  toggleminimize(arg); break;
+	case ACT_TOGGLE_SCRATCHPAD: togglescratchpad(arg); break;
 	case ACT_OPACITY:           opacityadjust(arg); break;
 	case ACT_CROP:              cropbegin(arg); break;
 	case ACT_CROP_CANCEL:       cropcancel(arg); break;
 	case ACT_SCREENSHOT:        capture_screenshot(arg); break;
+	case ACT_SCREENSHOT_UI:     screenshotui_begin(arg); break;
 	case ACT_CHVT:              chvt(arg); break;
 	case ACT_QUIT:              quit(arg); break;
-	case ACT_WINDOW_MENU:       menu_shown = 1; ipc_broadcast_state(); break;
+	case ACT_WINDOW_MENU: {
+		Client *menu_focus = selmon ? focustop(selmon) : NULL;
+		menu_shown = 1;
+		/* focustop() doesn't filter panels; a docked panel can hold
+		 * keyboard focus (e.g. clicking into it to type). Its geom is
+		 * screen-space, not world-space, so feeding it to
+		 * viewport_menu_reveal() pans the camera by garbage — see the
+		 * ledger entry for this bug. */
+		if (menu_focus && !menu_focus->ispanel)
+			viewport_menu_reveal(menu_focus);
+		ipc_broadcast_state();
+		break;
+	}
 	case ACT_FOCUS_MONITOR: {
 		Arg a = {.i = arg->i == 0 ? WLR_DIRECTION_LEFT : WLR_DIRECTION_RIGHT};
 		focusmon(&a);
@@ -2235,14 +2043,6 @@ bind_invoke(int action_id, const Arg *arg)
 		tagmon(&a);
 		break;
 	}
-	case ACT_LAYOUT: {
-		Arg a = {0};
-		if (arg->i == 0) a.v = &layouts[0];
-		else if (arg->i == 1) a.v = &layouts[1];
-		/* arg->i == -1 => {0} toggles */
-		setlayout(&a);
-		break;
-	}
 	case ACT_POINTER_MOVE: {
 		Arg a = {.ui = CurMove};
 		moveresize(&a);
@@ -2251,6 +2051,18 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_POINTER_RESIZE: {
 		Arg a = {.ui = CurResize};
 		moveresize(&a);
+		break;
+	}
+	case ACT_VIEWPORT_PAN_GRAB: {
+		Client *c = NULL;
+		(void)arg;
+		if (!selmon)
+			break;
+		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
+		if (c)
+			break;
+		cursor_mode = CurPan;
+		viewport_pan_grab_start();
 		break;
 	}
 	default:
@@ -2280,21 +2092,20 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is
 	 * processing keys, rather than passing them on to the client for its own
-	 * processing.
+	 * processing. Always resolved through the bind DSL (binds_init() already
+	 * falls back to the parsed embedded default if the user's file is broken
+	 * or missing, so there's no separate compiled-table fallback to keep).
 	 */
-	const Key *k;
-	if (binds_active())
-		return bind_dispatch_key(mods, sym);
-	/* Fallback: compiled defaults (only reached if no bind file loaded). */
-	for (k = keys; k < END(keys); k++) {
-		if (CLEANMASK(mods) == CLEANMASK(k->mod)
-				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
-				&& k->func) {
-			k->func(&k->arg);
-			return 1;
-		}
-	}
-	return 0;
+	return bind_dispatch_key(mods, sym);
+}
+
+/* Whether the binding keybinding() most recently matched is safe to
+ * auto-repeat while its key is held — checked by keyboard.c before arming the
+ * repeat timer. */
+int
+keybinding_repeatable(void)
+{
+	return bind_action_is_repeatable(bind_dispatch_last_action());
 }
 
 void
@@ -2306,54 +2117,40 @@ killclient(const Arg *arg)
 }
 
 void
-locksession(struct wl_listener *listener, void *data)
-{
-	struct wlr_session_lock_v1 *session_lock = data;
-	SessionLock *lock;
-	wlr_scene_node_set_enabled(&locked_bg->node, 1);
-	if (cur_lock) {
-		wlr_session_lock_v1_destroy(session_lock);
-		return;
-	}
-	lock = session_lock->data = ecalloc(1, sizeof(*lock));
-	focusclient(NULL, 0);
-
-	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
-	cur_lock = lock->lock = session_lock;
-	locked = 1;
-
-	LISTEN(&session_lock->events.new_surface, &lock->new_surface, createlocksurface);
-	LISTEN(&session_lock->events.destroy, &lock->destroy, destroysessionlock);
-	LISTEN(&session_lock->events.unlock, &lock->unlock, unlocksession);
-
-	wlr_session_lock_v1_send_locked(session_lock);
-}
-
-void
 mapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
+	Client *old_east = NULL;
 	Monitor *m;
 	int i;
 	int restore_width;
 	int restore_height;
+	int has_saved_geom = 0;
+	/* Snapshot *before* c is inserted into clients/fstack below, and before
+	 * anything auto-focuses it (the managed path doesn't focus a new client
+	 * inside mapnotify() at all — only the unmanaged branch does, via the
+	 * early goto) — so this reliably captures "whichever window was focused
+	 * right before this one was created," the spawn-connection graph's
+	 * parent and the default spawn-placement anchor (see below). */
+	Client *spawn_parent_candidate = focustop(selmon);
 
 	/* Create scene tree for this client and its border */
-	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
+	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrFloat]);
 	if (!c->scene) {
 		client_surface(c)->data = NULL;
 		wlr_log(WLR_ERROR, "Failed to create scene tree for mapped client");
 		return;
 	}
+	c->id = next_client_id++;
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->type == XDGShell
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
 	c->scene->node.data = c->scene_surface->node.data = c;
-	
+
 	/* DEBUG: createnotify scene_surface created */
 
 	client_get_geometry(c, &c->geom);
@@ -2409,18 +2206,124 @@ mapnotify(struct wl_listener *listener, void *data)
 	wl_list_insert(&clients, &c->link);
 	wl_list_insert(&fstack, &c->flink);
 
-	/* Set initial monitor, floating status, and focus: clients that have a
-	 * parent are always floating and inherit the parent's monitor.
-	 * If there is no parent, apply rules */
+	/* Set initial monitor and connection-graph parent: a client with a real
+	 * xdg-shell parent (dialog/transient-for) inherits its monitor and, for
+	 * the spawn-connection graph, connects to that real parent (a more
+	 * natural choice for a genuine dialog than "whichever window happened
+	 * to be focused") — native geometry stands, no cascade/placement logic.
+	 * Everything else applies rules, then figures out a position. */
 	if ((p = client_get_parent(c))) {
-		c->isfloating = 1;
 		setmon(c, p->mon);
 	} else {
+		struct wlr_box dockprep_rect = {0};
+		int dockprep_matched;
+
 		applyrules(c);
+		dockprep_matched = dockprep_consume(client_get_appid(c), &dockprep_rect);
+		p = (spawn_parent_candidate && spawn_parent_candidate->mon == c->mon)
+				? spawn_parent_candidate : NULL;
+
+		/* Position, in priority order: (0) a pending "dockprep" request
+		 * (see its declaration above) — the shell told us in advance this
+		 * app_id is about to be docked into an exact rect, so skip straight
+		 * to setdocked() instead of picking any floating position at all;
+		 * (1) a persisted position from a previous run of this exact app
+		 * instance (persistence_register_client() matches by appid+title+
+		 * spawn-order — two simultaneously open windows of the same app,
+		 * like two plain "foot" terminals, share an appid+title but each
+		 * gets its own saved slot via spawn order, so they no longer
+		 * collide onto the same saved position — see its comment in
+		 * persistence.c); (2) to the right of the spawn parent; (3) a sane
+		 * default (monitor center) for the very first window. */
+		if (c->mon && dockprep_matched) {
+			setdocked(c, 1, dockprep_rect);
+		} else if (c->mon) {
+			has_saved_geom = persistence_register_client(c);
+			if (has_saved_geom) {
+				/* persistence_register_client() already applied + resized. */
+			} else if (p) {
+				c->geom.x = p->geom.x + p->geom.width + SPAWN_GAP;
+				c->geom.y = p->geom.y;
+				resize(c, c->geom, 0);
+
+				/* p already has an East neighbor (e.g. focused window is the
+				 * leftmost of an existing line) — insert the new window
+				 * between them instead of silently failing to connect (what
+				 * connect_clients() alone would do, since p's E slot is
+				 * taken): sever p<->old_east, shift old_east and everything
+				 * still transitively connected to it (the rest of the line)
+				 * right to make room, then splice c in between. */
+				old_east = p->neighbor[OCT_E];
+				if (old_east) {
+					Client *component[256];
+					int shift = c->geom.width + SPAWN_GAP;
+					int ncomp, k;
+
+					p->neighbor[OCT_E] = NULL;
+					old_east->neighbor[OCT_W] = NULL;
+					ncomp = collect_component(old_east, component, (int)LENGTH(component));
+					for (k = 0; k < ncomp; k++) {
+						struct wlr_box nb = component[k]->geom;
+						nb.x += shift;
+						resize(component[k], nb, 0);
+					}
+				}
+			} else if (cursor && c->mon == xytomon(cursor->x, cursor->y)) {
+				/* No spawn parent (nothing was focused, or the focused
+				 * window is on a different monitor) — center the new window
+				 * on the cursor rather than the monitor, so it lands where
+				 * the user's attention actually is instead of wherever the
+				 * monitor's own geometric middle happens to be. Only when
+				 * the cursor is actually on this client's monitor, matching
+				 * the (p && p->mon == c->mon) same-monitor guard above. */
+				c->geom.x = (int)SCREEN_TO_WORLD_X(cursor->x) - c->geom.width / 2;
+				c->geom.y = (int)SCREEN_TO_WORLD_Y(cursor->y) - c->geom.height / 2;
+				resize(c, c->geom, 0);
+			} else {
+				c->geom.x = c->mon->w.x + c->mon->w.width / 2 - c->geom.width / 2;
+				c->geom.y = c->mon->w.y + c->mon->w.height / 2 - c->geom.height / 2;
+				resize(c, c->geom, 0);
+			}
+		}
+
+		/* Link into the connection graph (same p as the placement anchor
+		 * above, same-monitor only, matching setmon() above) — placed to p's
+		 * right, so this always connects W/E; connect_clients() computes the
+		 * actual octant from the real geometry rather than assuming, and
+		 * silently no-ops if a slot is somehow already taken (shouldn't
+		 * happen for p's E slot here — old_east above already cleared it —
+		 * or for c's W slot, since c is brand new). Skipped for a dockprep
+		 * match — a docked panel isn't part of the tiling/connection graph
+		 * at all, same as it's exempt from the placement logic above. */
+		if (p && !dockprep_matched) {
+			connect_clients(p, c);
+			if (old_east)
+				connect_clients(c, old_east);
+		}
 	}
-	persistence_apply_client(c);
+	/* Auto-pan to a newly spawned window (viewport.follow_new_windows,
+	 * defaults on) — new windows deliberately don't auto-focus (see the
+	 * spawn_parent_candidate comment above), so focusclient()'s own
+	 * viewport_follow_focus() never fires for them; without this call the
+	 * flag was dead and the camera silently never moved to show where a new
+	 * window actually landed. Excludes panels (c->ispanel, including the
+	 * dockprep case just above): they live in screen space, glued to a
+	 * fixed spot regardless of camera position, so "panning to show where
+	 * it landed" is meaningless for them and previously made the camera
+	 * visibly fly to each docked panel's first-ever spawn. */
+	if (c->mon && viewport.follow_new_windows && !c->ispanel)
+		viewport_center_on(c);
 	ftl_create(c);
-	printstatus();
+	/* The scene node was created disabled (line ~2405, "enabled later by a
+	 * call to arrange()") and setmon()->setfullscreen()'s already-correctly-
+	 * parented fast path (this client's node starts parented under its final
+	 * layer already) skips the arrange_mark_dirty() call it would otherwise
+	 * make — so nothing else schedules the arrange() that actually flips
+	 * enabled to true. Without this, a newly mapped window stays invisible
+	 * until some unrelated event happens to dirty this monitor. */
+	if (c->mon)
+		arrange_mark_dirty(c->mon);
+	status_mark_dirty();
 
 unset_fullscreen:
 	m = c->mon ? c->mon : xytomon(c->geom.x, c->geom.y);
@@ -2481,6 +2384,19 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, NULL, &sx, &sy);
 
+	/* Mirror docked-client hover transitions to the shell over IPC (see
+	 * dock_hover_client's declaration) — only on actual enter/leave, not
+	 * every motion tick, since this runs on every pointer sample and a
+	 * status broadcast on every pixel of mouse movement would flood the
+	 * socket for no reason. */
+	{
+		Client *now_hover = (c && c->docked) ? c : NULL;
+		if (now_hover != dock_hover_client) {
+			dock_hover_client = now_hover;
+			status_mark_dirty();
+		}
+	}
+
 	if (cursor_mode == CurPressed && !seat->drag
 			&& surface != seat->pointer_state.focused_surface
 			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &l) >= 0) {
@@ -2521,10 +2437,29 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		/* Update selmon (even while dragging a window) */
 		if (sloppyfocus)
 			selmon = xytomon(cursor->x, cursor->y);
+
+		/* While a menu-armed connect (Super+L) is pending, the shell needs
+		 * the live cursor position every tick to draw the rubber-band line
+		 * (see ipc_build_state()'s "pending_connect"). Gated on the pending
+		 * state itself so this doesn't add per-motion IPC traffic in the
+		 * common (nothing armed) case. */
+		if (connect_pick_pending())
+			status_mark_dirty();
 	}
 
 	/* Update drag icon's position */
 	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
+
+	/* Drag-to-cut: re-test the *current* cursor position against every live
+	 * connection line each tick, for the rest of the CurCut drag armed in
+	 * buttonpress() — see the comment there for why sweeping is more
+	 * forgiving than a single precise click. */
+	if (cursor_mode == CurCut) {
+		uint32_t id_a, id_b;
+		if (connection_click_hit(cursor->x, cursor->y, &id_a, &id_b))
+			sever_connection(id_a, id_b);
+		return;
+	}
 
 	if ((cursor_mode == CurMove || cursor_mode == CurResize) && !grabc) {
 		cursor_mode = CurNormal;
@@ -2536,24 +2471,65 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * SCREEN_TO_WORLD (which accounts for pan + zoom). grabcx/grabcy hold the
 	 * grab offset in world units (see moveresize()). */
 	if (cursor_mode == CurMove && grabc) {
+		int old_x = grabc->geom.x, old_y = grabc->geom.y;
+		int new_x = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabcx;
+		int new_y = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabcy;
+		int dx = new_x - old_x, dy = new_y - old_y;
+
 		/* Move the grabbed client to the new position. */
 		resize(grabc, (struct wlr_box){
-			.x = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabcx,
-			.y = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabcy,
+			.x = new_x, .y = new_y,
 			.width = grabc->geom.width, .height = grabc->geom.height}, 1);
+
+		/* Drag the whole spawn-connection component along: every window
+		 * transitively reachable from grabc via an unsevered connection
+		 * moves by the same screen-space delta — but gliding after grabc
+		 * (spring-animated, like a tether) rather than snapping instantly,
+		 * unlike grabc itself which stays pinned exactly under the cursor.
+		 * Based off target_geom (not geom) when a member is still mid-glide,
+		 * so repeated small deltas during one continuous drag accumulate
+		 * correctly instead of compounding against a stale animated position. */
+		if (dx || dy) {
+			Client *component[256];
+			int n = collect_component(grabc, component, (int)LENGTH(component));
+			int i;
+			for (i = 0; i < n; i++) {
+				int base_x, base_y;
+				if (component[i] == grabc)
+					continue;
+				base_x = component[i]->animating ? component[i]->target_geom.x : component[i]->geom.x;
+				base_y = component[i]->animating ? component[i]->target_geom.y : component[i]->geom.y;
+				client_set_target_geom(component[i], (struct wlr_box){
+					.x = base_x + dx,
+					.y = base_y + dy,
+					.width = component[i]->geom.width,
+					.height = component[i]->geom.height});
+			}
+		}
 		return;
 	} else if (cursor_mode == CurResize && grabc) {
 		resize(grabc, (struct wlr_box){.x = grabc->geom.x, .y = grabc->geom.y,
 			.width = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabc->geom.x,
 			.height = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabc->geom.y}, 1);
 		return;
+	} else if (cursor_mode == CurPan) {
+		viewport_pan_grab_update();
+		return;
 	}
-	
+
 	/* Crop mode: update selection rectangle */
 	if (crop_editor.active && crop_editor.dragging) {
 		crop_editor.end_x = cursor->x;
 		crop_editor.end_y = cursor->y;
 		cropdraw();
+		return;
+	}
+
+	/* Screenshot UI: update selection rectangle while dragging */
+	if (screenshot_ui.active && screenshot_ui.dragging) {
+		screenshot_ui.end_x = cursor->x;
+		screenshot_ui.end_y = cursor->y;
+		screenshotui_draw();
 		return;
 	}
 
@@ -2590,8 +2566,6 @@ moveresize(const Arg *arg)
 	if (!grabc || client_is_unmanaged(grabc) || grabc->isfullscreen)
 		return;
 
-	/* Float the window and tell motionnotify to grab it */
-	setfloating(grabc, 1);
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
 		/* Offset stored in world units (cursor is screen space). */
@@ -2687,6 +2661,88 @@ outputmgrtest(struct wl_listener *listener, void *data)
 	outputmgrapplyortest(config, 1);
 }
 
+Monitor *
+monitor_find_by_name(const char *name)
+{
+	Monitor *m;
+
+	if (!name)
+		return NULL;
+	wl_list_for_each(m, &mons, link) {
+		if (m->wlr_output && m->wlr_output->name
+				&& strcmp(m->wlr_output->name, name) == 0)
+			return m;
+	}
+	return NULL;
+}
+
+/* The IPC equivalent of what outputmgrapplyortest() does per-head for an
+ * external wlr-output-management-v1 client (e.g. wlr-randr) — same
+ * underlying wlr_output_state/commit path, just addressed by output name
+ * from a plain-text IPC command instead of iterating a client-supplied
+ * wlr_output_configuration_v1. width/height <= 0 leaves the mode unchanged;
+ * scale <= 0 leaves the scale unchanged — a caller that only wants to
+ * reposition or disable an output doesn't have to already know its current
+ * mode/scale just to pass them through unmodified.
+ *
+ * Returns 1 on success, 0 if the output wasn't found or the commit failed. */
+int
+ipc_set_output(const char *name, int width, int height, float refresh,
+		float scale, int x, int y, int enabled)
+{
+	Monitor *m = monitor_find_by_name(name);
+	struct wlr_output_state state;
+	struct wlr_output_mode *mode, *matched = NULL;
+	int ok;
+
+	if (!m)
+		return 0;
+
+	/* Ensure a display previously disabled by wlr-output-power-management-v1
+	 * is properly handled, mirroring outputmgrapplyortest() above. */
+	m->asleep = 0;
+
+	wlr_output_state_init(&state);
+	wlr_output_state_set_enabled(&state, enabled);
+	if (enabled) {
+		if (width > 0 && height > 0) {
+			int32_t refresh_mhz = (int32_t)(refresh * 1000.0f + 0.5f);
+			/* Prefer one of the output's own advertised modes over a
+			 * synthesized one, same preference outputmgrapplyortest() gives
+			 * a real client-supplied mode over its custom_mode fallback —
+			 * an exact match lets the monitor use its native timings
+			 * instead of whatever the caller guessed at. refresh<=0 (caller
+			 * doesn't care) matches any refresh at that resolution. */
+			wl_list_for_each(mode, &m->wlr_output->modes, link) {
+				if (mode->width == width && mode->height == height
+						&& (refresh <= 0.0f || mode->refresh == refresh_mhz)) {
+					matched = mode;
+					break;
+				}
+			}
+			if (matched)
+				wlr_output_state_set_mode(&state, matched);
+			else
+				wlr_output_state_set_custom_mode(&state, width, height, refresh_mhz);
+		}
+		if (scale > 0.0f)
+			wlr_output_state_set_scale(&state, scale);
+	}
+
+	ok = wlr_output_commit_state(m->wlr_output, &state);
+	wlr_output_state_finish(&state);
+
+	/* Don't move monitors if position wouldn't change — see
+	 * outputmgrapplyortest()'s matching comment for why (avoids wlroots
+	 * marking the output as manually configured, and wlr_output_layout_add
+	 * dislikes disabled outputs). */
+	if (ok && m->wlr_output->enabled && (m->m.x != x || m->m.y != y))
+		wlr_output_layout_add(output_layout, m->wlr_output, x, y);
+
+	updatemons(NULL, NULL);
+	return ok;
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -2726,16 +2782,13 @@ printstatus(void)
 			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
 			printf("%s appid %s\n", m->wlr_output->name, client_get_appid(c));
 			printf("%s fullscreen %d\n", m->wlr_output->name, c->isfullscreen);
-			printf("%s floating %d\n", m->wlr_output->name, c->isfloating);
 		} else {
 			printf("%s title \n", m->wlr_output->name);
 			printf("%s appid \n", m->wlr_output->name);
 			printf("%s fullscreen \n", m->wlr_output->name);
-			printf("%s floating \n", m->wlr_output->name);
 		}
 
 		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
-		printf("%s layout %s\n", m->wlr_output->name, m->ltsymbol);
 
 		wl_list_for_each(c, &clients, link) {
 			const char *title;
@@ -2748,13 +2801,12 @@ printstatus(void)
 				title = "";
 			if (!appid)
 				appid = "";
-			printf("%s win %s %s world %.0f %.0f set %d geom %d %d %d %d\n",
+			printf("%s win %s %s geom %d %d %d %d\n",
 				m->wlr_output->name, appid, title,
-				c->world.x, c->world.y, c->world.set,
 				c->geom.x, c->geom.y, c->geom.width, c->geom.height);
 		}
 	}
-	
+
 	/* Output viewport state for debugging and status bars */
 	printf("viewport %.0f %.0f %.2f follow %s follow_new %s\n",
 		viewport.x, viewport.y, viewport.zoom,
@@ -2837,6 +2889,10 @@ quit(const Arg *arg)
 		exit_pending = 0;
 		if (exit_confirm_timer)
 			wl_event_source_timer_update(exit_confirm_timer, 0);
+		/* Safety net for positions that changed some other way than a
+		 * direct drag-release (which already persists immediately) — e.g.
+		 * a group-drag member that wasn't the directly-grabbed client. */
+		persistence_save();
 		wl_display_terminate(dpy);
 	}
 }
@@ -2855,6 +2911,12 @@ rendermon(struct wl_listener *listener, void *data)
 	struct timespec now;
 
 	viewport_tick();
+	/* Keep frames coming on this output for as long as the camera is still
+	 * easing toward its target — no separate polling timer; viewport_kick()
+	 * (viewport_ops.c) only needs to request the *first* one to start this
+	 * self-sustaining chain. */
+	if (viewport.animating)
+		wlr_output_schedule_frame(m->wlr_output);
 	/* Step window spring-glide in the frame callback so it is vsync-aligned with
 	 * the camera; keep frames coming while anything is still moving. */
 	if (clients_anim_step())
@@ -2875,16 +2937,20 @@ rendermon(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
-	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
-			goto skip;
-	}
-
+	/* Previously this skipped the ENTIRE monitor's commit whenever any tiled,
+	 * visible client had an outstanding (un-acked) resize — e.g. every newly
+	 * spawned window, from the moment arrange_columns() assigns it a size
+	 * until its process starts, connects, and commits a matching buffer. On
+	 * a cold process start that ack can take a very visible amount of time,
+	 * during which NOTHING on the monitor rendered — not other windows, not
+	 * the cursor — a hard freeze, followed by every backed-up scene change
+	 * landing in one commit once the slow client finally caught up (a visible
+	 * "teleport"). Not skipping just means a not-yet-acked client's old
+	 * buffer gets stretched into its new
+	 * box for a frame or two — a barely-visible blip on that one window,
+	 * instead of a frozen screen. */
 	wlr_scene_output_commit(m->scene_output, NULL);
 
-skip:
 	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
@@ -2987,8 +3053,23 @@ client_apply_crop_clip(Client *c)
 		clip.height = vis_h;
 	}
 
-	wlr_scene_node_set_position(&c->scene_surface->node, z_bw, z_bw);
-	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	if (c->scene_surface->node.x != z_bw || c->scene_surface->node.y != z_bw)
+		wlr_scene_node_set_position(&c->scene_surface->node, z_bw, z_bw);
+
+	/* Re-issuing an identical clip every frame (this runs unconditionally from
+	 * rendermon()) turned out to matter: on real hardware it correlated with a
+	 * cropped client's commit rate spiking into the thousands/sec and the whole
+	 * session eventually locking up (GPU hang) — see the 2026-07 ledger entry.
+	 * Skip the call entirely when nothing changed. */
+	if (!c->crop.clip_cached || c->crop.last_clip_x != clip.x || c->crop.last_clip_y != clip.y
+			|| c->crop.last_clip_w != clip.width || c->crop.last_clip_h != clip.height) {
+		wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+		c->crop.last_clip_x = clip.x;
+		c->crop.last_clip_y = clip.y;
+		c->crop.last_clip_w = clip.width;
+		c->crop.last_clip_h = clip.height;
+		c->crop.clip_cached = true;
+	}
 }
 
 void
@@ -2996,16 +3077,15 @@ resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
 	int cfg_w, cfg_h;
-	int view_x, view_y;
-	int unbounded_infinite_tile;
-	
+	int unbounded;
+
 	/* DEBUG: resize start */
 
 	if (!c || !c->mon || !client_surface(c)->mapped || !c->scene || !c->scene_surface) {
 		/* DEBUG: resize early return - null checks failed */
 		return;
 	}
-	
+
 	/* Borders may not be created yet during early setup */
 	if (!c->border[0] || !c->border[1] || !c->border[2] || !c->border[3]) {
 		/* DEBUG: resize early return - missing borders */
@@ -3013,21 +3093,41 @@ resize(Client *c, struct wlr_box geo, int interact)
 	}
 
 	bbox = interact ? &sgeom : &c->mon->w;
-	unbounded_infinite_tile = !interact
-		&& c->mon
-		&& c->mon->lt[c->mon->sellt]->arrange == infinite
-		&& !c->isfloating
-		&& !c->isfullscreen;
+	/* Every window lives in world space and may extend beyond the monitor
+	 * viewport — that's the whole point of the infinite canvas — except a
+	 * live interactive drag/resize, which clamps to the physical screen
+	 * (sgeom) while it's happening. Fullscreen always clamps (it must land
+	 * exactly on the monitor's own region for wlr_scene_output to show it). */
+	unbounded = !interact && !c->isfullscreen;
 
 	client_set_bounds(c, geo.width, geo.height);
 	c->geom = geo;
 
-	/* In infinite layout, tiled clients live in world space and may extend
-	 * beyond the monitor viewport. Keep minimum size constraints, but don't
-	 * clamp their x/y to monitor bounds. */
-	if (unbounded_infinite_tile) {
+	/* Keep minimum size constraints, but don't clamp x/y to monitor bounds. */
+	if (unbounded) {
 		c->geom.width = MAX(1 + 2 * (int)c->bw, c->geom.width);
 		c->geom.height = MAX(1 + 2 * (int)c->bw, c->geom.height);
+	} else if (interact && !c->isfullscreen) {
+		/* c->geom is world-space (pannable/zoomable), but `sgeom` is fixed
+		 * screen-pixel space — comparing them directly (as applybounds()
+		 * does) means any window more than one screen-width from world
+		 * (0,0) reads as "off past the edge" and gets its x/y stomped back
+		 * into the tiny 0..sgeom.width/height range the instant you drag
+		 * it, regardless of where it actually was. Convert sgeom into the
+		 * world-space rect currently under the camera before clamping, so
+		 * a drag only gets bounded by what's actually visible on screen
+		 * right now, not by raw screen-pixel numbers misread as world
+		 * coordinates. (Fullscreen is exempt: its geom is deliberately
+		 * output-layout space already, not pannable world space — see
+		 * client_apply_zoom_frame()'s matching bypass.) */
+		float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+		struct wlr_box world_bbox = {
+			.x = (int)lroundf(SCREEN_TO_WORLD_X(sgeom.x)),
+			.y = (int)lroundf(SCREEN_TO_WORLD_Y(sgeom.y)),
+			.width = (int)lroundf((float)sgeom.width / zf),
+			.height = (int)lroundf((float)sgeom.height / zf),
+		};
+		applybounds(c, &world_bbox);
 	} else {
 		applybounds(c, bbox);
 	}
@@ -3038,56 +3138,23 @@ resize(Client *c, struct wlr_box geo, int interact)
 		c->crop.saved_base = true;
 	}
 
-	/* Apply viewport transform: world -> screen coordinates (includes zoom). */
-	view_x = WORLD_TO_SCREEN_X(c->geom.x);
-	view_y = WORLD_TO_SCREEN_Y(c->geom.y);
+	/* Apply viewport transform (world -> screen, includes zoom) and size the
+	 * frame's border/focus-ring for the current zoom — shared with
+	 * viewport_camera_tick()'s every-frame camera-only refresh, see
+	 * client_apply_zoom_frame(). The client itself always stays configured at
+	 * its native logical size (cfg_w/cfg_h below) — only the displayed frame
+	 * and the buffer's dest_size (client_set_buffer_scale()) scale with zoom. */
+	client_apply_zoom_frame(c);
 
-	/* The whole window (frame + content) is displayed at geom * zoom. The client
-	 * stays configured at native size (cfg_w/cfg_h below) — only the displayed
-	 * size scales, via these scaled frame dims and the buffer dest_size. At
-	 * zoom == 1 every value below reduces to the unscaled original. */
-	{
-		float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-		int z_bw = (int)lroundf(c->bw * zf);
-		int z_w  = MAX(1, (int)lroundf(c->geom.width * zf));
-		int z_h  = MAX(1, (int)lroundf(c->geom.height * zf));
-		int z_inner_h = MAX(0, z_h - 2 * z_bw);
-
-		/* Update scene-graph frame */
-		wlr_scene_node_set_position(&c->scene->node, view_x, view_y);
-		wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
-		wlr_scene_rect_set_size(c->border[0], z_w, z_bw);
-		wlr_scene_rect_set_size(c->border[1], z_w, z_bw);
-		wlr_scene_rect_set_size(c->border[2], z_bw, z_inner_h);
-		wlr_scene_rect_set_size(c->border[3], z_bw, z_inner_h);
-		wlr_scene_node_set_position(&c->border[1]->node, 0, z_h - z_bw);
-		wlr_scene_node_set_position(&c->border[2]->node, 0, z_bw);
-		wlr_scene_node_set_position(&c->border[3]->node, z_w - z_bw, z_bw);
-
-		if (focusringpx > 0 && c->focus_ring[0]) {
-			int ring = MAX(1, (int)lroundf(focusringpx * zf));
-			int ring_w = z_w + 2 * ring;
-			int ring_h = z_h + 2 * ring;
-			wlr_scene_rect_set_size(c->focus_ring[0], ring_w, ring);
-			wlr_scene_rect_set_size(c->focus_ring[1], ring_w, ring);
-			wlr_scene_rect_set_size(c->focus_ring[2], ring, ring_h);
-			wlr_scene_rect_set_size(c->focus_ring[3], ring, ring_h);
-			wlr_scene_node_set_position(&c->focus_ring[0]->node, -ring, -ring);
-			wlr_scene_node_set_position(&c->focus_ring[1]->node, -ring, z_h);
-			wlr_scene_node_set_position(&c->focus_ring[2]->node, -ring, -ring);
-			wlr_scene_node_set_position(&c->focus_ring[3]->node, z_w, -ring);
-		}
-
-		/* True crop keeps the client configured at its base (uncropped) size —
-		 * only the displayed region is restricted, via client_apply_crop_clip(). */
-		if (c->crop.active && c->crop.saved_base
-				&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
-			cfg_w = c->crop.base_w - 2 * (int)c->bw;
-			cfg_h = c->crop.base_h - 2 * (int)c->bw;
-		} else {
-			cfg_w = c->geom.width - 2 * (int)c->bw;
-			cfg_h = c->geom.height - 2 * (int)c->bw;
-		}
+	/* True crop keeps the client configured at its base (uncropped) size —
+	 * only the displayed region is restricted, via client_apply_crop_clip(). */
+	if (c->crop.active && c->crop.saved_base
+			&& c->crop.base_w > 2 * (int)c->bw && c->crop.base_h > 2 * (int)c->bw) {
+		cfg_w = c->crop.base_w - 2 * (int)c->bw;
+		cfg_h = c->crop.base_h - 2 * (int)c->bw;
+	} else {
+		cfg_w = c->geom.width - 2 * (int)c->bw;
+		cfg_h = c->geom.height - 2 * (int)c->bw;
 	}
 
 	cfg_w = MAX(1, cfg_w);
@@ -3099,128 +3166,6 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* Scale the displayed buffer to match the zoomed frame. */
 	client_set_buffer_scale(c, viewport.zoom);
-}
-
-/* ── Window spring-glide animation ─────────────────────────────────────────
- * The column layout writes each tiled client's target *world* geometry via
- * client_set_target_geom(); clients_anim_step() (run each frame from
- * rendermon(), so it is vsync-aligned with the camera) springs the rendered
- * world position toward it. Per frame we only move the client's scene node —
- * cheap; a full resize() runs once on settle. */
-static struct timespec client_anim_last;
-static int client_anim_have_last;
-
-static float
-spring_step(float cur, float target, float *vel, float dt)
-{
-	/* Semi-implicit spring: x'' = -k(x-target) - c*x'. */
-	float force = -anim_stiffness * (cur - target) - anim_damping * (*vel);
-	*vel += force * dt;
-	return cur + (*vel) * dt;
-}
-
-/* Advance every animating client by one frame. Returns 1 while any is still
- * moving so rendermon() keeps scheduling frames. */
-int
-clients_anim_step(void)
-{
-	struct timespec now;
-	Client *c;
-	float dt;
-	int still = 0;
-
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	if (!client_anim_have_last) {
-		dt = 1.0f / 60.0f;
-		client_anim_have_last = 1;
-	} else {
-		dt = (float)(now.tv_sec - client_anim_last.tv_sec)
-			+ (float)(now.tv_nsec - client_anim_last.tv_nsec) / 1e9f;
-	}
-	client_anim_last = now;
-	if (dt <= 0.0f)
-		dt = 1.0f / 60.0f;
-	if (dt > 0.1f)
-		dt = 0.1f; /* clamp after a stall so windows don't jump */
-
-	wl_list_for_each(c, &clients, link) {
-		if (!c->animating)
-			continue;
-		c->anim_x = spring_step(c->anim_x, (float)c->target_geom.x, &c->vx, dt);
-		c->anim_y = spring_step(c->anim_y, (float)c->target_geom.y, &c->vy, dt);
-		if (fabsf(c->anim_x - (float)c->target_geom.x) < 0.5f
-				&& fabsf(c->anim_y - (float)c->target_geom.y) < 0.5f
-				&& fabsf(c->vx) < 2.0f && fabsf(c->vy) < 2.0f) {
-			/* Settle: one full resize to finalize size/clip/scale. */
-			c->animating = 0;
-			c->vx = c->vy = 0;
-			c->anim_x = c->target_geom.x;
-			c->anim_y = c->target_geom.y;
-			resize(c, c->target_geom, 0);
-			continue;
-		}
-		/* Cheap per-frame move: reposition the client's scene node (borders and
-		 * focus ring are its children) — no full resize(). */
-		c->geom.x = (int)lroundf(c->anim_x);
-		c->geom.y = (int)lroundf(c->anim_y);
-		if (c->scene)
-			wlr_scene_node_set_position(&c->scene->node,
-					WORLD_TO_SCREEN_X(c->geom.x), WORLD_TO_SCREEN_Y(c->geom.y));
-		still = 1;
-	}
-
-	if (!still)
-		client_anim_have_last = 0;
-	return still;
-}
-
-void
-client_set_target_geom(Client *c, struct wlr_box geo)
-{
-	int moving;
-	if (!c)
-		return;
-
-	/* First placement (new window) or animations disabled: snap into place. */
-	if (!c->anim_ready || anim_stiffness <= 0.0f) {
-		c->target_geom = geo;
-		c->anim_ready = 1;
-		c->animating = 0;
-		c->anim_x = geo.x;
-		c->anim_y = geo.y;
-		c->vx = c->vy = 0;
-		resize(c, geo, 0);
-		return;
-	}
-
-	/* Already gliding toward this exact target (e.g. re-arranged every camera
-	 * frame during a pan): leave it to the frame stepper — no per-frame
-	 * resize(). */
-	if (c->animating && geo.x == c->target_geom.x && geo.y == c->target_geom.y
-			&& geo.width == c->geom.width && geo.height == c->geom.height)
-		return;
-
-	moving = (geo.x != c->geom.x) || (geo.y != c->geom.y);
-	c->target_geom = geo;
-
-	if (moving || c->animating) {
-		struct wlr_box now;
-		if (!c->animating) {
-			c->anim_x = c->geom.x;
-			c->anim_y = c->geom.y;
-		}
-		/* Apply the new size now at the current position; position springs. */
-		now = (struct wlr_box){ (int)lroundf(c->anim_x), (int)lroundf(c->anim_y),
-			geo.width, geo.height };
-		c->animating = 1;
-		resize(c, now, 0);
-		if (c->mon && c->mon->wlr_output)
-			wlr_output_schedule_frame(c->mon->wlr_output);
-	} else {
-		/* No movement (camera pan re-arrange at the same world coords, or a
-		 * pure size change): apply immediately. */
-		resize(c, geo, 0);
-	}
 }
 
 /* ── Hold-Super spotlight ───────────────────────────────────────────────────
@@ -3314,19 +3259,30 @@ client_scale_buffers(struct wlr_scene_node *node, float scale_w, float scale_h, 
 			dw = MAX(1, (int)lroundf(sb->buffer->width  * fw));
 			dh = MAX(1, (int)lroundf(sb->buffer->height * fh));
 		}
-		wlr_scene_buffer_set_dest_size(sb, dw, dh);
-		wlr_scene_buffer_set_filter_mode(sb, (is_integer_zoom(scale_w) && is_integer_zoom(scale_h))
-				? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR);
+		/* This runs every frame for every rendered client (see rendermon()); a
+		 * dest_size set with an unchanged value still turned out to matter on
+		 * real hardware (see client_apply_crop_clip()'s clip cache above), so
+		 * skip the call when nothing changed. */
+		if (sb->dst_width != dw || sb->dst_height != dh)
+			wlr_scene_buffer_set_dest_size(sb, dw, dh);
+		{
+			enum wlr_scale_filter_mode want = (is_integer_zoom(scale_w) && is_integer_zoom(scale_h))
+					? WLR_SCALE_FILTER_NEAREST : WLR_SCALE_FILTER_BILINEAR;
+			if (sb->filter_mode != want)
+				wlr_scene_buffer_set_filter_mode(sb, want);
+		}
 	} else if (node->type == WLR_SCENE_NODE_TREE) {
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &tree->children, link) {
 			/* Scale a subsurface's offset from the primary surface (the
 			 * primary sits at 0,0 so it is unaffected). */
-			if (child->x || child->y)
-				wlr_scene_node_set_position(child,
-						(int)lroundf(child->x * scale_w),
-						(int)lroundf(child->y * scale_h));
+			if (child->x || child->y) {
+				int nx = (int)lroundf(child->x * scale_w);
+				int ny = (int)lroundf(child->y * scale_h);
+				if (nx != child->x || ny != child->y)
+					wlr_scene_node_set_position(child, nx, ny);
+			}
 			client_scale_buffers(child, scale_w, scale_h, out_scale);
 		}
 	}
@@ -3346,6 +3302,10 @@ client_set_buffer_scale(Client *c, float scale)
 	float out_scale, scale_w, scale_h;
 	if (!c || !c->scene_surface)
 		return;
+	/* Fullscreen (and maximized — same reasoning) content is never subject
+	 * to camera zoom — see the matching bypass in client_apply_zoom_frame(). */
+	if (c->isfullscreen || c->ismaximized || c->docked)
+		scale = 1.0f;
 	if (scale <= 0.0f)
 		scale = 1.0f;
 	out_scale = (c->mon && c->mon->wlr_output) ? c->mon->wlr_output->scale : 1.0f;
@@ -3395,6 +3355,7 @@ run(char *startup_cmd)
 	setenv("WAYLAND_DISPLAY", socket, 1);
 	ipc_init(socket);
 	binds_init();
+	persistence_init();
 
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
 	 * master, etc */
@@ -3428,7 +3389,7 @@ run(char *startup_cmd)
 	if (fd_set_nonblock(STDOUT_FILENO) < 0)
 		close(STDOUT_FILENO);
 
-	printstatus();
+	status_mark_dirty();
 
 	/* At this point the outputs are initialized, choose initial selmon based on
 	 * cursor position, and set default cursor image */
@@ -3516,61 +3477,199 @@ opacityadjust(const Arg *arg)
 }
 
 void
-setfloating(Client *c, int floating)
-{
-	Client *p = client_get_parent(c);
-	int was_floating = c->isfloating;
-	c->isfloating = floating;
-	/* Re-tiling a floating window: drop its stale world position so the column
-	 * layout flows it into a fresh column at the right edge (Niri-style) instead
-	 * of snapping it back to wherever it last floated. */
-	if (was_floating && !floating)
-		c->world.set = false;
-	/* If in floating layout do not change the client's layer */
-	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
-		return;
-	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen ||
-			(p && p->isfullscreen) ? LyrFS
-			: c->isfloating ? LyrFloat : LyrTile]);
-	arrange(c->mon);
-	printstatus();
-}
-
-void
 setfullscreen(Client *c, int fullscreen)
 {
+	int was_fullscreen = c->isfullscreen;
+	struct wlr_scene_tree *want_layer;
+
 	c->isfullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
+
+	/* setmon() re-asserts c->isfullscreen on every window spawn regardless of
+	 * whether anything is actually changing — skip the steady "not
+	 * fullscreen, staying not fullscreen" case (already correctly parented).
+	 * Every window always has a real position by the time this runs
+	 * (mapnotify() places it before any of this fires), so unlike the old
+	 * tiled-layout version of this check there's no "not placed yet" case to
+	 * special-case any more. */
+	want_layer = layers[c->isfullscreen ? LyrFS : (c->isontop ? LyrFloatTop : LyrFloat)];
+	if (!fullscreen && !was_fullscreen && c->scene->node.parent == want_layer)
+		return;
+
 	c->bw = fullscreen ? 0 : borderpx;
 	client_set_fullscreen(c, fullscreen);
-	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen
-			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
+	wlr_scene_node_reparent(&c->scene->node, want_layer);
 
 	if (fullscreen) {
 		c->prev = c->geom;
 		resize(c, c->mon->m, 0);
 	} else {
-		/* restore previous size instead of arrange for floating windows since
-		 * client positions are set by the user and cannot be recalculated */
+		/* restore previous size/position instead of recalculating, since
+		 * every window's position is now always user/persistence-owned. */
 		resize(c, c->prev, 0);
 	}
-	arrange(c->mon);
-	printstatus();
+	/* Refreshes m->fullscreen_bg's enabled state (arrange() ties it to
+	 * focustop(m)->isfullscreen) — the one piece of arrange() a fullscreen
+	 * transition genuinely still needs. */
+	arrange_mark_dirty(c->mon);
+	status_mark_dirty();
+}
+
+/* Fill the monitor's usable work area (c->mon->w: excludes layer-shell
+ * reserved space like bars, unlike setfullscreen()'s c->mon->m) — not
+ * fullscreen (no LyrFS reparent, no bar/border hiding). Snapshots/restores
+ * c->premax (geometry only — every window is already free-positioned, so
+ * there's no floating/tiled detour to manage any more, unlike this
+ * function's earlier version). */
+void
+setmaximized(Client *c, int maximized)
+{
+	if (!c || c->ismaximized == maximized || c->isfullscreen)
+		return;
+	c->ismaximized = maximized;
+
+	if (!c->mon || !client_surface(c)->mapped)
+		return;
+
+	if (maximized) {
+		c->premax = c->geom;
+		resize(c, c->mon->w, 0);
+	} else {
+		resize(c, c->premax, 0);
+	}
+	status_mark_dirty();
+}
+
+/* Pin/unpin a window "always on top": stays visually above every other
+ * window regardless of subsequent focus elsewhere (unlike the default, where
+ * focusclient()'s raise-to-top only reorders siblings within LyrFloat, so
+ * focusing any other window covers whatever was focused before). Applies to
+ * any window now (there's no floating/tiled distinction left to gate it on). */
+static void
+setontop(Client *c, int ontop)
+{
+	struct wlr_scene_tree *want_layer;
+
+	if (!c || c->isontop == ontop)
+		return;
+	c->isontop = ontop;
+
+	if (c->isfullscreen)
+		return;
+	if (!c->mon || !client_surface(c)->mapped)
+		return;
+
+	want_layer = layers[c->isontop ? LyrFloatTop : LyrFloat];
+	wlr_scene_node_reparent(&c->scene->node, want_layer);
+	status_mark_dirty();
+}
+
+/* Hide/show a client without touching its wl_surface: the process stays alive,
+ * VISIBLEON() (kalin.h) skips it in arrange/focustop scans, and c->geom is
+ * left untouched so restoring lands back at the same canvas spot. */
+void
+setminimized(Client *c, int minimized)
+{
+	if (!c || c->minimized == minimized)
+		return;
+	c->minimized = minimized;
+	if (c->foreign_toplevel)
+		wlr_foreign_toplevel_handle_v1_set_minimized(c->foreign_toplevel, minimized);
+	if (minimized)
+		focus_top(selmon, 1); /* was possibly focused; redirect to the new top */
+	else
+		focusclient(c, 1);
+	if (c->mon)
+		arrange_mark_dirty(c->mon);
+	status_mark_dirty();
 }
 
 void
-setlayout(const Arg *arg)
+toggleminimize(const Arg *arg)
 {
-	if (!selmon)
+	Client *sel = focustop(selmon);
+	if (sel && !sel->isfullscreen)
+		setminimized(sel, !sel->minimized);
+}
+
+/* Look up a mapped client by exact app_id match. Shared by togglescratchpad()
+ * (find-or-spawn) and the IPC dock/undock commands (ipc.c) — a shell panel
+ * addresses a docked client by app_id rather than a numeric id since it's the
+ * one spawning it and already knows the app_id it chose. */
+Client *
+client_find_by_appid(const char *appid)
+{
+	Client *c;
+
+	if (!appid)
+		return NULL;
+	wl_list_for_each(c, &clients, link) {
+		const char *id = client_get_appid(c);
+		if (id && !strcmp(id, appid))
+			return c;
+	}
+	return NULL;
+}
+
+/* Pin a client into a shell-panel-owned screen rect: borderless, exempt from
+ * the world/camera transform (see client_apply_zoom_frame()'s matching
+ * bypass), geometry driven by whatever `rect` the IPC "dock" command last
+ * sent rather than the user dragging/resizing it. Mirrors setfullscreen()'s
+ * shape (save/restore c->prev, force bw, reparent, resize) but keeps the
+ * client in LyrFloatTop rather than LyrFS — a docked terminal is meant to
+ * coexist with the desktop around it, not take over the whole output.
+ *
+ * Docking in glides up into place via the spring-glide system
+ * (client_set_target_geom()/client_anim.c) instead of teleporting, to read
+ * as a reveal — like the shell's own SidePanel drawer — rather than a
+ * window just appearing. The glide's *start* point is synthesized as
+ * directly below `rect` (same x/width/height, y at the rect's bottom edge —
+ * right at the bar), not the client's actual pre-dock position: that
+ * position is in world space (wherever it happened to be floating), while
+ * `rect` is screen space, and interpolating raw numbers between two
+ * different coordinate systems would produce a nonsensical diagonal swoop
+ * instead of a clean slide. Undocking doesn't animate — every caller pairs
+ * it with an immediate minimize (see the IPC "undock"/"minimize" commands),
+ * so nothing is ever on screen to see it glide. */
+void
+setdocked(Client *c, int docked, struct wlr_box rect)
+{
+	if (!c || c->docked == docked)
 		return;
-	if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt])
-		selmon->sellt ^= 1;
-	if (arg && arg->v)
-		selmon->lt[selmon->sellt] = (Layout *)arg->v;
-	snprintf(selmon->ltsymbol, sizeof(selmon->ltsymbol), "%s", selmon->lt[selmon->sellt]->symbol);
-	arrange(selmon);
-	printstatus();
+	if (!c->mon || !client_surface(c)->mapped)
+		return;
+
+	c->bw = docked ? 0 : borderpx;
+
+	if (docked) {
+		struct wlr_box start = rect;
+		start.y = rect.y + rect.height;
+
+		c->prev = c->geom;
+		c->docked = 1;
+		/* Tag it as a panel forever, not just for this docked spell — see
+		 * ispanel's declaration in kalin.h for why `docked` alone (which
+		 * goes false again during the undock-then-minimize window on
+		 * close) isn't enough for taskbar/camera/overview exclusion. A
+		 * client that's ever been docked once is chrome for the rest of
+		 * its life. */
+		if (!c->ispanel) {
+			c->ispanel = 1;
+			ftl_destroy(c);
+		}
+		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloatTop]);
+
+		c->anim_ready = 0; /* force the next call to snap to `start` first */
+		client_set_target_geom(c, start);
+		client_set_target_geom(c, rect);
+	} else {
+		c->docked = 0;
+		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloat]);
+		resize(c, c->prev, 0);
+	}
+	arrange_mark_dirty(c->mon);
+	status_mark_dirty();
 }
 
 void
@@ -3583,14 +3682,18 @@ setmon(Client *c, Monitor *m)
 	c->mon = m;
 	c->prev = c->geom;
 
-	/* Scene graph sends surface leave/enter events on move and resize */
-	if (oldmon)
-		arrange(oldmon);
+	/* Scene graph sends surface leave/enter events on move and resize.
+	 * Skip while unmapped: commitnotify()'s initial_commit calls
+	 * setmon(c, selmon) then immediately setmon(c, NULL) on the same not-yet-
+	 * visible client (so mapnotify() can reapply rules) — arranging oldmon
+	 * here would be a full sweep over every other window for a client that
+	 * was never part of the visible tiling in the first place. */
+	if (oldmon && client_surface(c)->mapped)
+		arrange_mark_dirty(oldmon);
 	if (m) {
 		/* Make sure window actually overlaps with the monitor */
 		resize(c, c->geom, 0);
-		setfullscreen(c, c->isfullscreen); /* This will call arrange(c->mon) */
-		setfloating(c, c->isfloating);
+		setfullscreen(c, c->isfullscreen); /* This will mark c->mon dirty */
 	}
 	focus_top(selmon, 1);
 }
@@ -3695,6 +3798,7 @@ setup(void)
 	wlr_export_dmabuf_manager_v1_create(dpy);
 	wlr_screencopy_manager_v1_create(dpy);
 	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
+	toplevel_export_init(dpy);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_ext_data_control_manager_v1_create(dpy, 1);
 	wlr_primary_selection_v1_device_manager_create(dpy);
@@ -3747,11 +3851,7 @@ setup(void)
 	idle_inhibit_mgr = wlr_idle_inhibit_v1_create(dpy);
 	wl_signal_add(&idle_inhibit_mgr->events.new_inhibitor, &new_idle_inhibitor);
 
-	session_lock_mgr = wlr_session_lock_manager_v1_create(dpy);
-	wl_signal_add(&session_lock_mgr->events.new_lock, &new_session_lock);
-	locked_bg = wlr_scene_rect_create(layers[LyrBlock], sgeom.width, sgeom.height,
-			(float [4]){0.1f, 0.1f, 0.1f, 1.0f});
-	wlr_scene_node_set_enabled(&locked_bg->node, 0);
+	session_lock_init();
 
 	/* Use decoration protocols to negotiate server-side decorations */
 	wlr_server_decoration_manager_set_default_mode(
@@ -3886,6 +3986,21 @@ spawn(const Arg *arg)
 	wlr_log(WLR_DEBUG, "Spawned process %s (pid %d)", cmd, pid);
 }
 
+/* One unnamed scratchpad terminal: first toggle spawns it (it self-floats via
+ * its dedicated app_id Rule), later toggles hide/show the same process instead
+ * of killing it. Looked up by app_id rather than a cached pointer so a process
+ * that actually exits and gets relaunched is picked up cleanly. */
+void
+togglescratchpad(const Arg *arg)
+{
+	Client *found = client_find_by_appid("kalin-scratchpad");
+
+	if (found)
+		setminimized(found, !found->minimized);
+	else
+		spawn(arg);
+}
+
 void
 startdrag(struct wl_listener *listener, void *data)
 {
@@ -3905,14 +4020,6 @@ tagmon(const Arg *arg)
 		setmon(sel, dirtomon(arg->i));
 }
 
-void
-togglefloating(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	/* return if fullscreen */
-	if (sel && !sel->isfullscreen)
-		setfloating(sel, !sel->isfloating);
-}
 
 void
 togglefullscreen(const Arg *arg)
@@ -3923,16 +4030,46 @@ togglefullscreen(const Arg *arg)
 }
 
 void
-unlocksession(struct wl_listener *listener, void *data)
+togglemaximized(const Arg *arg)
 {
-	SessionLock *lock = wl_container_of(listener, lock, unlock);
-	destroylock(lock, 1);
+	Client *sel = focustop(selmon);
+	if (sel && !sel->isfullscreen)
+		setmaximized(sel, !sel->ismaximized);
+}
+
+void
+toggleontop(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (sel && !sel->isfullscreen)
+		setontop(sel, !sel->isontop);
+}
+
+/* Toggle whether the focused window is allowed to overlap its
+ * connection-graph neighbors (see resolve_growth_overlap()). Purely a flag
+ * flip: there's no layer/geometry change, unlike setontop()/setmaximized(). */
+void
+toggleoverlap(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (sel) {
+		sel->allow_overlap = !sel->allow_overlap;
+		status_mark_dirty();
+	}
 }
 
 void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+
+	/* See the matching log in destroylayersurfacenotify() — unmap can
+	 * happen without a destroy (client asked to unmap, or is about to
+	 * remap), so this is the event that actually fires when a client like
+	 * quickshell drops off the Wayland connection uncleanly. */
+	wlr_log(WLR_INFO, "layer-shell surface unmapped: namespace=\"%s\" layer=%d",
+			l->layer_surface->namespace ? l->layer_surface->namespace : "(null)",
+			l->layer_surface->pending.layer);
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
@@ -3956,6 +4093,21 @@ unmapnotify(struct wl_listener *listener, void *data)
 		cursor_mode = CurNormal;
 		grabc = NULL;
 	}
+	/* A pending Super+L connect (see connect_pick_arm()) holds a raw
+	 * Client* between arming and the completing click — cancel it if the
+	 * armed window itself closes in that window, or the pointer would
+	 * dangle. */
+	if (c == connect_pick_pending())
+		connect_pick_cancel();
+
+	/* Same dangling-pointer concern as connect_pick_pending() above: clear
+	 * the hover mirror if the client that unmapped is the one it points at,
+	 * and tell the shell so it doesn't keep a docked panel considered
+	 * "hovered" after the client is gone. */
+	if (c == dock_hover_client) {
+		dock_hover_client = NULL;
+		status_mark_dirty();
+	}
 
 	ftl_destroy(c);
 
@@ -3974,6 +4126,55 @@ unmapnotify(struct wl_listener *listener, void *data)
 		}
 		window_size_history_store(c, save_w, save_h);
 
+		/* Connection graph cleanup: first splice each pair of opposite
+		 * neighbors (N<->S, NE<->SW, E<->W, SE<->NW) directly together if
+		 * both sides of that axis exist — removing the middle of a line
+		 * should join what's left into one line again, not leave a gap
+		 * with two dangling ends. connect_clients() computes the real
+		 * octant from current geometry and no-ops if a slot's already
+		 * taken, so this is safe to attempt even when it doesn't quite
+		 * apply (e.g. the two neighbors are also connected some other
+		 * way already). Then detach every one of our up-to-8 neighbors
+		 * symmetrically (sever, not reparent otherwise — the simplest,
+		 * safest choice, matching "sever" already being a one-edge cut
+		 * elsewhere). */
+		{
+			int i, j;
+			for (i = 0; i < 4; i++) {
+				Client *a = c->neighbor[i];
+				Client *b = c->neighbor[i + 4];
+				if (a && b) {
+					/* a's and b's slots pointing back at c (by symmetry,
+					 * the opposite octant of the one c uses for each)
+					 * are still set at this point — connect_clients()
+					 * treats an occupied slot as "already connected to
+					 * something else" and silently no-ops, so it would
+					 * always refuse to link a<->b while they still each
+					 * point back at the client that's leaving. Clear
+					 * just those two back-pointers first. */
+					int opp_a = opposite_octant(i);
+					int opp_b = opposite_octant(i + 4);
+					if (a->neighbor[opp_a] == c)
+						a->neighbor[opp_a] = NULL;
+					if (b->neighbor[opp_b] == c)
+						b->neighbor[opp_b] = NULL;
+					connect_clients(a, b);
+					close_gap(a, b);
+				}
+			}
+			for (i = 0; i < 8; i++) {
+				Client *n = c->neighbor[i];
+				if (!n)
+					continue;
+				for (j = 0; j < 8; j++)
+					if (n->neighbor[j] == c)
+						n->neighbor[j] = NULL;
+				c->neighbor[i] = NULL;
+			}
+		}
+
+		persistence_unregister_client(c);
+
 		if (c->link.prev && c->link.next)
 			wl_list_remove(&c->link);
 		setmon(c, NULL);
@@ -3982,7 +4183,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	}
 
 	wlr_scene_node_destroy(&c->scene->node);
-	printstatus();
+	status_mark_dirty();
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
@@ -4031,8 +4232,7 @@ updatemons(struct wl_listener *listener, void *data)
 	offscreen_indicators_configure(sgeom.width, sgeom.height);
 
 	/* Make sure the clients are hidden when dwl is locked */
-	wlr_scene_node_set_position(&locked_bg->node, sgeom.x, sgeom.y);
-	wlr_scene_rect_set_size(locked_bg, sgeom.width, sgeom.height);
+	session_lock_resize();
 
 	wl_list_for_each(m, &mons, link) {
 		if (!m->wlr_output->enabled)
@@ -4047,16 +4247,12 @@ updatemons(struct wl_listener *listener, void *data)
 		wlr_scene_node_set_position(&m->fullscreen_bg->node, m->m.x, m->m.y);
 		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
 
-		if (m->lock_surface) {
-			struct wlr_scene_tree *scene_tree = m->lock_surface->surface->data;
-			wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
-			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
-		}
+		session_lock_configure_output(m);
 
 		/* Calculate the effective monitor geometry to use for clients */
 		arrangelayers(m);
 		/* Don't move clients to the left output when plugging monitors */
-		arrange(m);
+		arrange_mark_dirty(m);
 		/* make sure fullscreen clients have the right size */
 		if ((c = focustop(m)) && c->isfullscreen)
 			resize(c, m->m, 0);
@@ -4102,7 +4298,7 @@ updatetitle(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_title);
 	ftl_update_title(c);
 	if (c == focustop(c->mon))
-		printstatus();
+		status_mark_dirty();
 }
 
 void
@@ -4115,7 +4311,7 @@ urgent(struct wl_listener *listener, void *data)
 		return;
 
 	c->isurgent = 1;
-	printstatus();
+	status_mark_dirty();
 
 	if (client_surface(c)->mapped)
 		client_set_border_color(c, urgentcolor);
@@ -4193,40 +4389,6 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	if (pc) *pc = c;
 	if (pl) *pl = l;
 }
-
-void
-zoom(const Arg *arg)
-{
-	Client *c, *sel = focustop(selmon);
-
-	if (!sel || !selmon || !selmon->lt[selmon->sellt]->arrange || sel->isfloating)
-		return;
-
-	/* Search for the first tiled window that is not sel, marking sel as
-	 * NULL if we pass it along the way */
-	wl_list_for_each(c, &clients, link) {
-		if (VISIBLEON(c, selmon) && !c->isfloating) {
-			if (c != sel)
-				break;
-			sel = NULL;
-		}
-	}
-
-	/* Return if no other tiled window was found */
-	if (&c->link == &clients)
-		return;
-
-	/* If we passed sel, move c to the front; otherwise, move sel to the
-	 * front */
-	if (!sel)
-		sel = c;
-	wl_list_remove(&sel->link);
-	wl_list_insert(&clients, &sel->link);
-
-	focusclient(sel, 1);
-	arrange(selmon);
-}
-
 
 int
 main(int argc, char *argv[])
