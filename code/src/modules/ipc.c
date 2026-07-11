@@ -7,12 +7,88 @@
  * Protocol: newline-delimited.
  *   - Server -> client: one JSON object per line, emitted on every state change
  *     (driven by printstatus()), e.g.
- *       {"type":"state","viewport":{...},"crop":false,"focused":{...}}
+ *       {"type":"state","viewport":{...},"crop":false,"focused":{...},
+ *        "dock_hover":"<appid>"|null,"outputs":[...],"brightness":{...}|null}
+ *     "dock_hover" is the app_id of whichever docked client (see the "dock"
+ *     command below) the cursor is currently over, or null — lets a panel
+ *     auto-hide a docked terminal on cursor-leave, which it has no other way
+ *     to observe since a docked client is a real toplevel, not QML content.
+ *     "outputs" is every connected monitor's current state + full mode
+ *     list: [{"name":"LVDS-1","x":0,"y":0,"width":1600,"height":900,
+ *     "refresh":60.057,"scale":1.0,"enabled":true,
+ *     "modes":[{"width":1600,"height":900,"refresh":60.057},...]},...] — lets
+ *     a shell panel (e.g. the display-settings TUI) read available
+ *     resolutions/refresh rates and current mode/scale/position without
+ *     shelling out to wlr-randr (see "set-output" below for changing them).
+ *     "brightness" is {"value":<raw>,"max":<raw>} for the backlight device
+ *     (see backlight.c), or null if none was found (e.g. a desktop with no
+ *     built-in panel) — see "set-brightness" below for changing it.
  *   - Client -> server: plain text commands, one per line:
  *       pan <dx> <dy>     move the camera (world units)
  *       zoom <factor>     multiply zoom (e.g. 1.1 / 0.9)
  *       zoom-reset        reset camera to origin / 1.0
  *       follow-toggle     toggle camera-follows-focus
+ *       ontop-toggle      pin/unpin the focused window "always on top"
+ *                         (reflected back as "ontop" under "focused")
+  *       sever <a> <b>     cut the connection between clients <a> and <b>
+ *                         (see "connections" below)
+ *       dockprep <appid> <x> <y> <w> <h>
+ *                         arm a one-shot "dock this app_id straight into this
+ *                         rect the moment it maps" request (see
+ *                         dockprep_register()/dockprep_consume() in dwl.c).
+ *                         Send this *before* spawning a panel's backing
+ *                         terminal (its app_id won't exist as a real client
+ *                         yet, so "dock" itself would no-op) so the very
+ *                         first frame the client ever shows is already
+ *                         docked — no flash at some default floating
+ *                         position, no camera jump chasing it there. Consumed
+ *                         on the next map of a client with that app_id; if no
+ *                         such client ever maps it just sits harmlessly until
+ *                         overwritten or the compositor exits.
+ *       dock <appid> <x> <y> <w> <h>
+ *                         pin the client with this app_id into an exact
+ *                         screen-pixel rect: borderless, glued to that screen
+ *                         position regardless of camera pan/zoom (see
+ *                         setdocked()). For a panel embedding a real terminal
+ *                         (e.g. a clipboard-history picker) at a fixed spot
+ *                         in its own layout — spawn the client with a
+ *                         recognizable app_id (after "dockprep", for the
+ *                         first spawn), then re-issue "dock" any time the
+ *                         panel's on-screen geometry changes, including every
+ *                         later reopen of the same already-running client.
+ *       undock <appid>    release a docked client back to a normal floating
+ *                         window at its pre-dock geometry (does not hide or
+ *                         kill it — pair with a minimize if the panel is
+ *                         meant to fully disappear when closed)
+ *       minimize <appid> <0|1>
+ *                         hide/show a client by app_id without touching its
+ *                         surface (see setminimized()) — pairs with
+ *                         dock/undock so a docked panel can fully disappear
+ *                         on close and pop back already-running on reopen,
+ *                         addressed by app_id since the shell doesn't track
+ *                         a numeric client id for a panel it just spawned
+ *       set-output <name> <w> <h> <refresh> <scale> <x> <y> <enabled>
+ *                         reconfigure a monitor by output name (see the
+ *                         "outputs" state field above for names/current
+ *                         values) — the IPC equivalent of what an external
+ *                         wlr-output-management-v1 client like wlr-randr can
+ *                         already do, addressed by name instead of that
+ *                         protocol's own client-side config-head dance (see
+ *                         ipc_set_output() in dwl.c, which shares the same
+ *                         underlying wlr_output_state/commit path as
+ *                         outputmgrapplyortest()). <w>/<h> <= 0 leaves the
+ *                         mode unchanged; <refresh> <= 0 matches any refresh
+ *                         rate at that resolution when picking a mode;
+ *                         <scale> <= 0 leaves the scale unchanged — a caller
+ *                         that only wants to reposition or disable an output
+ *                         doesn't need to already know its current mode/scale
+ *                         just to pass them through untouched.
+ *       set-brightness <value>
+ *                         set backlight brightness to an absolute raw value
+ *                         (0..max from the "brightness" state field above) —
+ *                         see backlight.c for why this goes through
+ *                         logind's SetBrightness D-Bus method rather than a
+ *                         direct sysfs write.
  *
  * The socket path is exported via $KALIN_IPC_SOCKET. Separately-compiled TU:
  * links against dwl.c's externed globals/functions (event_loop, selmon,
@@ -28,7 +104,10 @@
 #include <fcntl.h>
 
 #define IPC_MAX_CLIENTS 16
-#define IPC_BUF_SIZE    4096
+/* Bumped from 4096 to fit the "outputs" array (each output's full mode
+ * list) alongside everything else already in the state broadcast — see
+ * ipc_build_state()'s outputs loop. */
+#define IPC_BUF_SIZE    8192
 
 struct ipc_client {
 	int fd;
@@ -77,8 +156,22 @@ static void
 ipc_build_state(char *buf, size_t len)
 {
 	Client *f = selmon ? focustop(selmon) : NULL;
+	Client *c;
+	Client *pending = connect_pick_pending();
+	Monitor *m;
+	struct wlr_output_mode *mode;
 	char title[512];
 	char appid[256];
+	char conns[2048];
+	char pendbuf[160];
+	char dockhoverbuf[288];
+	char outputs[2048];
+	char brightnessbuf[64];
+	size_t conns_len = 0;
+	int conns_first = 1;
+	size_t outputs_len = 0;
+	int outputs_first = 1;
+	int bl_value, bl_max;
 	float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
 	/* Focused window's on-screen rect (world -> screen, matches resize()), so
 	 * the shell can flow the radial buttons out of the actual window. */
@@ -90,6 +183,131 @@ ipc_build_state(char *buf, size_t len)
 	ipc_json_escape(f ? client_get_title(f) : "", title, sizeof(title));
 	ipc_json_escape(f ? client_get_appid(f) : "", appid, sizeof(appid));
 
+	/* Connection graph (up to 8 directional neighbor slots per window), in
+	 * the same world->screen rect shape as "rect" above. Always included
+	 * (not gated on super_held here) so the shell doesn't need a second
+	 * round-trip to learn the graph shape — it gates line *visibility* on
+	 * its own super_held-equivalent signal. Compositor draws nothing;
+	 * quickshell renders the lines and handles clicks on them, telling us
+	 * which edge to cut via "sever <a_id> <b_id>". Each edge lives on both
+	 * endpoints' neighbor[] arrays; only emit it from the lower-id side so
+	 * it isn't broadcast twice. */
+	conns[0] = '\0';
+	wl_list_for_each(c, &clients, link) {
+		int i;
+		for (i = 0; i < 8; i++) {
+			Client *nb = c->neighbor[i];
+			int arx, ary, arw, arh, brx, bry, brw, brh, n;
+			if (!nb || nb->id < c->id)
+				continue;
+			arx = (int)((c->geom.x - viewport.x) * zf);
+			ary = (int)((c->geom.y - viewport.y) * zf);
+			arw = (int)(c->geom.width * zf);
+			arh = (int)(c->geom.height * zf);
+			brx = (int)((nb->geom.x - viewport.x) * zf);
+			bry = (int)((nb->geom.y - viewport.y) * zf);
+			brw = (int)(nb->geom.width * zf);
+			brh = (int)(nb->geom.height * zf);
+			n = snprintf(conns + conns_len, sizeof(conns) - conns_len,
+				"%s{\"a\":%u,\"b\":%u,"
+				"\"a_rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+				"\"b_rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}}",
+				conns_first ? "" : ",",
+				c->id, nb->id,
+				arx, ary, arw, arh, brx, bry, brw, brh);
+			if (n < 0 || (size_t)n >= sizeof(conns) - conns_len)
+				goto conns_full; /* out of room; drop remaining entries */
+			conns_len += (size_t)n;
+			conns_first = 0;
+		}
+	}
+conns_full:
+
+	/* Live line for a menu-armed pending connect (Super+L, see
+	 * connect_pick_arm() / connection_graph.c): the source window's screen
+	 * rect plus the cursor's current screen position, so ConnectionLines.qml
+	 * can draw a rubber-band from one to the other while it's armed. null
+	 * when nothing's pending, same convention "connections" doesn't need
+	 * since it's always an array — this one genuinely has an absent state. */
+	if (pending) {
+		int prx = (int)((pending->geom.x - viewport.x) * zf);
+		int pry = (int)((pending->geom.y - viewport.y) * zf);
+		int prw = (int)(pending->geom.width * zf);
+		int prh = (int)(pending->geom.height * zf);
+		snprintf(pendbuf, sizeof(pendbuf),
+			"{\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+			"\"cursor\":{\"x\":%d,\"y\":%d}}",
+			prx, pry, prw, prh,
+			(int)cursor->x, (int)cursor->y);
+	} else {
+		snprintf(pendbuf, sizeof(pendbuf), "null");
+	}
+
+	/* Which docked client (see setdocked()) the cursor is currently over, if
+	 * any — lets a shell panel auto-hide when the cursor leaves a real,
+	 * compositor-positioned terminal, which the shell has no other way to
+	 * observe (see dock_hover_client's declaration in dwl.c). */
+	if (dock_hover_client) {
+		char dhappid[256];
+		ipc_json_escape(client_get_appid(dock_hover_client), dhappid, sizeof(dhappid));
+		snprintf(dockhoverbuf, sizeof(dockhoverbuf), "\"%s\"", dhappid);
+	} else {
+		snprintf(dockhoverbuf, sizeof(dockhoverbuf), "null");
+	}
+
+	/* Backlight brightness (see backlight.c) — null if no backlight device
+	 * was found (e.g. a desktop with no built-in panel). */
+	if (backlight_get(&bl_value, &bl_max))
+		snprintf(brightnessbuf, sizeof(brightnessbuf),
+				"{\"value\":%d,\"max\":%d}", bl_value, bl_max);
+	else
+		snprintf(brightnessbuf, sizeof(brightnessbuf), "null");
+
+	/* Every connected output's current state + full mode list — lets a
+	 * shell panel (e.g. the display-settings TUI) read available
+	 * resolutions/refresh rates and current mode/scale/position without
+	 * shelling out to wlr-randr. Position is m->m (the Monitor's effective
+	 * layout geometry, same field outputmgrapplyortest()/updatemons() use),
+	 * not wlr_output's own coordinates, which aren't layout-relative. */
+	outputs[0] = '\0';
+	wl_list_for_each(m, &mons, link) {
+		char modesbuf[1024];
+		size_t modes_len = 0;
+		int modes_first = 1;
+		char oname[128];
+		int n;
+
+		if (!m->wlr_output)
+			continue;
+		ipc_json_escape(m->wlr_output->name, oname, sizeof(oname));
+
+		modesbuf[0] = '\0';
+		wl_list_for_each(mode, &m->wlr_output->modes, link) {
+			n = snprintf(modesbuf + modes_len, sizeof(modesbuf) - modes_len,
+				"%s{\"width\":%d,\"height\":%d,\"refresh\":%.3f}",
+				modes_first ? "" : ",",
+				mode->width, mode->height, mode->refresh / 1000.0f);
+			if (n < 0 || (size_t)n >= sizeof(modesbuf) - modes_len)
+				break; /* out of room; drop remaining modes for this output */
+			modes_len += (size_t)n;
+			modes_first = 0;
+		}
+
+		n = snprintf(outputs + outputs_len, sizeof(outputs) - outputs_len,
+			"%s{\"name\":\"%s\",\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d,"
+			"\"refresh\":%.3f,\"scale\":%.3f,\"enabled\":%s,\"modes\":[%s]}",
+			outputs_first ? "" : ",",
+			oname, m->m.x, m->m.y,
+			m->wlr_output->width, m->wlr_output->height,
+			m->wlr_output->refresh / 1000.0f, m->wlr_output->scale,
+			m->wlr_output->enabled ? "true" : "false",
+			modesbuf);
+		if (n < 0 || (size_t)n >= sizeof(outputs) - outputs_len)
+			break; /* out of room; drop remaining outputs */
+		outputs_len += (size_t)n;
+		outputs_first = 0;
+	}
+
 	snprintf(buf, len,
 		"{\"type\":\"state\","
 		"\"viewport\":{\"x\":%.0f,\"y\":%.0f,\"zoom\":%.3f,"
@@ -100,7 +318,12 @@ ipc_build_state(char *buf, size_t len)
 		"\"exit_pending\":%s,"
 		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
-		"\"fullscreen\":%s,\"floating\":%s}}\n",
+		"\"fullscreen\":%s,\"ontop\":%s,\"overlap\":%s},"
+		"\"connections\":[%s],"
+		"\"pending_connect\":%s,"
+		"\"dock_hover\":%s,"
+		"\"outputs\":[%s],"
+		"\"brightness\":%s}\n",
 		viewport.x, viewport.y, viewport.zoom,
 		viewport.follow ? "true" : "false",
 		viewport.follow_new_windows ? "true" : "false",
@@ -111,7 +334,9 @@ ipc_build_state(char *buf, size_t len)
 		rx, ry, rw, rh,
 		appid, title,
 		(f && f->isfullscreen) ? "true" : "false",
-		(f && f->isfloating) ? "true" : "false");
+		(f && f->isontop) ? "true" : "false",
+		(f && f->allow_overlap) ? "true" : "false",
+		conns, pendbuf, dockhoverbuf, outputs, brightnessbuf);
 }
 
 static void
@@ -163,6 +388,89 @@ ipc_exec_command(char *line)
 	} else if (strcmp(cmd, "follow-toggle") == 0) {
 		Arg a = {0};
 		viewport_toggle_follow(&a);
+	} else if (strcmp(cmd, "ontop-toggle") == 0) {
+		Arg a = {0};
+		toggleontop(&a);
+	} else if (strcmp(cmd, "sever") == 0) {
+		char *sa = strtok_r(NULL, " \t\r", &save);
+		char *sb = strtok_r(NULL, " \t\r", &save);
+		uint32_t id_a = sa ? (uint32_t)strtoul(sa, NULL, 10) : 0;
+		uint32_t id_b = sb ? (uint32_t)strtoul(sb, NULL, 10) : 0;
+		sever_connection(id_a, id_b);
+	} else if (strcmp(cmd, "dockprep") == 0) {
+		char *appid = strtok_r(NULL, " \t\r", &save);
+		char *sx = strtok_r(NULL, " \t\r", &save);
+		char *sy = strtok_r(NULL, " \t\r", &save);
+		char *sw = strtok_r(NULL, " \t\r", &save);
+		char *sh = strtok_r(NULL, " \t\r", &save);
+		if (appid && sx && sy && sw && sh) {
+			struct wlr_box rect = {
+				.x = atoi(sx), .y = atoi(sy),
+				.width = atoi(sw), .height = atoi(sh),
+			};
+			dockprep_register(appid, rect);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: dockprep: missing appid or args ('%s')",
+					appid ? appid : "(none)");
+		}
+	} else if (strcmp(cmd, "dock") == 0) {
+		char *appid = strtok_r(NULL, " \t\r", &save);
+		char *sx = strtok_r(NULL, " \t\r", &save);
+		char *sy = strtok_r(NULL, " \t\r", &save);
+		char *sw = strtok_r(NULL, " \t\r", &save);
+		char *sh = strtok_r(NULL, " \t\r", &save);
+		Client *c = appid ? client_find_by_appid(appid) : NULL;
+		if (c && sx && sy && sw && sh) {
+			struct wlr_box rect = {
+				.x = atoi(sx), .y = atoi(sy),
+				.width = atoi(sw), .height = atoi(sh),
+			};
+			setdocked(c, 1, rect);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: dock: missing client or args ('%s')",
+					appid ? appid : "(none)");
+		}
+	} else if (strcmp(cmd, "undock") == 0) {
+		char *appid = strtok_r(NULL, " \t\r", &save);
+		Client *c = appid ? client_find_by_appid(appid) : NULL;
+		struct wlr_box unused = {0};
+		if (c)
+			setdocked(c, 0, unused);
+	} else if (strcmp(cmd, "set-output") == 0) {
+		char *name = strtok_r(NULL, " \t\r", &save);
+		char *sw = strtok_r(NULL, " \t\r", &save);
+		char *sh = strtok_r(NULL, " \t\r", &save);
+		char *sr = strtok_r(NULL, " \t\r", &save);
+		char *sscale = strtok_r(NULL, " \t\r", &save);
+		char *sx = strtok_r(NULL, " \t\r", &save);
+		char *sy = strtok_r(NULL, " \t\r", &save);
+		char *senabled = strtok_r(NULL, " \t\r", &save);
+		if (name && sw && sh && sr && sscale && sx && sy && senabled) {
+			if (!ipc_set_output(name, atoi(sw), atoi(sh), (float)atof(sr),
+					(float)atof(sscale), atoi(sx), atoi(sy), atoi(senabled) != 0))
+				wlr_log(WLR_DEBUG, "ipc: set-output: unknown output or commit failed ('%s')",
+						name);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: set-output: missing args ('%s')",
+					name ? name : "(none)");
+		}
+	} else if (strcmp(cmd, "set-brightness") == 0) {
+		char *sv = strtok_r(NULL, " \t\r", &save);
+		if (sv) {
+			if (!backlight_set(atoi(sv)))
+				wlr_log(WLR_DEBUG, "ipc: set-brightness: no backlight device or logind call failed");
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: set-brightness: missing value");
+		}
+	} else if (strcmp(cmd, "minimize") == 0) {
+		char *appid = strtok_r(NULL, " \t\r", &save);
+		char *sflag = strtok_r(NULL, " \t\r", &save);
+		Client *c = appid ? client_find_by_appid(appid) : NULL;
+		if (c && sflag)
+			setminimized(c, atoi(sflag) != 0);
+		else
+			wlr_log(WLR_DEBUG, "ipc: minimize: missing client or args ('%s')",
+					appid ? appid : "(none)");
 	} else if (strcmp(cmd, "spotlight") == 0) {
 		/* Deliberately a no-op: the hold-Super menu no longer zooms the camera
 		 * (it snapped to wrong positions). Kept so a not-yet-rebuilt shell that

@@ -9,7 +9,7 @@ client_accept_requested_size(Client *c)
 	struct wlr_box geo;
 	int want_w, want_h;
 
-	if (!c || c->isfullscreen || !c->isfloating)
+	if (!c || c->isfullscreen)
 		return 0;
 	if (!c->scene || !c->scene_surface || !client_surface(c)->mapped)
 		return 0;

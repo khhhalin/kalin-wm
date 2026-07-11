@@ -16,6 +16,10 @@ indicator_set_visible(struct wlr_scene_rect *rect, int visible)
 {
 	if (!rect)
 		return;
+	/* Called every frame from rendermon(); skip the call when the visibility
+	 * hasn't actually changed instead of re-asserting it unconditionally. */
+	if (rect->node.enabled == !!visible)
+		return;
 	wlr_scene_node_set_enabled(&rect->node, visible);
 }
 
@@ -111,7 +115,13 @@ offscreen_indicators_update(void)
 	wl_list_for_each(c, &clients, link) {
 		if (!c->mon)
 			continue;
-		if (!VISIBLEON(c, c->mon) || c->isfloating || c->isfullscreen)
+		if (!VISIBLEON(c, c->mon) || c->isfullscreen)
+			continue;
+		/* Panels (c->ispanel) are always on-screen by construction (a fixed
+		 * dock rect) — never meaningfully "off-screen", so skip them rather
+		 * than have them (harmlessly, since they're never actually
+		 * off-screen) walk through this every frame. */
+		if (c->ispanel)
 			continue;
 		if (!wlr_scene_node_coords(&c->scene->node, &lx, &ly))
 			continue;
