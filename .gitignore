@@ -16,3 +16,8 @@ tests/*.gcov
 tests/registry_probe
 build.log
 tests/test_binds
+tests/test_connection_graph
+tests/test_growth_overlap
+tests/test_viewport_ops
+__pycache__/
+tools/vault-review/state*.json

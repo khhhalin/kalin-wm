@@ -1,0 +1,295 @@
+<title>Vault Review</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", sans-serif;
+    background: #14161a; color: #e6e6e6; min-height: 100vh;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid #2a2d33;
+    display: flex; align-items: center; gap: 16px; position: sticky; top: 0;
+    background: #14161a; z-index: 10;
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; color: #9aa0a8; }
+  header .spacer { flex: 1; }
+  header .vault-path { font-size: 12px; color: #6b7178; font-family: monospace; }
+  button {
+    background: #262a31; color: #e6e6e6; border: 1px solid #383d45;
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #2f343c; }
+  button.primary { background: #2d5a3d; border-color: #3d7a52; }
+  button.primary:hover { background: #357048; }
+  button.danger { background: #5a2d2d; border-color: #7a3d3d; }
+  button.danger:hover { background: #703838; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 24px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+  .tab {
+    padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    color: #9aa0a8; border: 1px solid transparent;
+  }
+  .tab.active { background: #1e2126; border-color: #2a2d33; color: #e6e6e6; }
+  .tab .count {
+    display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px;
+    background: #383d45; font-size: 11px;
+  }
+  .card {
+    background: #1a1d22; border: 1px solid #2a2d33; border-radius: 10px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  .breadcrumb { font-size: 12px; color: #7d8590; margin-bottom: 4px; font-family: monospace; }
+  .breadcrumb .file { color: #6ea8fe; }
+  .kind-badge {
+    display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 2px 8px; border-radius: 4px; margin-bottom: 10px;
+  }
+  .kind-added { background: #1e3a24; color: #7ee2a0; }
+  .kind-modified { background: #3a341e; color: #e2c87e; }
+  .kind-removed { background: #3a1e1e; color: #e27e7e; }
+  .leaf-badge {
+    display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 2px 8px; border-radius: 4px; margin-bottom: 10px; margin-left: 6px;
+    background: #1e2a3a; color: #7eb8e2;
+  }
+  .content {
+    white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.5;
+    background: #101216; border-radius: 6px; padding: 14px; max-height: 340px; overflow-y: auto;
+  }
+  .content-edit {
+    width: 100%; min-height: 160px; font-family: monospace; font-size: 13px; line-height: 1.5;
+    background: #101216; color: #e6e6e6; border: 1px solid #2a2d33; border-radius: 6px;
+    padding: 14px; resize: vertical;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  .progress { font-size: 12px; color: #7d8590; margin-bottom: 14px; }
+  .hint { font-size: 11px; color: #565b63; margin-left: auto; align-self: center; }
+  .empty { text-align: center; color: #7d8590; padding: 60px 20px; }
+  .empty h2 { color: #e6e6e6; font-weight: 500; }
+  kbd {
+    background: #262a31; border: 1px solid #383d45; border-radius: 4px;
+    padding: 1px 6px; font-size: 11px; font-family: monospace;
+  }
+  .file-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 4px;
+    border-bottom: 1px solid #22252b; font-size: 13px; font-family: monospace;
+  }
+  .file-row label { flex: 1; cursor: pointer; }
+  .file-row.ignored label { color: #565b63; text-decoration: line-through; }
+  .setup-overlay {
+    position: fixed; inset: 0; background: #14161a; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .setup-box { max-width: 480px; width: 100%; padding: 32px; }
+  .setup-box h2 { margin-top: 0; }
+  .setup-box p { color: #9aa0a8; font-size: 13px; }
+</style>
+<header>
+  <h1>Vault Review</h1>
+  <div class="vault-path" id="vaultPath"></div>
+  <div class="spacer"></div>
+  <button id="refreshBtn">Refresh</button>
+  <button id="auditBtn">Audit entire vault</button>
+  <button id="checkpointBtn" class="danger">Checkpoint (reset baseline)</button>
+</header>
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="queue">Review queue <span class="count" id="queueCount">0</span></div>
+    <div class="tab" data-tab="flagged">Flagged <span class="count" id="flaggedCount">0</span></div>
+    <div class="tab" data-tab="files">Files</div>
+  </div>
+  <div id="content"></div>
+</main>
+<div id="setupOverlay" class="setup-overlay" style="display:none;"></div>
+
+<script>
+let snippets = [];
+let tab = "queue";
+let queueIdx = 0;
+
+async function load() {
+  const res = await fetch("/api/snippets");
+  const data = await res.json();
+  document.getElementById("vaultPath").textContent = data.vault;
+  snippets = data.snippets;
+  queueIdx = 0;
+  if (!data.setup_done) {
+    await renderSetup();
+  } else {
+    document.getElementById("setupOverlay").style.display = "none";
+    render();
+  }
+}
+
+async function renderSetup() {
+  const overlay = document.getElementById("setupOverlay");
+  overlay.style.display = "flex";
+  const res = await fetch("/api/folders");
+  const data = await res.json();
+  overlay.innerHTML = `
+    <div class="setup-box">
+      <h2>Which folders should be reviewed?</h2>
+      <p>First time loading this vault. Pick the folders to include — anything
+      unchecked is excluded from the review queue (you can change this later
+      in the Files tab).</p>
+      ${data.folders.map(f => `
+        <div class="file-row" data-folder="${f.name}">
+          <input type="checkbox" ${f.excluded ? "" : "checked"} />
+          <label>${f.name}/</label>
+        </div>`).join("")}
+      <div class="actions">
+        <button class="primary" id="setupConfirmBtn">Confirm</button>
+      </div>
+    </div>`;
+  document.getElementById("setupConfirmBtn").onclick = async () => {
+    const excluded = [...overlay.querySelectorAll(".file-row")]
+      .filter(row => !row.querySelector("input").checked)
+      .map(row => row.dataset.folder);
+    await fetch("/api/setup", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({excluded_folders: excluded}),
+    });
+    load();
+  };
+}
+
+function pending() { return snippets.filter(s => s.status === "pending"); }
+function flagged() { return snippets.filter(s => s.status === "review"); }
+
+function breadcrumb(s) {
+  const path = s.heading_path.length ? s.heading_path.join(" › ") : "(preamble)";
+  return `<div class="breadcrumb"><span class="file">${s.relpath}</span> — ${path}</div>`;
+}
+
+async function decide(s, status) {
+  await fetch("/api/decide", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: s.id, status, hash: s.hash}),
+  });
+  s.status = status;
+  if (tab === "queue") render();
+}
+
+async function saveEdit(s, textarea) {
+  await fetch("/api/save", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      relpath: s.relpath, heading_path: s.heading_path, occurrence: s.occurrence,
+      new_content: textarea.value, kind: s.kind,
+    }),
+  });
+  s.status = "good";
+  render();
+}
+
+function renderQueue() {
+  const list = pending();
+  const el = document.getElementById("content");
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><h2>Queue clear</h2><p>Nothing pending review right now.</p></div>`;
+    return;
+  }
+  if (queueIdx >= list.length) queueIdx = 0;
+  const s = list[queueIdx];
+  el.innerHTML = `
+    <div class="progress">${queueIdx + 1} of ${list.length} pending</div>
+    <div class="card">
+      ${breadcrumb(s)}
+      <div class="kind-badge kind-${s.kind}">${s.kind}</div>${s.leaf_kind === "multisnippet" ? '<span class="leaf-badge">list</span>' : ""}
+      <div class="content">${escapeHtml(s.text) || "<em>(empty)</em>"}</div>
+      <div class="actions">
+        <button class="primary" id="goodBtn">✅ Good <kbd>g</kbd></button>
+        <button class="danger" id="flagBtn">🚩 Flag for review <kbd>f</kbd></button>
+        <span class="hint">g / f, or ←/→ to browse</span>
+      </div>
+    </div>`;
+  document.getElementById("goodBtn").onclick = () => { decide(s, "good"); };
+  document.getElementById("flagBtn").onclick = () => { decide(s, "review"); };
+}
+
+function renderFlagged() {
+  const list = flagged();
+  const el = document.getElementById("content");
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><h2>Nothing flagged</h2><p>Flagged snippets you want to fix up will show here for in-place editing.</p></div>`;
+    return;
+  }
+  el.innerHTML = list.map((s, i) => `
+    <div class="card" data-idx="${i}">
+      ${breadcrumb(s)}
+      <div class="kind-badge kind-${s.kind}">${s.kind}</div>${s.leaf_kind === "multisnippet" ? '<span class="leaf-badge">list</span>' : ""}
+      <textarea class="content-edit">${escapeHtml(s.text)}</textarea>
+      <div class="actions">
+        <button class="primary save-btn">💾 Save & approve</button>
+        <button class="unflag-btn">Approve as-is</button>
+      </div>
+    </div>`).join("");
+  list.forEach((s, i) => {
+    const card = el.querySelector(`[data-idx="${i}"]`);
+    card.querySelector(".save-btn").onclick = () => saveEdit(s, card.querySelector("textarea"));
+    card.querySelector(".unflag-btn").onclick = () => decide(s, "good").then(render);
+  });
+}
+
+function escapeHtml(str) {
+  return (str || "").replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+}
+
+async function renderFiles() {
+  const el = document.getElementById("content");
+  const res = await fetch("/api/files");
+  const data = await res.json();
+  el.innerHTML = `<p class="hint" style="margin-bottom:14px;">Ignored files are skipped entirely by the review queue.</p>` +
+    data.files.map(f => `
+    <div class="file-row ${f.ignored ? 'ignored' : ''}" data-relpath="${f.relpath}">
+      <input type="checkbox" ${f.ignored ? "checked" : ""} />
+      <label>${f.relpath}</label>
+    </div>`).join("");
+  el.querySelectorAll(".file-row").forEach(row => {
+    row.querySelector("input").onchange = async (e) => {
+      await fetch("/api/ignore", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({relpath: row.dataset.relpath, ignored: e.target.checked}),
+      });
+      row.classList.toggle("ignored", e.target.checked);
+      load();
+    };
+  });
+}
+
+function render() {
+  document.getElementById("queueCount").textContent = pending().length;
+  document.getElementById("flaggedCount").textContent = flagged().length;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+  if (tab === "queue") renderQueue();
+  else if (tab === "flagged") renderFlagged();
+  else renderFiles();
+}
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => { tab = t.dataset.tab; render(); });
+document.getElementById("refreshBtn").onclick = load;
+document.getElementById("auditBtn").onclick = async () => {
+  if (!confirm("Audit the entire vault? Every bullet in every non-ignored file will be queued for review (already-approved content is skipped automatically).")) return;
+  await fetch("/api/audit", {method: "POST"});
+  tab = "queue";
+  load();
+};
+document.getElementById("checkpointBtn").onclick = async () => {
+  if (!confirm("Reset baseline to current vault contents? This clears all pending/flagged state.")) return;
+  await fetch("/api/checkpoint", {method: "POST"});
+  load();
+};
+
+window.addEventListener("keydown", (e) => {
+  if (tab !== "queue" || document.activeElement.tagName === "TEXTAREA") return;
+  const list = pending();
+  if (list.length === 0) return;
+  const s = list[queueIdx];
+  if (e.key === "g") decide(s, "good");
+  else if (e.key === "f") decide(s, "review");
+  else if (e.key === "ArrowRight") { queueIdx = Math.min(queueIdx + 1, list.length - 1); render(); }
+  else if (e.key === "ArrowLeft") { queueIdx = Math.max(queueIdx - 1, 0); render(); }
+});
+
+load();
+</script>
