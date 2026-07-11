@@ -1,10 +1,10 @@
-dwl
+/dwl
 *.o
 *-protocol.c
 *-protocol.h
 .ccls-cache
 config.h
-kalin-wm
+/kalin-wm
 /build/
 /result
 /result-*
