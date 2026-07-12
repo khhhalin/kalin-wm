@@ -3,6 +3,69 @@
 - Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 - Dates are absolute.
 
+## 2026-07-12 — Move windows in overview mode; connection lines visible there too, inset toward center; fit-width/height center the camera on their axis
+
+Three related requests, all touching [[overview-mode]] and [[connection-graph]]:
+
+- **Move windows while overview is open.** `buttonpress()` (`dwl.c`) used to
+  call `overview_select(c)` — jump the camera to the clicked window and
+  close overview — on *any* click over a client while overview was active,
+  including a Super-held click meant to start a move/resize grab
+  (`bind_dispatch_button()` runs right after, further down the same
+  function). That meant Super+drag could never actually drag anything in
+  overview: the camera yanked away and overview closed the instant the
+  button went down, before a grab had any chance to start — defeating the
+  actual point of opening overview (rearrange windows while seeing all of
+  them). Fixed with one guard: `if (overview_is_active() && !super_held)`.
+  A plain click (no Super) still jumps/closes, unchanged. Move/resize
+  itself needed no changes — `motionnotify()`'s `CurMove` handling already
+  goes through `SCREEN_TO_WORLD_X/Y` (zoom-aware), so it was already correct
+  at whatever zoom overview happens to be at.
+- **Connection lines visible in overview, not just while Super is held.**
+  `ConnectionLines.qml` ([[quickshell-shell]]) gated its own visibility on
+  `KalinViewport.superHeld` alone. Added a new `"overview":true|false` field
+  to the IPC state broadcast (mirrors `overview_is_active()`), a matching
+  `KalinViewport.overviewActive` property, and changed the visibility
+  condition to `superHeld || overviewActive` — the graph is most useful to
+  see precisely when looking at the whole desktop at once, which is exactly
+  when Super usually isn't being held.
+- **Lines inset toward center, and bigger.** `LineGeometry.qml`'s
+  `_edgeAnchor()` used to place each line's endpoint exactly on the
+  window's near edge. Slightly overlapping/close windows squeezed that
+  point into a thin sliver of shared boundary, making it hard to tell which
+  window a line belonged to. Pulled each anchor in by a fixed 28px toward
+  the window's center (clamped so it can't cross past center on a small
+  window), and bumped the dot/star glyph sizes (10/15px → 14/20px).
+- **Super+F/Super+Shift+F re-center the camera on their own axis.** The
+  earlier center-anchored resize fix (2026-07-11, below) kept the window's
+  *own* center fixed in world space, but never moved the camera — if the
+  camera was panned somewhere else, the freshly-resized window could stay
+  off-screen or off-center in the viewport. Added
+  `viewport_center_on_x()`/`viewport_center_on_y()` (`viewport_ops.c`,
+  single-axis variants of the existing `viewport_center_on()`), called from
+  `fitwidth()`/`fitheight()` right after the resize settles. Deliberately
+  single-axis: `Super+F` only moves the camera horizontally (leaves whatever
+  vertical pan the user had), `Super+Shift+F` only vertically — a full
+  `viewport_center_on()` would have yanked the untouched axis too.
+
+Verified for real, not by code review alone: rebuilt, 25/25 unit tests,
+restarted the live compositor, then drove the actual host session via
+`ydotool` + IPC-socket readback (same methodology as the earlier `Super+F`
+symmetric-resize verification). Confirmed lines rendering during overview
+with a real screenshot (three connected `foot` terminals, dotted/star lines
+visible between them, `super_held:false` / `overview:true` in the IPC state
+at the same moment). Confirmed axis-only centering numerically: panned the
+camera off both axes, pressed `Super+F` — `rect.x` snapped to `0` (window
+now fills the monitor width) while `rect.y` stayed exactly where it was;
+then `Super+Shift+F` — `rect.y` snapped to `0`, `rect.x` stayed at the `0`
+`Super+F` had just set. Did **not** get a clean live confirmation of the
+move-in-overview drag itself — synthetic mouse drags via `ydotool` on the
+real, `follow`-mode-enabled desktop kept landing on the wrong target as the
+camera panned between commands (at one point focused a docked display
+panel by accident) — so that one is verified by code review (a one-line
+guard mirroring an already-proven pattern in the same function) rather than
+a live drag capture. Offered to verify further in the VM if wanted.
+
 ## 2026-07-11 — Code audit: dead-code sweep + session-lock extracted out of dwl.c
 
 Requested audit of `dwl.c` (the ~4.5k-line dwl-heritage monolith) for dead

@@ -314,6 +314,7 @@ conns_full:
 		"\"follow\":%s,\"follow_new\":%s},"
 		"\"crop\":%s,"
 		"\"super_held\":%s,"
+		"\"overview\":%s,"
 		"\"menu\":%s,"
 		"\"exit_pending\":%s,"
 		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
@@ -329,6 +330,7 @@ conns_full:
 		viewport.follow_new_windows ? "true" : "false",
 		crop_editor.active ? "true" : "false",
 		super_held ? "true" : "false",
+		overview_is_active() ? "true" : "false",
 		menu_shown ? "true" : "false",
 		exit_pending ? "true" : "false",
 		rx, ry, rw, rh,

@@ -108,8 +108,13 @@ it's fundamentally graph-topology manipulation, not the geometric cone-search
   transformed, always sent (not gated on Super being held) —
   `"connections":[{"a":id,"b":id,"a_rect":{...},"b_rect":{...}}]`, deduped by
   only emitting from the lower-id side. The [[quickshell-shell]] draws these
-  as dotted/sparkle lines while Super is held; drawing is purely decorative,
-  all hit-testing is compositor-side (see above).
+  as dotted/sparkle lines while Super is held **or** [[overview-mode]] is
+  open (`ConnectionLines.qml`'s visibility condition); drawing is purely
+  decorative, all hit-testing is compositor-side (see above). Each line's
+  endpoints are pulled in from the window's edge toward its center by a
+  fixed inset (`LineGeometry.qml`'s `_edgeAnchor()`), not placed exactly on
+  the boundary — keeps the line's origin visually distinct from a
+  neighboring window's edge when the two are close or slightly overlapping.
 
 ## Manual create/sever (2026-07-10)
 

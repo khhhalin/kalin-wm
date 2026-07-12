@@ -367,6 +367,54 @@ viewport_center_on(Client *c)
 		viewport_camera_tick(m);
 }
 
+/* Single-axis variants of viewport_center_on(), used by fitwidth()/
+ * fitheight() (resize_actions.c): Super+F/Super+Shift+F resize a window
+ * evenly around its own center, but that center isn't necessarily where the
+ * camera is looking — so bring the camera to center on the window along
+ * just the axis that was resized, leaving the other axis's camera position
+ * (and whatever the user had it panned to there) untouched. */
+void
+viewport_center_on_x(Client *c)
+{
+	Monitor *m;
+	float z;
+	if (!c || !c->mon)
+		return;
+
+	m = c->mon;
+	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+
+	viewport_move_to(
+		c->geom.x + c->geom.width / 2.0f - m->w.width / (2.0f * z),
+		viewport.target_y,
+		1
+	);
+
+	if (!viewport.animating)
+		viewport_camera_tick(m);
+}
+
+void
+viewport_center_on_y(Client *c)
+{
+	Monitor *m;
+	float z;
+	if (!c || !c->mon)
+		return;
+
+	m = c->mon;
+	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+
+	viewport_move_to(
+		viewport.target_x,
+		c->geom.y + c->geom.height / 2.0f - m->w.height / (2.0f * z),
+		1
+	);
+
+	if (!viewport.animating)
+		viewport_camera_tick(m);
+}
+
 /* Pan the camera the minimum amount needed so c's whole geometry is within
  * the visible viewport, instead of re-centering on it. A no-op if c is
  * already fully visible. On an axis where c is bigger than the viewport,

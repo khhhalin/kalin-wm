@@ -31,8 +31,8 @@ Window management ([[connection-graph]]):
 - `Super+Q` — close focused window (closing the middle of a line splices the two remaining neighbors together and closes the gap — see [[connection-graph]])
 - `Super+[` / `Super+]` (`bracketleft`/`bracketright`) and `Super+equal`/`Super+minus` — narrow / widen focused window
 - `Super+Shift+{` / `Super+Shift+}` (`braceleft`/`braceright`) and `Super+Shift+plus`/`Super+Shift+underscore` — shorten / lengthen focused window
-- `Super+F` — fit width: stretch to the monitor's usable width, growing/shrinking evenly on both sides so the horizontal center stays put (does *not* reset world position — see the [[ledger]] for the bug where it used to)
-- `Super+Shift+F` — fit height, same idea (vertical center stays put)
+- `Super+F` — fit width: stretch to the monitor's usable width, growing/shrinking evenly on both sides so the horizontal center stays put (does *not* reset world position — see the [[ledger]] for the bug where it used to). Also re-centers the camera horizontally on the window (`viewport_center_on_x()`), leaving vertical pan untouched.
+- `Super+Shift+F` — fit height, same idea (vertical center stays put, and the camera re-centers vertically only — `viewport_center_on_y()`)
 - `Super+M` — toggle maximized (fills `mon->w`, keeps border/bar, unlike fullscreen)
 - `Super+E` — toggle fullscreen
 - `Super+Shift+T` — toggle always-on-top

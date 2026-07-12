@@ -22,7 +22,16 @@
   Bare `Escape` is a no-op when the overview isn't open (mirrors the same
   active-mode-only bare-key pattern [[crop-mode]]'s `r`-to-reset uses).
 - All normal keybinds keep working while it's open (matches niri) — nothing is gated
-  behind an "overview mode" state beyond the exit hooks above.
+  behind an "overview mode" state beyond the exit hooks above. This includes
+  `Super+BTN_LEFT`/`Super+BTN_RIGHT` (move/resize): `buttonpress()` (`dwl.c`) skips
+  the click-to-jump path while Super is held, specifically so a Super-held click
+  starts a move/resize grab instead of immediately jumping the camera to the clicked
+  window and closing the overview — the whole point of opening it is to rearrange
+  windows while seeing all of them at once, which a jump-on-click would have made
+  impossible. A *plain* click (no Super) still jumps, as before.
+- The connection-graph lines (`ConnectionLines.qml`, [[quickshell-shell]]) are shown
+  whenever overview is open, in addition to their existing "Super held" condition —
+  see the `"overview"` field in [[ipc-socket]].
 
 ## Not in this pass (follow-up if wanted)
 

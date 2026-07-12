@@ -783,6 +783,8 @@ void viewport_fit_all(const Arg *arg);
 void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
 void viewport_center_on(Client *c);
+void viewport_center_on_x(Client *c);
+void viewport_center_on_y(Client *c);
 void viewport_menu_reveal(Client *c);
 void viewport_focus_window(Client *c);
 void viewport_animate_to(float x, float y, float zoom);

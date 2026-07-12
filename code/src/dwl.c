@@ -964,8 +964,13 @@ buttonpress(struct wl_listener *listener, void *data)
 			/* Clicking a window while the overview is open both focuses it
 			 * (above) and pans/zooms the camera to it at 1.0 zoom — jumping
 			 * to what you clicked, rather than restoring the pre-Super+O view
-			 * (that's what closing without clicking, overview_exit(), does). */
-			if (overview_is_active())
+			 * (that's what closing without clicking, overview_exit(), does).
+			 * Skipped while Super is held: Super+BTN_LEFT/BTN_RIGHT are about
+			 * to start a move/resize grab below (bind_dispatch_button()), and
+			 * jumping the camera away here would both cancel that drag before
+			 * it starts and defeat rearranging windows while overview is open
+			 * — the whole point of being able to see everything at once. */
+			if (overview_is_active() && !super_held)
 				overview_select(c);
 		}
 

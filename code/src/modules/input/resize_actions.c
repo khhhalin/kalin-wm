@@ -46,7 +46,11 @@ resizefocused(const Arg *arg)
  * window is wider than the gap to it, so push any such neighbor (and
  * everything still transitively connected beyond it) out of the way the
  * same way a client's own post-map growth does (see
- * resolve_growth_overlap(), dwl.c). */
+ * resolve_growth_overlap(), dwl.c). Also re-centers the camera on the
+ * window along the X axis only (viewport_center_on_x()) — the resize keeps
+ * the window's own center fixed in world space, but the camera might not be
+ * looking at that point, so this brings it into view without touching
+ * wherever the camera was panned to vertically. */
 void
 fitwidth(const Arg *arg)
 {
@@ -67,6 +71,7 @@ fitwidth(const Arg *arg)
 	geo.x -= (geo.width - old_width) / 2;
 	resize(c, geo, 0);
 	resolve_growth_overlap(c);
+	viewport_center_on_x(c);
 	status_mark_dirty();
 	persistence_save();
 }
@@ -74,8 +79,9 @@ fitwidth(const Arg *arg)
 /* Stretch the focused window to the monitor's usable height, growing/
  * shrinking evenly on both sides so the vertical center stays put — the
  * height counterpart of fitwidth() above (see its comment for why world
- * position must never be reset to the monitor's anchor, and for the
- * evenly-both-sides anchor choice). */
+ * position must never be reset to the monitor's anchor, for the
+ * evenly-both-sides anchor choice, and for why this re-centers the camera
+ * on just the Y axis via viewport_center_on_y()). */
 void
 fitheight(const Arg *arg)
 {
@@ -96,6 +102,7 @@ fitheight(const Arg *arg)
 	geo.y -= (geo.height - old_height) / 2;
 	resize(c, geo, 0);
 	resolve_growth_overlap(c);
+	viewport_center_on_y(c);
 	status_mark_dirty();
 	persistence_save();
 }
