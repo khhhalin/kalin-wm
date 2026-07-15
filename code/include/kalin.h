@@ -441,6 +441,7 @@ struct Monitor {
     int arrange_dirty;                      /* Needs arrange() before next idle flush
                                               * (see modules/layout/arrange_sched.c) */
     Viewport cam;                           /* This monitor's camera (multi-camera) */
+    void *shader_state;                      /* opaque per-monitor shader offscreen (shaders.c) */
 };
 
 /**

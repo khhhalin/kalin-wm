@@ -17,7 +17,13 @@ WL_LIBS    = `pkg-config --libs wayland-server xkbcommon libinput`
 SD_FLAGS   = `pkg-config --cflags libsystemd`
 SD_LIBS    = `pkg-config --libs libsystemd`
 
-CFLAGS   = $(WLR_FLAGS) $(WL_FLAGS) $(SD_FLAGS) -I. -Icode/config -Icode/include -Icode/include/protocols -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L
+# libdrm: DRM_FORMAT_* fourccs used by the shader module's offscreen swapchain.
+DRM_FLAGS  = `pkg-config --cflags libdrm`
+# EGL + GLESv2: the shader module drops to raw GLES2 for its compositing pass.
+GL_FLAGS   = `pkg-config --cflags egl glesv2`
+GL_LIBS    = `pkg-config --libs egl glesv2`
+
+CFLAGS   = $(WLR_FLAGS) $(WL_FLAGS) $(SD_FLAGS) $(DRM_FLAGS) $(GL_FLAGS) -I. -Icode/config -Icode/include -Icode/include/protocols -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L
 CFLAGS  += -DVERSION=\"0.8-dev\"
 CFLAGS  += -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement
 CFLAGS  += -Wno-unused-parameter -Wshadow -Wunused-macros
@@ -27,13 +33,13 @@ CFLAGS  += -Werror=incompatible-pointer-types -Wfloat-conversion -O1
 # (headers AND the modules dwl.c #include's directly) trigger a rebuild.
 CFLAGS  += -MMD -MP
 
-LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) $(SD_LIBS) -lm
+LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) $(SD_LIBS) $(GL_LIBS) -lm
 
 # Source files. dwl.c is the core translation unit; it #include's the feature
 # modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
 # commit_size.c is compiled as its own translation unit. The other listed files
 # (util/crash_report/persistence) are independent translation units.
-SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/input/gestures.c code/src/modules/foreign_toplevel.c code/src/modules/protocols/toplevel_export.c code/include/protocols/hyprland-toplevel-export-v1-protocol-code.c code/include/protocols/wlr-foreign-toplevel-management-unstable-v1-protocol-code.c code/src/modules/viewport/viewport_ops.c code/src/modules/viewport/overview.c code/src/modules/layout/arrange_sched.c code/src/modules/layout/window_size_history.c code/src/modules/layout/connection_graph.c code/src/modules/layout/directional_focus.c code/src/modules/layout/client_anim.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/screenshot/screenshot_ui.c code/src/modules/ipc.c code/src/modules/backlight.c code/src/modules/capture.c code/src/modules/session_lock.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/input/gestures.c code/src/modules/foreign_toplevel.c code/src/modules/protocols/toplevel_export.c code/include/protocols/hyprland-toplevel-export-v1-protocol-code.c code/include/protocols/wlr-foreign-toplevel-management-unstable-v1-protocol-code.c code/src/modules/viewport/viewport_ops.c code/src/modules/viewport/overview.c code/src/modules/layout/arrange_sched.c code/src/modules/layout/window_size_history.c code/src/modules/layout/connection_graph.c code/src/modules/layout/directional_focus.c code/src/modules/layout/client_anim.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/screenshot/screenshot_ui.c code/src/modules/ipc.c code/src/modules/backlight.c code/src/modules/capture.c code/src/modules/shaders/shaders.c code/src/modules/session_lock.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
 DEPS = $(OBJS:.o=.d)

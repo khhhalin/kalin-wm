@@ -80,6 +80,7 @@
 #define DWL_INTERNAL
 #include "kalin.h"
 #include "binds.h"
+#include "shaders.h"
 
 /* Crop editor state. Type lives in kalin.h; the crop/ipc TUs link against this
  * instance, so it has external linkage. */
@@ -1077,6 +1078,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 	if (m->lock_surface)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
+	shaders_output_destroy(m);
 	wlr_output_layout_remove(output_layout, m->wlr_output);
 	wlr_scene_output_destroy(m->scene_output);
 
@@ -2969,7 +2971,12 @@ rendermon(struct wl_listener *listener, void *data)
 	 * buffer gets stretched into its new
 	 * box for a frame or two — a barely-visible blip on that one window,
 	 * instead of a frozen screen. */
-	wlr_scene_output_commit(m->scene_output, NULL);
+	/* Route the frame through the shader pipeline (offscreen render + a
+	 * fragment-shader output pass) when shaders are enabled and available;
+	 * otherwise, and on any failure, fall back to the plain scene commit.
+	 * See obsidian/plan/shaders.md. */
+	if (!shaders_render_output(m))
+		wlr_scene_output_commit(m->scene_output, NULL);
 
 	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -3812,6 +3819,11 @@ setup(void)
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
+
+	/* Set up the shader subsystem now that the renderer exists. Disables
+	 * itself gracefully on a non-GLES2 renderer or shader-compile failure —
+	 * see obsidian/plan/shaders.md. */
+	shaders_init(drw, shaders_output_enabled, shaders_dir);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
 	 * The simplest way is to call:

@@ -59,7 +59,7 @@
     ("modularization step 1/2") and in [[dwl-fork]] — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
-## Planned — [[shaders]] (designed 2026-07-15, not started)
+## Planned — [[shaders]] (designed 2026-07-15; Phase 0 infra in tree, gated off)
 
 - GPU fragment shaders at two levels: **per-window** (shadow, rounded corners,
   blur-behind, dim/focus, paper-mode reading tint) and **camera/output**

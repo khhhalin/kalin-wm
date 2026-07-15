@@ -115,6 +115,14 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 */
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
+/* Shaders — see obsidian/plan/shaders.md. Master switch for the camera/output
+ * fragment-shader pass. Requires the GLES2 renderer (WLR_RENDERER=gles2); on
+ * Vulkan/Pixman the pass auto-disables. Default 0: the render pipeline is new
+ * and unverified on real GPUs — flip to 1 to test the passthrough on hardware.
+ * shaders_dir holds the .frag files (env KALIN_SHADER_DIR overrides). */
+static const int shaders_output_enabled = 0;
+static const char *const shaders_dir = "shaders";
+
 /* All keyboard/pointer bindings now live exclusively in the bind DSL —
  * see default_binds.h (embedded default, bootstrapped to
  * ~/.config/kalin-wm/binds.conf on first run) and binds.conf itself for the

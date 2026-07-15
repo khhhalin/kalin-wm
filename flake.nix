@@ -19,6 +19,8 @@
         pixman
         libdrm
         mesa
+        libGL   # egl.pc + glesv2.pc for the shader module's raw GLES2 pass
+                # (see obsidian/plan/shaders.md); also links libEGL/libGLESv2
         seatd
         systemd # sd-bus, for calling logind's SetBrightness (see ipc.c's
                 # brightness command / kalin.h's backlight_* prototypes)
@@ -67,6 +69,7 @@
           pixman
           libdrm
           mesa
+          libGL   # egl.pc + glesv2.pc for the shader module (plan/shaders.md)
           seatd
           systemd
           gdb

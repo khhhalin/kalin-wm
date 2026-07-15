@@ -1,11 +1,12 @@
 # Shaders (design intent)
 
-- **Status: planned, not started (designed 2026-07-15).** Add GPU fragment
-  shaders to [[kalin-wm]] at two levels: **per-window** (shadow, rounded corners,
-  blur-behind, dim/focus, paper-mode reading tint) and **camera/output**
-  (color-grade/CRT/vignette over the whole [[viewport]]).
-- This note is design intent (keeper layer). The as-built record will live in
-  `implementation/shaders.md` once building starts.
+- **Status: Phase 0 infrastructure in tree (2026-07-15), gated off, not yet
+  GPU-verified.** Add GPU fragment shaders to [[kalin-wm]] at two levels:
+  **per-window** (shadow, rounded corners, blur-behind, dim/focus, paper-mode
+  reading tint) and **camera/output** (color-grade/CRT/vignette over the whole
+  [[viewport]]).
+- This note is design intent (keeper layer). As-built reality — what's actually
+  in the tree — lives in [[shaders|implementation/shaders]].
 
 ## The constraint that dictates the whole shape
 
