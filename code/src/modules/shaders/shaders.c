@@ -595,9 +595,12 @@ bounds_iter(struct wlr_scene_buffer *sb, int sx, int sy, void *data)
 
 /* Pass 2: draw each buffer node into the offscreen render pass, positioned
  * relative to the window origin. */
+#define COMPOSITE_MAX_TEX 64
 struct composite_ctx {
 	struct wlr_render_pass *pass;
 	int ox, oy;
+	struct wlr_texture *tex[COMPOSITE_MAX_TEX]; /* kept alive until submit */
+	int n;
 };
 
 static void
@@ -612,6 +615,8 @@ composite_iter(struct wlr_scene_buffer *sb, int sx, int sy, void *data)
 		return;
 	buffer_render_size(sb, &w, &h);
 	if (w <= 0 || h <= 0)
+		return;
+	if (cc->n >= COMPOSITE_MAX_TEX)
 		return;
 	if (!(tex = wlr_texture_from_buffer(drw, sb->buffer)))
 		return;
@@ -630,7 +635,9 @@ composite_iter(struct wlr_scene_buffer *sb, int sx, int sy, void *data)
 	opt.alpha = &sb->opacity;
 	wlr_render_pass_add_texture(cc->pass, &opt);
 
-	wlr_texture_destroy(tex);
+	/* Keep the texture alive until after submit: the render pass records the
+	 * op and executes it at submit, so destroying it here rendered nothing. */
+	cc->tex[cc->n++] = tex;
 }
 
 /* Composite client c's subtree (origin ox,oy) into dst via a wlroots pass. */
@@ -641,6 +648,8 @@ composite_subtree(struct Client *c, struct wlr_buffer *dst, int ox, int oy,
 	struct wlr_render_pass *pass;
 	struct composite_ctx cc = { .ox = ox, .oy = oy };
 	struct wlr_render_rect_options clear = {0};
+	bool ok;
+	int i;
 
 	if (!(pass = wlr_renderer_begin_buffer_pass(drw, dst, NULL)))
 		return false;
@@ -653,7 +662,10 @@ composite_subtree(struct Client *c, struct wlr_buffer *dst, int ox, int oy,
 
 	cc.pass = pass;
 	wlr_scene_node_for_each_buffer(&c->scene->node, composite_iter, &cc);
-	return wlr_render_pass_submit(pass);
+	ok = wlr_render_pass_submit(pass);
+	for (i = 0; i < cc.n; i++)
+		wlr_texture_destroy(cc.tex[i]);
+	return ok;
 }
 
 /* Raw-GLES2 paper.frag pass: sample `src` (composited window), write `dst`'s

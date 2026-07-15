@@ -3486,6 +3486,12 @@ client_apply_paper(Client *c)
 				&c->scene_surface->node);
 	}
 	wlr_scene_buffer_set_buffer(c->paper_node, shaded);
+	/* Opacity just under 1.0 marks the overlay non-opaque for occlusion, so
+	 * wlr_scene keeps the window's own surface visible on the output. A fully
+	 * opaque overlay occludes it, wlroots sends wl_surface.leave, and the client
+	 * stops rendering (no more frames to shade). The <1% of the raw window that
+	 * blends through is imperceptible. */
+	wlr_scene_buffer_set_opacity(c->paper_node, 0.99f);
 	wlr_scene_node_set_position(&c->paper_node->node, b.x0 - lx, b.y0 - ly);
 	wlr_scene_node_set_enabled(&c->paper_node->node, true);
 }
