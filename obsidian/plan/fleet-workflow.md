@@ -1,5 +1,10 @@
 # Fleet workflow
 
+## Prerequisite — worktree base ref (READ BEFORE DISPATCHING)
+- This repo's real work lives in **unpushed local commits**; `origin/main` lags far behind. Worker worktrees default to `worktree.baseRef: "fresh"` = branch from `origin/<default-branch>`, so without a change they build against **stale code** and their branches won't merge.
+- Fix: `worktree.baseRef: "head"` (set in `.claude/settings.local.json`). **This is read at session startup — after setting it you MUST restart Claude Code; a mid-session edit does not take effect.**
+- Verify it worked on the first dispatched worker: `git merge-base main <worker-branch>` must equal local `HEAD`, not `origin/main`. If it equals `origin/main`, the setting isn't active (wrong scope or no restart) — stop and fix before trusting any worker output.
+
 - The `fleet` skill runs kalin-wm work as a supervised set of parallel worker agents that cannot clobber each other; this note records the kalin-wm-specific adaptation. It extends [[agent-workflow]], it does not replace it — the stability-first work rules there still bind every worker.
 - Two layers: the keeper (Kalin's live conversation) owns `obsidian/plan/` (goal, [[roadmap]], design intent); workers maintain `obsidian/implementation/` (the as-built subsystem notes) for the subsystems they change.
 - Workers run in isolated git worktrees and are the only writers of their own `obsidian/agents/<task-id>/` gate report. Because task file-scopes are disjoint, the implementation notes they touch are disjoint too — no conflict, so workers edit `implementation/` directly.
