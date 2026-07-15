@@ -26,14 +26,13 @@ keypress(struct wl_listener *listener, void *data)
 	/* Get a list of keysyms based on the keymap for this keyboard */
 	const xkb_keysym_t *syms;
 	int nsyms;
+	int handled = 0;
+	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
+	int is_super_key = 0;
 	if (!group->wlr_group->keyboard.xkb_state)
 		return;
 	nsyms = xkb_state_key_get_syms(
 			group->wlr_group->keyboard.xkb_state, keycode, &syms);
-
-	int handled = 0;
-	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
-	int is_super_key = 0;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 

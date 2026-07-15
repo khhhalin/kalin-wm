@@ -37,9 +37,15 @@ backlight_find_device(void)
 	if (!d)
 		return 0;
 	while ((ent = readdir(d))) {
+		int n;
 		if (ent->d_name[0] == '.')
 			continue;
-		snprintf(backlight_name, sizeof(backlight_name), "%s", ent->d_name);
+		/* Real backlight device names are short (e.g. intel_backlight);
+		 * skip any that wouldn't fit rather than cache a truncated name
+		 * that later sysfs-path lookups would fail on. */
+		n = snprintf(backlight_name, sizeof(backlight_name), "%s", ent->d_name);
+		if (n < 0 || (size_t)n >= sizeof(backlight_name))
+			continue;
 		closedir(d);
 		return 1;
 	}
@@ -103,13 +109,13 @@ backlight_resolve_session(void)
 		return 0;
 	}
 	while (sd_bus_message_enter_container(reply, SD_BUS_TYPE_STRUCT, "susso") > 0) {
-		const char *sid, *uname, *seat;
+		const char *sid, *uname, *seat_id;
 		uint32_t uid;
-		sd_bus_message_read(reply, "susso", &sid, &uid, &uname, &seat, &path);
-		if (seat && *seat)
+		sd_bus_message_read(reply, "susso", &sid, &uid, &uname, &seat_id, &path);
+		if (seat_id && *seat_id)
 			snprintf(session_path, sizeof(session_path), "%s", path);
 		sd_bus_message_exit_container(reply);
-		if (seat && *seat)
+		if (seat_id && *seat_id)
 			break;
 	}
 	sd_bus_message_exit_container(reply);

@@ -657,6 +657,7 @@ ipc_init(const char *wl_display_name)
 {
 	struct sockaddr_un addr = {0};
 	const char *rundir = getenv("XDG_RUNTIME_DIR");
+	size_t path_len;
 	int i;
 
 	for (i = 0; i < IPC_MAX_CLIENTS; i++)
@@ -667,7 +668,8 @@ ipc_init(const char *wl_display_name)
 	snprintf(ipc_socket_path, sizeof(ipc_socket_path), "%s/kalin-ipc-%s.sock",
 			rundir, wl_display_name ? wl_display_name : "0");
 
-	if (strlen(ipc_socket_path) >= sizeof(addr.sun_path)) {
+	path_len = strlen(ipc_socket_path);
+	if (path_len >= sizeof(addr.sun_path)) {
 		wlr_log(WLR_ERROR, "ipc: socket path too long: %s", ipc_socket_path);
 		return;
 	}
@@ -680,7 +682,9 @@ ipc_init(const char *wl_display_name)
 	}
 
 	addr.sun_family = AF_UNIX;
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", ipc_socket_path);
+	/* Length was validated to fit above; copy the known-good length (plus
+	 * the NUL) so this can't truncate — addr was zero-initialized. */
+	memcpy(addr.sun_path, ipc_socket_path, path_len + 1);
 	if (bind(ipc_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		wlr_log(WLR_ERROR, "ipc: bind(%s) failed: %s", ipc_socket_path, strerror(errno));
 		close(ipc_listen_fd);
