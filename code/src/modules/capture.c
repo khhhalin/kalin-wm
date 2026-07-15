@@ -96,12 +96,14 @@ zlib_store(const unsigned char *raw, size_t rawlen, size_t *outlen)
 {
 	/* zlib header (2) + per-64KB-block header (5) + data + adler32 (4). */
 	size_t nblocks = (rawlen + 65534) / 65535;
+	size_t cap;
+	unsigned char *out;
+	size_t o = 0, pos = 0;
+	uint32_t a = 1, b = 0, adler;
 	if (nblocks == 0)
 		nblocks = 1;
-	size_t cap = 2 + nblocks * 5 + rawlen + 4;
-	unsigned char *out = malloc(cap);
-	size_t o = 0, pos = 0;
-	uint32_t a = 1, b = 0;
+	cap = 2 + nblocks * 5 + rawlen + 4;
+	out = malloc(cap);
 	if (!out)
 		return NULL;
 
@@ -129,7 +131,7 @@ zlib_store(const unsigned char *raw, size_t rawlen, size_t *outlen)
 		a = (a + raw[i]) % 65521;
 		b = (b + a) % 65521;
 	}
-	uint32_t adler = (b << 16) | a;
+	adler = (b << 16) | a;
 	out[o++] = adler >> 24;
 	out[o++] = adler >> 16;
 	out[o++] = adler >> 8;
@@ -275,6 +277,7 @@ capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
 	struct wlr_texture *tex;
 	struct wlr_box mbox;
 	unsigned char *data;
+	struct wlr_backend *hb;
 	int cw, ch;
 	size_t stride;
 	int ok;
@@ -290,7 +293,7 @@ capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
 		return 0;
 
 	/* Throwaway headless backend + output at the supersampled resolution. */
-	struct wlr_backend *hb = wlr_headless_backend_create(event_loop);
+	hb = wlr_headless_backend_create(event_loop);
 	if (!hb) {
 		wlr_log(WLR_ERROR, "capture: headless backend create failed");
 		return 0;

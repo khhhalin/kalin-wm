@@ -14,8 +14,6 @@
 #include "crash_report.h"
 
 #define CRASH_DIR "~/.local/share/kalin-wm/crashes"
-#define MAX_CRASH_REPORTS 10
-#define CRASH_REPEAT_WINDOW_SECS 60
 
 int safe_mode_enabled = 0;
 
@@ -95,8 +93,9 @@ crash_check_safe_mode(void)
 	char *crash_dir = expand_home(CRASH_DIR);
 	int recent_crashes = 0;
 
-	/* Heuristic: count .log files in crash dir modified in last CRASH_REPEAT_WINDOW_SECS */
-	/* For simplicity, just check if crash dir has any recent files and count them */
+	/* Heuristic: count .log files in the crash dir and enter safe mode past
+	 * a fixed threshold. This is a coarse placeholder — it counts all reports,
+	 * not just recent ones. */
 	struct stat st;
 	FILE *fp;
 	char line[256];
