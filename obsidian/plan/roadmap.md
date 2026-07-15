@@ -36,8 +36,14 @@
 ## In progress
 
 - **[[multi-camera]] — independent per-monitor viewports** (started 2026-07-15):
-  single-view shared world, camera ops follow the cursor's monitor, drag
-  hand-off + send-to-monitor bind. Design + touch list in the note.
+  single-view shared world, camera ops follow the cursor's monitor. **Phase 1
+  (core) has landed** — `Monitor.cam` replaces the global viewport, every
+  transform routes through the client's holder (`c->mon`) or the cursor monitor,
+  verified with independent dual-output panning (25 unit tests green, no
+  single-monitor regression). Remaining: **Phase 2** drag hand-off +
+  send-to-monitor bind + cross-camera edge severing; **Phase 3** IPC/shell
+  per-output keying of the `viewports` array; **Phase 4** per-monitor wallpaper,
+  off-screen indicators, overview polish. Full breakdown + touch list in the note.
 
 - Verify the [[nixos-session]] end-to-end after `nixos-rebuild switch`: quickshell bar auto-starts, `Super+T`/`Super+P`/`Super+O` work, and the taskbar lists running apps.
 - **[[protocols]] — implement missing popular Wayland protocols**, starting
@@ -53,28 +59,22 @@
     ("modularization step 1/2") and in [[dwl-fork]] — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
-## Recently completed (see [[ledger]])
+## Recently completed
 
-- [[bar-tuis]]: custom Textual TUIs for all seven docked bar panels (wifi/bluetooth/mixer/stats/clipboard/battery/display), battery out of the QML SidePanel, DockedPanel lifecycle races fixed, and the ipc.c broadcast line-framing fix. Awaiting the home-config rebuild that puts `kalin-bar-tui` on PATH.
-- Ported the [[quickshell-shell]] to the kalin-wm backend: `TaskbarService` and window actions now use `CompositorService`/[[foreign-toplevel]]; `WorkspaceIndicator` is hidden on kalin-wm.
-- Wired the [[nixos-session]] to start the shell + terminal via the `kalin-wm-session` wrapper.
-- Replaced [[column-layout]]/[[anchored-window]] entirely with free
-  positioning + the [[connection-graph]] (spawn-adjacency, group-drag,
-  directional swap, splice-on-close, growth-overlap push).
-- [[window-menu]] implemented (`hold Super`, `WindowActions.qml`).
-- [[connection-graph]]: forgiving drag-to-cut severing (was a precise
-  single-click) and a menu-armed way to manually create a connection
-  (`Super+L`, was automatic-only) — see the "Manual create/sever" section.
-- Trackpad gesture navigation: 3-finger swipe pans (with momentum coast),
-  pinch zooms — see [[gestures]].
-- [[persistence]] reworked: multi-instance identity keying (was colliding
-  same-appid windows onto one saved slot), connection-graph save/restore,
-  and a `mkdir -p` fix for a bug that had silently disabled persistence
-  entirely since it was introduced.
-- Resize (`Super+BTN_RIGHT`) now grabs whichever corner of the window is
-  nearest the cursor instead of always the bottom-right one; added
-  `Super+Ctrl+BTN_LEFT` solo move (move a window without dragging its
-  connected component along, without severing) — see [[connection-graph]].
+Pointers only — chronology is in git, detail is in each subsystem's
+implementation note. Trimmed from full narrative 2026-07-15.
+
+- [[bar-tuis]] — Textual TUIs for all seven docked bar panels; battery out of the
+  QML SidePanel; DockedPanel lifecycle races + `ipc.c` line-framing fixed.
+  (Host `nixos-rebuild` that puts `kalin-bar-tui` on PATH — **status unverified** as of 2026-07-15.)
+- [[quickshell-shell]] ported to the kalin-wm backend (`CompositorService`/[[foreign-toplevel]]).
+- [[nixos-session]] starts shell + terminal via the `kalin-wm-session` wrapper.
+- [[connection-graph]] replaced [[column-layout]]/[[anchored-window]] (free positioning + spawn-adjacency graph).
+- [[window-menu]] (hold Super, `WindowActions.qml`).
+- [[connection-graph]] forgiving drag-to-cut severing + menu-armed manual connect (`Super+L`).
+- Trackpad [[gestures]] — 3-finger swipe pan (momentum coast) + pinch zoom.
+- [[persistence]] rework — multi-instance identity keying, graph save/restore, `mkdir -p` fix.
+- Resize grabs the nearest corner; `Super+Ctrl+BTN_LEFT` solo move — see [[connection-graph]].
 
 ## v1.0 features — open
 
@@ -89,25 +89,13 @@
 - Anchor-mode visual distinction (different border for an [[anchored-window]]).
 - [[crop-mode]] on-screen banner; cursor-state feedback during pan/move/resize.
 
-## Under consideration — auto-pan when dragging past the viewport edge
+## Under consideration
 
-- The other half of the driftwm-inspired item below: **3-finger swipe pan +
-  momentum coast + pinch zoom is now shipped** (2026-07-09, see [[gestures]]
-  and the [[ledger]]) and out of this section.
-- Still open: auto-pan when dragging a window past the viewport edge (also a
-  driftwm feature) — would extend `motionnotify()`'s `CurMove` branch.
-  Investigated, not yet implemented.
-- Note: "smooth animations (spring physics)" from the 2026-06-26 drop below
-  is actually partially shipped, not fully dropped — group-drag and
-  `swap_neighbor_dir()` already glide clients via a spring animation (see
-  [[connection-graph]]). Only camera-level spring/momentum motion was open,
-  and gesture-driven momentum panning now covers that case; edge-drag
-  auto-pan is the one piece still outstanding.
-
-## Dropped
-
-- Touchpad gestures were removed from the backlog on 2026-06-26 — see the
-  "Under consideration" section above for why that's being revisited.
+- **Auto-pan when dragging a window past the viewport edge** (driftwm-inspired) —
+  would extend `motionnotify()`'s `CurMove` branch. Investigated, not yet
+  implemented. Its sibling half (gesture pan + momentum coast + pinch zoom, and
+  spring-glide for group-drag / `swap_neighbor_dir()`) already shipped — see
+  [[gestures]] and [[connection-graph]]. Edge-drag auto-pan is the one piece left.
 
 ## Known minor bugs (found 2026-07-09, not yet fixed)
 
