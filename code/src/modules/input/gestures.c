@@ -48,9 +48,12 @@ gesture_swipe_begin(struct wl_listener *listener, void *data)
 	g->vel_x = 0.0f;
 	g->vel_y = 0.0f;
 	/* A live gesture is direct manipulation: stop any in-flight easing or
-	 * coast so the fingers and the camera don't fight each other. */
-	viewport.animating = 0;
-	viewport.coasting = 0;
+	 * coast so the fingers and the camera don't fight each other. Gestures
+	 * act on the monitor under the cursor (multi-camera). */
+	if (selmon) {
+		selmon->cam.animating = 0;
+		selmon->cam.coasting = 0;
+	}
 }
 
 static void
@@ -60,10 +63,10 @@ gesture_swipe_update(struct wl_listener *listener, void *data)
 	struct wlr_pointer_swipe_update_event *event = data;
 	float z, dt, wx, wy, ivx, ivy;
 
-	if (!g->swipe_active)
+	if (!g->swipe_active || !selmon)
 		return;
 
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	z = MON_ZOOM_SAFE(selmon);
 	dt = (float)(event->time_msec - g->swipe_last_msec) / 1000.0f;
 	g->swipe_last_msec = event->time_msec;
 	if (dt <= 0.0f)
@@ -73,10 +76,10 @@ gesture_swipe_update(struct wl_listener *listener, void *data)
 	 * Super+Ctrl+LMB direct-manipulation pan-grab (viewport_pan_grab_update). */
 	wx = (float)event->dx / z;
 	wy = (float)event->dy / z;
-	viewport.x -= wx;
-	viewport.y -= wy;
-	viewport.target_x = viewport.x;
-	viewport.target_y = viewport.y;
+	selmon->cam.x -= wx;
+	selmon->cam.y -= wy;
+	selmon->cam.target_x = selmon->cam.x;
+	selmon->cam.target_y = selmon->cam.y;
 
 	/* Exponential moving average of instantaneous velocity, so a brief
 	 * pause right before lifting fingers doesn't leave a stale high
@@ -86,8 +89,7 @@ gesture_swipe_update(struct wl_listener *listener, void *data)
 	g->vel_x = g->vel_x * 0.7f + ivx * 0.3f;
 	g->vel_y = g->vel_y * 0.7f + ivy * 0.3f;
 
-	if (selmon)
-		viewport_camera_tick(selmon);
+	viewport_camera_tick(selmon);
 	status_mark_dirty();
 }
 
@@ -103,7 +105,7 @@ gesture_swipe_end(struct wl_listener *listener, void *data)
 	/* viewport_coast_start() itself no-ops below its own min-speed
 	 * threshold, so a slow, deliberate-stop swipe just stays put. */
 	if (!event->cancelled)
-		viewport_coast_start(g->vel_x, g->vel_y);
+		viewport_coast_start(selmon, g->vel_x, g->vel_y);
 }
 
 static void
@@ -112,9 +114,11 @@ gesture_pinch_begin(struct wl_listener *listener, void *data)
 	struct GestureDevice *g = wl_container_of(listener, g, pinch_begin);
 	(void)data;
 	g->pinch_active = 1;
-	g->pinch_begin_zoom = viewport.zoom;
-	viewport.animating = 0;
-	viewport.coasting = 0;
+	g->pinch_begin_zoom = selmon ? selmon->cam.zoom : 1.0f;
+	if (selmon) {
+		selmon->cam.animating = 0;
+		selmon->cam.coasting = 0;
+	}
 }
 
 static void
@@ -124,18 +128,17 @@ gesture_pinch_update(struct wl_listener *listener, void *data)
 	struct wlr_pointer_pinch_update_event *event = data;
 	float z;
 
-	if (!g->pinch_active || event->scale <= 0.0)
+	if (!g->pinch_active || event->scale <= 0.0 || !selmon)
 		return;
 
 	/* Same clamp range viewport_zoom() uses. */
 	z = g->pinch_begin_zoom * (float)event->scale;
 	if (z < 0.1f) z = 0.1f;
 	if (z > 5.0f) z = 5.0f;
-	viewport.zoom = z;
-	viewport.target_zoom = z;
+	selmon->cam.zoom = z;
+	selmon->cam.target_zoom = z;
 
-	if (selmon)
-		viewport_camera_tick(selmon);
+	viewport_camera_tick(selmon);
 	status_mark_dirty();
 }
 

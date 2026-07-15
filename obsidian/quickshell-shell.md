@@ -129,12 +129,21 @@ Battery pane, still on the old `SidePanel`/`rightOwner` system) is now one
 
 | Button | appId | command |
 |---|---|---|
-| `SystemStatsWidget` | `kalin-stats-panel` | `btop` |
-| `WifiLauncher` | `kalin-wifi-panel` | `nmtui` |
-| `BluetoothLauncher` | `kalin-bt-panel` | `bluetuith` |
-| `VolumeWidget` | `kalin-volume-panel` | `wiremix` |
-| `DisplayWidget` | `kalin-display-panel` | `kalin-display-panel` (Textual TUI, see `tools/display-panel/`) |
-| `ClipboardButton` | `kalin-clip-panel` | `kalin-clip-picker-loop` (home-config-only) |
+| `SystemStatsWidget` | `kalin-stats-panel` | `kalin-bar-tui stats` |
+| `WifiLauncher` | `kalin-wifi-panel` | `kalin-bar-tui wifi` |
+| `BluetoothLauncher` | `kalin-bt-panel` | `kalin-bar-tui bluetooth` |
+| `BatteryWidget` | `kalin-battery-panel` | `kalin-bar-tui battery` |
+| `VolumeWidget` | `kalin-volume-panel` | `kalin-bar-tui mixer` |
+| `DisplayWidget` | `kalin-display-panel` | `kalin-bar-tui display` |
+| `ClipboardButton` | `kalin-clip-panel` | `kalin-bar-tui clipboard` |
+
+As of 2026-07-15 every panel runs a custom Textual TUI from the
+[[bar-tuis]] suite (`tools/bar-tuis/` in this repo, one `kalin-bar-tui
+<panel>` dispatcher packaged in home-config/desktop.nix) — btop, nmtui,
+bluetuith, wiremix, and the fzf clip-picker loop are no longer used by the
+bar. Battery joined the docked system at the same time: `SystemPanel.qml`
+is deleted and the `SidePanel`/`rightOwner` drawer now serves only the
+clock's calendar (`SystemPanelState.rightOwner` is `"clock" | ""`).
 
 `KalinViewport.dock()/undock()/minimize()` (functions wrapping the kalin-wm
 IPC commands of the same names — see [[ipc-socket]]) do the actual

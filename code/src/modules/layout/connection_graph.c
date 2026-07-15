@@ -339,7 +339,6 @@ connection_click_hit(double sx, double sy, uint32_t *out_a, uint32_t *out_b)
 	Client *c;
 	uint32_t best_a = 0, best_b = 0;
 	float best_dist = CONN_HIT_RADIUS_PX;
-	float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
 	int i;
 
 	wl_list_for_each(c, &clients, link) {
@@ -352,10 +351,10 @@ connection_click_hit(double sx, double sy, uint32_t *out_a, uint32_t *out_b)
 			if (!n || n->id < c->id)
 				continue;
 
-			crx = WORLD_TO_SCREEN_X(c->geom.x); cry = WORLD_TO_SCREEN_Y(c->geom.y);
-			crw = c->geom.width * zf; crh = c->geom.height * zf;
-			nrx = WORLD_TO_SCREEN_X(n->geom.x); nry = WORLD_TO_SCREEN_Y(n->geom.y);
-			nrw = n->geom.width * zf; nrh = n->geom.height * zf;
+			crx = WORLD_TO_SCREEN_X(c->mon, c->geom.x); cry = WORLD_TO_SCREEN_Y(c->mon, c->geom.y);
+			crw = c->geom.width * MON_ZOOM_SAFE(c->mon); crh = c->geom.height * MON_ZOOM_SAFE(c->mon);
+			nrx = WORLD_TO_SCREEN_X(n->mon, n->geom.x); nry = WORLD_TO_SCREEN_Y(n->mon, n->geom.y);
+			nrw = n->geom.width * MON_ZOOM_SAFE(n->mon); nrh = n->geom.height * MON_ZOOM_SAFE(n->mon);
 
 			edge_anchor(crx, cry, crw, crh, nrx, nry, nrw, nrh, &ax1, &ay1);
 			edge_anchor(nrx, nry, nrw, nrh, crx, cry, crw, crh, &ax2, &ay2);

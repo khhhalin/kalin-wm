@@ -107,11 +107,12 @@
 /* Bumped from 4096 to fit the "outputs" array (each output's full mode
  * list) alongside everything else already in the state broadcast — see
  * ipc_build_state()'s outputs loop. */
-#define IPC_BUF_SIZE    8192
+#define IPC_BUF_SIZE    16384 /* raised from 8192: two monitors' full mode lists overflowed outputs[] */
 
 struct ipc_client {
 	int fd;
 	struct wl_event_source *source;
+	int resync; /* short write left a truncated record; lead the next send with '\n' */
 };
 
 static int ipc_listen_fd = -1;
@@ -165,20 +166,26 @@ ipc_build_state(char *buf, size_t len)
 	char conns[2048];
 	char pendbuf[160];
 	char dockhoverbuf[288];
-	char outputs[2048];
+	char outputs[4096];
+	char cams[1024];
+	size_t cams_len = 0;
+	int cams_first = 1;
 	char brightnessbuf[64];
 	size_t conns_len = 0;
 	int conns_first = 1;
 	size_t outputs_len = 0;
 	int outputs_first = 1;
 	int bl_value, bl_max;
-	float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-	/* Focused window's on-screen rect (world -> screen, matches resize()), so
-	 * the shell can flow the radial buttons out of the actual window. */
-	int rx = f ? (int)((f->geom.x - viewport.x) * zf) : 0;
-	int ry = f ? (int)((f->geom.y - viewport.y) * zf) : 0;
-	int rw = f ? (int)(f->geom.width  * zf) : 0;
-	int rh = f ? (int)(f->geom.height * zf) : 0;
+	int written;
+	/* Focused window's on-screen rect (world -> screen through its holder's
+	 * camera, matches resize()), so the shell can flow the radial buttons out
+	 * of the actual window. Multi-camera: each client transforms through
+	 * c->mon's camera; the coordinates are layout-global (include the
+	 * monitor's offset), same space the connection rects below use. */
+	int rx = f ? WORLD_TO_SCREEN_X(f->mon, f->geom.x) : 0;
+	int ry = f ? WORLD_TO_SCREEN_Y(f->mon, f->geom.y) : 0;
+	int rw = f ? (int)(f->geom.width  * MON_ZOOM_SAFE(f->mon)) : 0;
+	int rh = f ? (int)(f->geom.height * MON_ZOOM_SAFE(f->mon)) : 0;
 
 	ipc_json_escape(f ? client_get_title(f) : "", title, sizeof(title));
 	ipc_json_escape(f ? client_get_appid(f) : "", appid, sizeof(appid));
@@ -200,14 +207,14 @@ ipc_build_state(char *buf, size_t len)
 			int arx, ary, arw, arh, brx, bry, brw, brh, n;
 			if (!nb || nb->id < c->id)
 				continue;
-			arx = (int)((c->geom.x - viewport.x) * zf);
-			ary = (int)((c->geom.y - viewport.y) * zf);
-			arw = (int)(c->geom.width * zf);
-			arh = (int)(c->geom.height * zf);
-			brx = (int)((nb->geom.x - viewport.x) * zf);
-			bry = (int)((nb->geom.y - viewport.y) * zf);
-			brw = (int)(nb->geom.width * zf);
-			brh = (int)(nb->geom.height * zf);
+			arx = WORLD_TO_SCREEN_X(c->mon, c->geom.x);
+			ary = WORLD_TO_SCREEN_Y(c->mon, c->geom.y);
+			arw = (int)(c->geom.width * MON_ZOOM_SAFE(c->mon));
+			arh = (int)(c->geom.height * MON_ZOOM_SAFE(c->mon));
+			brx = WORLD_TO_SCREEN_X(nb->mon, nb->geom.x);
+			bry = WORLD_TO_SCREEN_Y(nb->mon, nb->geom.y);
+			brw = (int)(nb->geom.width * MON_ZOOM_SAFE(nb->mon));
+			brh = (int)(nb->geom.height * MON_ZOOM_SAFE(nb->mon));
 			n = snprintf(conns + conns_len, sizeof(conns) - conns_len,
 				"%s{\"a\":%u,\"b\":%u,"
 				"\"a_rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
@@ -215,8 +222,15 @@ ipc_build_state(char *buf, size_t len)
 				conns_first ? "" : ",",
 				c->id, nb->id,
 				arx, ary, arw, arh, brx, bry, brw, brh);
-			if (n < 0 || (size_t)n >= sizeof(conns) - conns_len)
-				goto conns_full; /* out of room; drop remaining entries */
+			if (n < 0 || (size_t)n >= sizeof(conns) - conns_len) {
+				/* out of room; drop remaining entries — and erase the
+				 * partial entry snprintf already wrote past conns_len,
+				 * which would otherwise be emitted by the final %s and
+				 * corrupt the JSON (found live: a truncated mode object
+				 * made every state line unparseable for the shell) */
+				conns[conns_len] = '\0';
+				goto conns_full;
+			}
 			conns_len += (size_t)n;
 			conns_first = 0;
 		}
@@ -230,10 +244,10 @@ conns_full:
 	 * when nothing's pending, same convention "connections" doesn't need
 	 * since it's always an array — this one genuinely has an absent state. */
 	if (pending) {
-		int prx = (int)((pending->geom.x - viewport.x) * zf);
-		int pry = (int)((pending->geom.y - viewport.y) * zf);
-		int prw = (int)(pending->geom.width * zf);
-		int prh = (int)(pending->geom.height * zf);
+		int prx = WORLD_TO_SCREEN_X(pending->mon, pending->geom.x);
+		int pry = WORLD_TO_SCREEN_Y(pending->mon, pending->geom.y);
+		int prw = (int)(pending->geom.width * MON_ZOOM_SAFE(pending->mon));
+		int prh = (int)(pending->geom.height * MON_ZOOM_SAFE(pending->mon));
 		snprintf(pendbuf, sizeof(pendbuf),
 			"{\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 			"\"cursor\":{\"x\":%d,\"y\":%d}}",
@@ -271,7 +285,7 @@ conns_full:
 	 * not wlr_output's own coordinates, which aren't layout-relative. */
 	outputs[0] = '\0';
 	wl_list_for_each(m, &mons, link) {
-		char modesbuf[1024];
+		char modesbuf[2048];
 		size_t modes_len = 0;
 		int modes_first = 1;
 		char oname[128];
@@ -287,8 +301,12 @@ conns_full:
 				"%s{\"width\":%d,\"height\":%d,\"refresh\":%.3f}",
 				modes_first ? "" : ",",
 				mode->width, mode->height, mode->refresh / 1000.0f);
-			if (n < 0 || (size_t)n >= sizeof(modesbuf) - modes_len)
-				break; /* out of room; drop remaining modes for this output */
+			if (n < 0 || (size_t)n >= sizeof(modesbuf) - modes_len) {
+				/* out of room; drop remaining modes — erase the partial
+				 * entry or the final %s emits broken JSON (see conns) */
+				modesbuf[modes_len] = '\0';
+				break;
+			}
 			modes_len += (size_t)n;
 			modes_first = 0;
 		}
@@ -302,16 +320,46 @@ conns_full:
 			m->wlr_output->refresh / 1000.0f, m->wlr_output->scale,
 			m->wlr_output->enabled ? "true" : "false",
 			modesbuf);
-		if (n < 0 || (size_t)n >= sizeof(outputs) - outputs_len)
-			break; /* out of room; drop remaining outputs */
+		if (n < 0 || (size_t)n >= sizeof(outputs) - outputs_len) {
+			/* out of room; drop remaining outputs — erase the partial
+			 * entry or the final %s emits broken JSON (see conns) */
+			outputs[outputs_len] = '\0';
+			break;
+		}
 		outputs_len += (size_t)n;
 		outputs_first = 0;
 	}
 
-	snprintf(buf, len,
+	/* Per-monitor cameras (multi-camera): one entry per output keyed by name.
+	 * The scalar "viewport" below stays for back-compat (shell OSD) and holds
+	 * the cursor monitor's camera — the currently "active" one. */
+	cams[0] = '\0';
+	wl_list_for_each(m, &mons, link) {
+		char cname[128];
+		int n;
+		if (!m->wlr_output)
+			continue;
+		ipc_json_escape(m->wlr_output->name, cname, sizeof(cname));
+		n = snprintf(cams + cams_len, sizeof(cams) - cams_len,
+			"%s{\"output\":\"%s\",\"x\":%.0f,\"y\":%.0f,\"zoom\":%.3f,"
+			"\"follow\":%s,\"follow_new\":%s}",
+			cams_first ? "" : ",", cname,
+			m->cam.x, m->cam.y, m->cam.zoom,
+			m->cam.follow ? "true" : "false",
+			m->cam.follow_new_windows ? "true" : "false");
+		if (n < 0 || (size_t)n >= sizeof(cams) - cams_len) {
+			cams[cams_len] = '\0';
+			break;
+		}
+		cams_len += (size_t)n;
+		cams_first = 0;
+	}
+
+	written = snprintf(buf, len,
 		"{\"type\":\"state\","
 		"\"viewport\":{\"x\":%.0f,\"y\":%.0f,\"zoom\":%.3f,"
 		"\"follow\":%s,\"follow_new\":%s},"
+		"\"viewports\":[%s],"
 		"\"crop\":%s,"
 		"\"super_held\":%s,"
 		"\"overview\":%s,"
@@ -325,9 +373,12 @@ conns_full:
 		"\"dock_hover\":%s,"
 		"\"outputs\":[%s],"
 		"\"brightness\":%s}\n",
-		viewport.x, viewport.y, viewport.zoom,
-		viewport.follow ? "true" : "false",
-		viewport.follow_new_windows ? "true" : "false",
+		selmon ? selmon->cam.x : 0.0f,
+		selmon ? selmon->cam.y : 0.0f,
+		selmon ? selmon->cam.zoom : 1.0f,
+		(selmon && selmon->cam.follow) ? "true" : "false",
+		(selmon && selmon->cam.follow_new_windows) ? "true" : "false",
+		cams,
 		crop_editor.active ? "true" : "false",
 		super_held ? "true" : "false",
 		overview_is_active() ? "true" : "false",
@@ -339,14 +390,43 @@ conns_full:
 		(f && f->isontop) ? "true" : "false",
 		(f && f->allow_overlap) ? "true" : "false",
 		conns, pendbuf, dockhoverbuf, outputs, brightnessbuf);
+	if ((written < 0 || (size_t)written >= len) && len >= 2) {
+		/* Truncation cut off the trailing '\n'; restore the frame
+		 * terminator so one oversized state costs the reader one bad
+		 * record instead of desyncing the whole line stream. */
+		wlr_log(WLR_ERROR, "ipc: state exceeds IPC_BUF_SIZE, truncated");
+		buf[len - 2] = '\n';
+		buf[len - 1] = '\0';
+	}
 }
 
+/* Write one newline-terminated record, preserving the stream's line framing
+ * across short writes on the non-blocking fd: a partial write leaves a
+ * truncated record on the wire, and without its terminating '\n' every later
+ * state would be glued onto it — the client's line splitter then drops all
+ * subsequent states, not just one (seen live as quickshell's "bad state
+ * line" warnings and docked panels stuck open on a stale dock_hover). On a
+ * short write, lead the next send with '\n' so the reader loses exactly one
+ * record and resyncs. */
 static void
-ipc_send(int fd, const char *msg)
+ipc_client_send(struct ipc_client *cl, const char *msg)
 {
 	size_t len = strlen(msg);
-	ssize_t n = write(fd, msg, len);
-	(void)n; /* best-effort; client fds are non-blocking */
+	ssize_t n;
+
+	if (cl->resync) {
+		if (write(cl->fd, "\n", 1) != 1)
+			return; /* still clogged; retry at the next broadcast */
+		cl->resync = 0;
+	}
+	n = write(cl->fd, msg, len);
+	if (n < 0) {
+		if (errno != EAGAIN && errno != EINTR)
+			ipc_client_remove(cl);
+		return;
+	}
+	if ((size_t)n < len)
+		cl->resync = 1;
 }
 
 void
@@ -360,9 +440,7 @@ ipc_broadcast_state(void)
 	for (i = 0; i < IPC_MAX_CLIENTS; i++) {
 		if (ipc_clients[i].fd < 0)
 			continue;
-		if (write(ipc_clients[i].fd, raw, strlen(raw)) < 0
-				&& errno != EAGAIN && errno != EINTR)
-			ipc_client_remove(&ipc_clients[i]);
+		ipc_client_send(&ipc_clients[i], raw);
 	}
 }
 
@@ -374,7 +452,27 @@ ipc_exec_command(char *line)
 	if (!cmd)
 		return;
 
-	if (strcmp(cmd, "pan") == 0) {
+	if (strcmp(cmd, "warp") == 0) {
+		/* Warp the pointer to an absolute layout-pixel position and update
+		 * selmon/focus as if the cursor really moved there. A test/automation
+		 * hook: headless and nested test runs (see the headless multi-output
+		 * harness) have no real pointer, so this is how an agent picks which
+		 * monitor's camera the subsequent selmon-based ops (pan/zoom/fit) act
+		 * on — deterministically, without injecting synthetic input events. */
+		char *sx = strtok_r(NULL, " \t\r", &save);
+		char *sy = strtok_r(NULL, " \t\r", &save);
+		if (sx && sy) {
+			wlr_cursor_warp(cursor, NULL, atof(sx), atof(sy));
+			/* Non-zero time so motionnotify() runs its selmon/focus update
+			 * (the internal time==0 path only restores pointer focus and
+			 * skips selmon). The motion deltas are zero — this just
+			 * re-points selmon at the warped-to monitor, which is the whole
+			 * point of warp: pick which camera selmon-based ops act on. */
+			motionnotify(1, NULL, 0, 0, 0, 0);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: warp: missing <x> <y>");
+		}
+	} else if (strcmp(cmd, "pan") == 0) {
 		char *sx = strtok_r(NULL, " \t\r", &save);
 		char *sy = strtok_r(NULL, " \t\r", &save);
 		float d[2] = { sx ? (float)atof(sx) : 0.0f, sy ? (float)atof(sy) : 0.0f };
@@ -456,6 +554,14 @@ ipc_exec_command(char *line)
 			wlr_log(WLR_DEBUG, "ipc: set-output: missing args ('%s')",
 					name ? name : "(none)");
 		}
+	} else if (strcmp(cmd, "screenshot-ui") == 0) {
+		/* Open the interactive screenshot UI (same as the Super+Shift+S
+		 * bind) — lets a shell widget or script trigger it. */
+		screenshotui_begin(NULL);
+	} else if (strcmp(cmd, "screenshot") == 0) {
+		/* Immediate whole-monitor capture (same as the Super+Print bind);
+		 * lands in $KALIN_SHOT_DIR (or $HOME). */
+		capture_screenshot(NULL);
 	} else if (strcmp(cmd, "set-brightness") == 0) {
 		char *sv = strtok_r(NULL, " \t\r", &save);
 		if (sv) {
@@ -536,12 +642,13 @@ ipc_handle_accept(int fd, uint32_t mask, void *data)
 		fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
 
 	ipc_clients[i].fd = cfd;
+	ipc_clients[i].resync = 0;
 	ipc_clients[i].source = wl_event_loop_add_fd(event_loop, cfd,
 			WL_EVENT_READABLE, ipc_client_readable, &ipc_clients[i]);
 
 	/* Greet the new client with the current state. */
 	ipc_build_state(initial, sizeof(initial));
-	ipc_send(cfd, initial);
+	ipc_client_send(&ipc_clients[i], initial);
 	return 0;
 }
 

@@ -127,12 +127,16 @@ typedef struct SessionLock SessionLock;
 enum {
     CurNormal,      /* Normal cursor operation */
     CurPressed,     /* Mouse button is pressed */
-    CurMove,        /* Moving a window */
-    CurResize,      /* Resizing a window */
+    CurMove,        /* Moving a window (drags its whole connection component along) */
+    CurResize,      /* Resizing a window, from whichever corner was nearest the grab */
     CurPan,         /* Dragging the camera (Super+Ctrl+LMB on background) */
-    CurCut          /* Super+LMB pressed on empty canvas: sweeping the cursor
+    CurCut,         /* Super+LMB pressed on empty canvas: sweeping the cursor
                       * near/across a connection line severs it (see
                       * connection_click_hit(), buttonpress()/motionnotify()) */
+    CurMoveSolo     /* Super+Ctrl+LMB on a window: move just that window,
+                      * leaving its connections intact but not dragging the
+                      * rest of the component along (see moveresize(),
+                      * ACT_VIEWPORT_PAN_GRAB in bind_invoke()) */
 };
 
 /**
@@ -396,6 +400,27 @@ struct KeyboardGroup {
 };
 
 /**
+ * Viewport - one monitor's 2D view transform (camera) over the shared
+ * infinite canvas. Per-monitor since 2026-07-15 (see obsidian/multi-camera.md):
+ * every Monitor owns a `cam`, camera ops act on the monitor under the cursor,
+ * and each client is transformed through its holder's (`c->mon`) camera.
+ */
+typedef struct {
+    float x, y;                 /* camera position */
+    float target_x, target_y;   /* camera animation target */
+    float zoom;                 /* zoom level (1.0 = normal) */
+    float target_zoom;          /* zoom animation target */
+    int follow;                 /* 1 = camera follows focused window */
+    int follow_new_windows;     /* 1 = auto-pan to new windows */
+    int smooth_pan;             /* 1 = animate camera movement */
+    int animating;              /* 1 = moving toward target, or coasting (below) */
+    int coasting;                /* 1 = decelerating from a trackpad flick, not
+                                   * easing toward target_x/y (see viewport_tick()
+                                   * and viewport_coast_start(), viewport_ops.c) */
+    float vel_x, vel_y;          /* world-units/sec camera velocity while coasting */
+} Viewport;
+
+/**
  * Monitor - represents an output/display
  */
 struct Monitor {
@@ -415,6 +440,7 @@ struct Monitor {
     int asleep;                             /* Power management state */
     int arrange_dirty;                      /* Needs arrange() before next idle flush
                                               * (see modules/layout/arrange_sched.c) */
+    Viewport cam;                           /* This monitor's camera (multi-camera) */
 };
 
 /**
@@ -436,37 +462,22 @@ struct SessionLock {
     struct wl_listener destroy;
 };
 
-/**
- * Viewport - global 2D view transform (camera) over the infinite canvas.
- * dwl.c owns the single instance; viewport/layout/crop/ipc TUs read it.
- */
-typedef struct {
-    float x, y;                 /* camera position */
-    float target_x, target_y;   /* camera animation target */
-    float zoom;                 /* zoom level (1.0 = normal) */
-    float target_zoom;          /* zoom animation target */
-    int follow;                 /* 1 = camera follows focused window */
-    int follow_new_windows;     /* 1 = auto-pan to new windows */
-    int smooth_pan;             /* 1 = animate camera movement */
-    int animating;              /* 1 = moving toward target, or coasting (below) */
-    int coasting;                /* 1 = decelerating from a trackpad flick, not
-                                   * easing toward target_x/y (see viewport_tick()
-                                   * and viewport_coast_start(), viewport_ops.c) */
-    float vel_x, vel_y;          /* world-units/sec camera velocity while coasting */
-} Viewport;
-
 /* World<->screen coordinate transforms (pan + zoom), and the minimum gap the
  * connection-graph spawn/gap-closing logic keeps between edge-connected
- * windows. Placed here, above the DWL_INTERNAL split below, because both
- * dwl.c (which defines `viewport` directly) and every separately-compiled
- * module (which sees it via the `extern Viewport viewport` below) need
- * these — dwl.c specifically does NOT see anything past the "#ifndef
- * DWL_INTERNAL" guard below, since it defines those symbols itself. */
-#define VIEWPORT_ZOOM_SAFE    (viewport.zoom > 0.0001f ? viewport.zoom : 0.0001f)
-#define WORLD_TO_SCREEN_X(wx) ((int)(((wx) - viewport.x) * VIEWPORT_ZOOM_SAFE))
-#define WORLD_TO_SCREEN_Y(wy) ((int)(((wy) - viewport.y) * VIEWPORT_ZOOM_SAFE))
-#define SCREEN_TO_WORLD_X(sx) ((float)(sx) / VIEWPORT_ZOOM_SAFE + viewport.x)
-#define SCREEN_TO_WORLD_Y(sy) ((float)(sy) / VIEWPORT_ZOOM_SAFE + viewport.y)
+ * windows. Monitor-parameterized (multi-camera): screen coordinates are
+ * layout-global, so the monitor's own layout offset (m->m.x/y) is folded in —
+ * for a single monitor at (0,0) this reduces to the old global-camera math.
+ * A NULL monitor yields the identity camera (zoom 1, origin 0) so transform
+ * callers don't have to special-case not-yet-mapped clients. `m` is evaluated
+ * more than once — pass a plain pointer, never an expression with effects. */
+/* NB: the parameter is `mon_` not `m` — the transform reads the monitor's
+ * layout box `->m`, and a macro parameter named `m` would be substituted into
+ * that member access too (`(m)->m.x` -> garbage). */
+#define MON_ZOOM_SAFE(mon_)      ((mon_) ? ((mon_)->cam.zoom > 0.0001f ? (mon_)->cam.zoom : 0.0001f) : 1.0f)
+#define WORLD_TO_SCREEN_X(mon_, wx) ((int)(((wx) - ((mon_) ? (mon_)->cam.x : 0.0f)) * MON_ZOOM_SAFE(mon_)) + ((mon_) ? (mon_)->m.x : 0))
+#define WORLD_TO_SCREEN_Y(mon_, wy) ((int)(((wy) - ((mon_) ? (mon_)->cam.y : 0.0f)) * MON_ZOOM_SAFE(mon_)) + ((mon_) ? (mon_)->m.y : 0))
+#define SCREEN_TO_WORLD_X(mon_, sx) (((float)(sx) - (float)((mon_) ? (mon_)->m.x : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.x : 0.0f))
+#define SCREEN_TO_WORLD_Y(mon_, sy) (((float)(sy) - (float)((mon_) ? (mon_)->m.y : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.y : 0.0f))
 #define SPAWN_GAP 20
 
 /**
@@ -513,6 +524,21 @@ typedef struct {
     bool show_pointer;
     struct wlr_scene_rect *overlay;      /* dark fullscreen overlay */
     struct wlr_scene_rect *border[4];    /* border lines: top, bottom, left, right */
+    /* Freeze-frame: the monitor's scene rendered once at open, shown under
+     * the dim so the world visibly stops, and cropped at confirm so the
+     * capture is exactly what was on screen when the UI opened (also keeps
+     * the dim/border/info nodes themselves out of the saved image). The
+     * pixel data is owned by frozen_buf's destroy impl, not this struct. */
+    unsigned char *frozen_data;
+    int frozen_w, frozen_h;
+    size_t frozen_stride;
+    struct wlr_buffer *frozen_buf;
+    struct wlr_scene_buffer *frozen_node;
+    /* TUI-style readout (size/position + key hints), re-rasterized only
+     * when its text changes during a drag. */
+    struct wlr_buffer *info_buf;
+    struct wlr_scene_buffer *info_node;
+    char info_text[160];
 } ScreenshotEditor;
 
 /* Everything below is the runtime interface (globals + prototypes) that the
@@ -583,6 +609,9 @@ extern KeyboardGroup *kb_group;
 extern unsigned int cursor_mode;
 extern Client *grabc;
 extern int grabcx, grabcy;          /* Client-relative grab offsets */
+extern int resize_anchor_x, resize_anchor_y; /* World-space corner opposite
+                                       * the one being dragged; stays fixed
+                                       * for the whole CurResize grab */
 
 /* Output layout */
 extern struct wlr_output_layout *output_layout;
@@ -595,8 +624,8 @@ extern const float wallbg_rgba[4];
 extern const float wallpattern_rgba[4];
 
 /* Shared runtime state promoted from dwl.c file scope so the separately-
- * compiled feature TUs can link against it (see the typedefs above). */
-extern Viewport viewport;
+ * compiled feature TUs can link against it (see the typedefs above). The
+ * camera is NOT here any more — it's per-monitor (`Monitor.cam`). */
 extern Wallpaper wallpaper;
 extern CropEditor crop_editor;
 extern ScreenshotEditor screenshot_ui;
@@ -778,7 +807,7 @@ void session_lock_cleanup(void);
 /* Viewport and navigation (kalin-wm specific) */
 void viewport_kick(void);
 void viewport_pan(const Arg *arg);
-void viewport_coast_start(float vx, float vy);
+void viewport_coast_start(Monitor *m, float vx, float vy);
 void viewport_fit_all(const Arg *arg);
 void viewport_zoom(const Arg *arg);
 void viewport_reset(const Arg *arg);
@@ -787,7 +816,7 @@ void viewport_center_on_x(Client *c);
 void viewport_center_on_y(Client *c);
 void viewport_menu_reveal(Client *c);
 void viewport_focus_window(Client *c);
-void viewport_animate_to(float x, float y, float zoom);
+void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
@@ -822,6 +851,21 @@ void capture_screenshot(const Arg *arg);
  * (~/Pictures/Screenshots/) and/or the Wayland clipboard (via wl-copy). */
 void capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
                                bool to_disk, bool to_clipboard);
+
+/* Same crop/save/clipboard path, but from caller-supplied pixels (XRGB8888,
+ * `cw`x`ch` covering monitor `m`'s full view) instead of a fresh render —
+ * lets the screenshot UI export its freeze-frame so the saved image is
+ * exactly what was frozen on screen, not a re-render that would include the
+ * UI's own overlay nodes. */
+void capture_export_pixels(const unsigned char *data, int cw, int ch, size_t stride,
+                            Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
+                            bool to_disk, bool to_clipboard);
+
+/* Render monitor `m`'s current scene at `supersample`x native resolution into
+ * a malloc'd XRGB8888 buffer (caller frees). Public for the screenshot UI's
+ * freeze-frame. */
+int capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
+                           int *out_w, int *out_h, size_t *out_stride);
 
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);
@@ -879,10 +923,6 @@ void requestdecorationmode(struct wl_listener *listener, void *data);
 void run(char *startup_cmd);
 void setup(void);
 void spawn(const Arg *arg);
-/* Notify the PTY subsystem that a child pid was reaped by SIGCHLD handler. */
-void pty_child_reaped(pid_t pid);
-int pty_inject(pid_t pid, const char *text);
-const char *pty_log_for(pid_t pid);
 
 /* Idle inhibitor */
 void createidleinhibitor(struct wl_listener *listener, void *data);

@@ -8,15 +8,13 @@ Execution order in [dwl.c](../../dwl.c):
    User interaction for crop mode (enter/draw/apply/cancel).
 2. `layout/layout_world.c`  
    Infinite world layout, column flow, and anchoring behavior.
-3. `ui/overlay_clock.c`
-   Lightweight compositor-side HH:MM overlay clock (bottom-right).
-4. `ui/wallpaper.c`  
+3. `ui/wallpaper.c`  
    World-anchored repeating wallpaper generation and placement.
-5. `viewport/viewport_ops.c`  
+4. `viewport/viewport_ops.c`  
    Camera movement, zoom, follow, and smoothing.
-6. `input/resize_actions.c`  
+5. `input/resize_actions.c`  
    Keyboard-driven focused-window resize actions.
-7. `ui/offscreen_indicators.c`
+6. `ui/offscreen_indicators.c`
    Edge indicators for off-screen windows.
 
 ## Why this exists

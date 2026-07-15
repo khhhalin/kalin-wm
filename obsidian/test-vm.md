@@ -32,8 +32,10 @@
   deleted (from a terminal inside the VM) and the VM rebooted, or the file is edited
   directly (binds.conf hot-reloads live via inotify, so an edit alone, no reboot, is
   enough if you'd rather not delete it).
-- `scripts/vmctl.py` also has a `click X Y [BUTTON]` command (QMP `input-send-event`,
-  assumes the VM's 1280x800 default) for testing mouse interaction, not just keyboard.
+- Drive the VM entirely from the host with `scripts/vmctl.py` (no guest tooling): `up` (boot headless, wait for compositor), `shot <path.png>` (dump a framebuffer PNG that can be `Read`), `key <k> [k...]` (inject a chord, e.g. `key meta_l t` = Super+T), `type "..."` (type into the focused window), `click X Y [BUTTON]` (QMP `input-send-event`, assumes the 1280x800 default), `down` (power off).
+- Why that combo: QEMU runs with `-display egl-headless,gl=on -vnc unix:…` — input is QMP `send-key`/`input-send-event` (hypervisor-level, deterministic), and the screenshot is read from the **VNC** framebuffer because QMP `screendump` fails with "no surface" on the GL scanout (a dmabuf); `egl-headless` blits the GL frame into the readable VNC surface.
+- Keystrokes hit whatever holds keyboard focus — focus the target window first if `type` must land somewhere specific.
+- Health checks after boot: `grep -i "Configuration Loaded" /tmp/kalin-vm/quickshell.log` (shell up) and `tail /tmp/kalin-vm/kalin-wm.log` (should show `viewport …`, no segfault). Harmless expected warnings: no niri/nmcli/UPower/bluez in the VM, and `xdg-toplevel-icon`/`text-input` not implemented.
 - **tty2 runs a second real compositor (niri), added 2026-07-09, untested**: added
   to reproduce a DRM-master-handoff scenario (kalin-wm on one VT, a competing
   compositor on another — matching the real host setup) rather than a plain VT

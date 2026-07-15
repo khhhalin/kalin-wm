@@ -155,4 +155,5 @@ If you use the home-managed Zsh config, these aliases are defined in `~/home-con
 - `obsidian/quickshell-shell.md` — shell integration details.
 - `obsidian/build-system.md` — build and flake details.
 - `obsidian/roadmap.md` — open work.
-- `obsidian/ledger.md` — recent decisions and progress.
+- `obsidian/dev-restart.md` — live dev-session restart procedure.
+- `obsidian/ledger.md` — frozen archive of past decisions (the vault graph is the running record now).

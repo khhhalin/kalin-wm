@@ -102,7 +102,7 @@ clients_anim_step(void)
 					wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 				else
 					wlr_scene_node_set_position(&c->scene->node,
-							WORLD_TO_SCREEN_X(c->geom.x), WORLD_TO_SCREEN_Y(c->geom.y));
+							WORLD_TO_SCREEN_X(c->mon, c->geom.x), WORLD_TO_SCREEN_Y(c->mon, c->geom.y));
 			}
 			still = 1;
 		}

@@ -262,9 +262,10 @@ mkdir_parents(const char *path)
 
 /* Render monitor `m`'s current view at `supersample`x its native resolution
  * into a malloc'd XRGB8888 buffer via a throwaway headless output. Shared by
- * capture_screenshot (2x) and capture_export_selection (1x). Caller frees
- * *out_data. Returns 1 on success. */
-static int
+ * capture_screenshot (2x), capture_export_selection (1x), and the screenshot
+ * UI's freeze-frame (1x — see kalin.h). Caller frees *out_data. Returns 1 on
+ * success. */
+int
 capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
                        int *out_w, int *out_h, size_t *out_stride)
 {
@@ -397,19 +398,15 @@ capture_screenshot(const Arg *arg)
 }
 
 void
-capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
-                          bool to_disk, bool to_clipboard)
+capture_export_pixels(const unsigned char *data, int cw, int ch, size_t stride,
+                       Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
+                       bool to_disk, bool to_clipboard)
 {
-	unsigned char *data;
-	int cw, ch;
-	size_t stride;
 	float scale_x, scale_y;
 	int px, py, pw, ph;
 	const unsigned char *crop_base;
 
-	if (sel_w <= 0 || sel_h <= 0)
-		return;
-	if (!capture_render_native(m, 1.0f, &data, &cw, &ch, &stride))
+	if (!data || !m || sel_w <= 0 || sel_h <= 0)
 		return;
 
 	/* Map the selection from screen-pixel space (same space as m->m, the
@@ -425,10 +422,8 @@ capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
 	if (py < 0) { ph += py; py = 0; }
 	if (px + pw > cw) pw = cw - px;
 	if (py + ph > ch) ph = ch - py;
-	if (pw <= 0 || ph <= 0) {
-		free(data);
+	if (pw <= 0 || ph <= 0)
 		return;
-	}
 
 	crop_base = data + (size_t)py * stride + (size_t)px * 4;
 
@@ -466,6 +461,21 @@ capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
 			wlr_log(WLR_ERROR, "screenshot: PNG write failed: %s", path);
 		}
 	}
+}
 
+void
+capture_export_selection(Monitor *m, int sel_x, int sel_y, int sel_w, int sel_h,
+                          bool to_disk, bool to_clipboard)
+{
+	unsigned char *data;
+	int cw, ch;
+	size_t stride;
+
+	if (sel_w <= 0 || sel_h <= 0)
+		return;
+	if (!capture_render_native(m, 1.0f, &data, &cw, &ch, &stride))
+		return;
+	capture_export_pixels(data, cw, ch, stride, m, sel_x, sel_y, sel_w, sel_h,
+			to_disk, to_clipboard);
 	free(data);
 }

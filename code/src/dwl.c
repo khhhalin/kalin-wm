@@ -71,11 +71,7 @@
 #include "util.h"
 #include "persistence.h"
 
-/* PTY support */
-#include <pty.h>
-#include <termios.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
 #include <sys/types.h>
 
 /* Shared data model + macros (MAX/MIN/LENGTH/LISTEN/VISIBLEON/...) live in
@@ -165,14 +161,16 @@ dockprep_consume(const char *appid, struct wlr_box *out)
 	return 0;
 }
 
-/* 2D Viewport state - global view transform. Type lives in kalin.h; the
- * viewport/layout/crop/ipc TUs link against this instance (external linkage). */
-Viewport viewport = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0, 0, 0, 0 };
+/* Camera defaults for a fresh monitor (multi-camera: every Monitor owns its
+ * own `cam` Viewport over the shared world — see obsidian/multi-camera.md;
+ * initialized in createmon()). */
+static const Viewport cam_defaults = { 0, 0, 0, 0, 1.0, 1.0, 1, 1, 1, 0, 0, 0, 0 };
 
-/* True scene-zoom transform: screen = (world - camera) * zoom. Now shared via
- * kalin.h (VIEWPORT_ZOOM_SAFE, WORLD_TO_SCREEN_X/Y, SCREEN_TO_WORLD_X/Y)
- * since modules/layout/connection_graph.c needs them too. Window SIZES are
- * scaled by zoom in resize(); positions by these macros. */
+/* True scene-zoom transform: screen = (world - mon camera) * zoom + mon
+ * layout offset. Shared via kalin.h (MON_ZOOM_SAFE, WORLD_TO_SCREEN_X/Y,
+ * SCREEN_TO_WORLD_X/Y) since modules/layout/connection_graph.c needs them
+ * too. Window SIZES are scaled by zoom in resize(); positions by these
+ * macros. */
 
 /* Exit confirmation state */
 static struct {
@@ -291,7 +289,7 @@ void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
 void viewport_menu_reveal(Client *c);
 void viewport_focus_window(Client *c);
-void viewport_animate_to(float x, float y, float zoom);
+void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
@@ -356,6 +354,8 @@ static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
 static void spawn(const Arg *arg);
+static void spawn_named(const Arg *arg, const char *window_name);
+static int tmux_kill_window(const char *window_name);
 static void startdrag(struct wl_listener *listener, void *data);
 static void tagmon(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
@@ -375,66 +375,38 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 
-static pid_t launcher_pid = -1;
-
-/* PTY process tracking (defined in the separately-compiled
- * modules/input/pty.c TU); pty_register() is called by spawn_pid() below,
- * the rest (pty_inject/pty_log_for/pty_child_reaped) are declared in
- * kalin.h for other modules. */
-void pty_register(pid_t pid, int master_fd, const char *cmd);
-
-static pid_t
-spawn_pid(const Arg *arg)
+/* Synchronously ask tmux to kill a window in the persistent "kalin-apps"
+ * session (see run()'s bootstrap and spawn_named() below) — returns 1 if it
+ * existed (and is now gone), 0 if it didn't (tmux exits non-zero for "no
+ * such window"). Blocks briefly (a local tmux control-mode round trip, not
+ * network I/O): acceptable for a one-off, user-initiated toggle, unlike the
+ * fire-and-forget spawns this pairs with. */
+static int
+tmux_kill_window(const char *window_name)
 {
-	pid_t pid = -1;
-	const char *cmd;
-	int master = -1, slave = -1;
+	pid_t pid;
+	int status;
+	char target[128];
 
-	if (!arg || !arg->v)
-		return -1;
-
-	cmd = ((char **)arg->v)[0];
-
-	if (openpty(&master, &slave, NULL, NULL, NULL) < 0) {
-		wlr_log(WLR_ERROR, "openpty failed: %s", strerror(errno));
-		return -1;
-	}
+	snprintf(target, sizeof(target), "kalin-apps:%s", window_name);
 
 	pid = fork();
 	if (pid < 0) {
-		wlr_log(WLR_ERROR, "Failed to fork for spawn: %s", strerror(errno));
-		close(master);
-		close(slave);
-		return -1;
+		wlr_log(WLR_ERROR, "Failed to fork for tmux kill-window: %s", strerror(errno));
+		return 0;
 	}
-
 	if (pid == 0) {
-		/* Child: make slave the controlling tty and exec */
-		setsid();
-		if (ioctl(slave, TIOCSCTTY, 0) < 0) {
-			/* non-fatal */
+		int devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0) {
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
 		}
-		dup2(slave, STDIN_FILENO);
-		dup2(slave, STDOUT_FILENO);
-		dup2(slave, STDERR_FILENO);
-		close(master);
-		close(slave);
-		execvp(cmd, (char **)arg->v);
-		wlr_log(WLR_ERROR, "Failed to execvp %s: %s", cmd, strerror(errno));
+		execlp("tmux", "tmux", "kill-window", "-t", target, NULL);
 		_exit(1);
 	}
-
-	/* Parent: keep master for reading logs, close slave */
-	close(slave);
-	if (master >= 0) {
-		int flags = fcntl(master, F_GETFL, 0);
-		fcntl(master, F_SETFL, flags | O_NONBLOCK);
-		/* register the PTY master for reading in event loop */
-		/* pty_register will be defined later in this file */
-		pty_register(pid, master, cmd);
-	}
-
-	return pid;
+	if (waitpid(pid, &status, 0) < 0)
+		return 0;
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 /* variables */
@@ -484,6 +456,7 @@ static KeyboardGroup *kb_group;
 static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
+static int resize_anchor_x, resize_anchor_y; /* world-space, fixed corner opposite the grab */
 
 struct wlr_output_layout *output_layout;
 struct wlr_box sgeom;  /* extern; consumed by modules/session_lock.c */
@@ -533,9 +506,6 @@ void swap_neighbor_dir(const Arg *arg);
 
 /* attempt to encapsulate suck into one file */
 #include "client_inline.h"
-
-/* PTY process tracking (defined in the separately-compiled
- * modules/input/pty.c TU). */
 
 /* Connection-graph (defined in the separately-compiled
  * modules/layout/connection_graph.c TU). kalin.h also declares
@@ -705,9 +675,9 @@ client_apply_zoom_frame(Client *c)
 		view_y = c->geom.y;
 		zf = 1.0f;
 	} else {
-		view_x = WORLD_TO_SCREEN_X(c->geom.x);
-		view_y = WORLD_TO_SCREEN_Y(c->geom.y);
-		zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+		view_x = WORLD_TO_SCREEN_X(c->mon, c->geom.x);
+		view_y = WORLD_TO_SCREEN_Y(c->mon, c->geom.y);
+		zf = MON_ZOOM_SAFE(c->mon);
 	}
 	z_bw = (int)lroundf(c->bw * zf);
 	z_w  = MAX(1, (int)lroundf(c->geom.width * zf));
@@ -988,7 +958,7 @@ buttonpress(struct wl_listener *listener, void *data)
 			 * overlay's own clickable area) — every Super+click was eaten
 			 * before wlr_seat_pointer_notify_button() ever ran. Only swallow
 			 * it when a grab genuinely started. */
-			if (cursor_mode == CurMove || cursor_mode == CurResize || cursor_mode == CurPan)
+			if (cursor_mode == CurMove || cursor_mode == CurMoveSolo || cursor_mode == CurResize || cursor_mode == CurPan)
 				return;
 		}
 		break;
@@ -1014,7 +984,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		/* If you released any buttons, we exit interactive move/resize/pan mode. */
 		/* TODO: should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
-			int was_move = (cursor_mode == CurMove);
+			int was_move = (cursor_mode == CurMove || cursor_mode == CurMoveSolo);
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
 			if (grabc) {
@@ -1442,6 +1412,7 @@ createmon(struct wl_listener *listener, void *data)
 
 	m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
+	m->cam = cam_defaults; /* fresh independent camera (multi-camera) */
 
 	for (i = 0; i < LENGTH(m->layers); i++)
 		wl_list_init(&m->layers[i]);
@@ -1988,14 +1959,11 @@ bind_invoke(int action_id, const Arg *arg)
 	switch (action_id) {
 	case ACT_SPAWN:             spawn(arg); break;
 	case ACT_TOGGLE_LAUNCHER:
-		/* Toggle the tap-launcher: if it's already running, close it (kill its
-		 * process group — spawn_pid uses setsid()); otherwise spawn it. */
-		if (launcher_pid > 0 && kill(launcher_pid, 0) == 0) {
-			kill(-launcher_pid, SIGTERM);
-			launcher_pid = -1;
-		} else {
-			launcher_pid = spawn_pid(arg);
-		}
+		/* Toggle the tap-launcher: tracked via tmux itself (window
+		 * "launcher" in the "kalin-apps" session, see spawn_named()), not a
+		 * pid — try to close it first; if it wasn't open, open it instead. */
+		if (!tmux_kill_window("launcher"))
+			spawn_named(arg, "launcher");
 		break;
 	case ACT_CLOSE:             killclient(arg); break;
 	case ACT_RESIZE:            resizefocused(arg); break;
@@ -2059,13 +2027,22 @@ bind_invoke(int action_id, const Arg *arg)
 		break;
 	}
 	case ACT_VIEWPORT_PAN_GRAB: {
+		/* Super+Ctrl+LMB: on a normal window, move just that window
+		 * without dragging its connection component along; on empty
+		 * canvas (or an unmanaged/fullscreen client, same as
+		 * pointer-move/-resize elsewhere), pan the camera as before. */
 		Client *c = NULL;
+		Arg solo = {.ui = CurMoveSolo};
 		(void)arg;
 		if (!selmon)
 			break;
 		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
-		if (c)
+		if (c && (client_is_unmanaged(c) || c->isfullscreen))
 			break;
+		if (c) {
+			moveresize(&solo);
+			break;
+		}
 		cursor_mode = CurPan;
 		viewport_pan_grab_start();
 		break;
@@ -2281,8 +2258,8 @@ mapnotify(struct wl_listener *listener, void *data)
 				 * monitor's own geometric middle happens to be. Only when
 				 * the cursor is actually on this client's monitor, matching
 				 * the (p && p->mon == c->mon) same-monitor guard above. */
-				c->geom.x = (int)SCREEN_TO_WORLD_X(cursor->x) - c->geom.width / 2;
-				c->geom.y = (int)SCREEN_TO_WORLD_Y(cursor->y) - c->geom.height / 2;
+				c->geom.x = (int)SCREEN_TO_WORLD_X(c->mon, cursor->x) - c->geom.width / 2;
+				c->geom.y = (int)SCREEN_TO_WORLD_Y(c->mon, cursor->y) - c->geom.height / 2;
 				resize(c, c->geom, 0);
 			} else {
 				c->geom.x = c->mon->w.x + c->mon->w.width / 2 - c->geom.width / 2;
@@ -2316,7 +2293,7 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * fixed spot regardless of camera position, so "panning to show where
 	 * it landed" is meaningless for them and previously made the camera
 	 * visibly fly to each docked panel's first-ever spawn. */
-	if (c->mon && viewport.follow_new_windows && !c->ispanel)
+	if (c->mon && c->mon->cam.follow_new_windows && !c->ispanel)
 		viewport_center_on(c);
 	ftl_create(c);
 	/* The scene node was created disabled (line ~2405, "enabled later by a
@@ -2420,7 +2397,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		wl_list_for_each(constraint, &pointer_constraints->constraints, link)
 			cursorconstrain(constraint);
 
-		if (active_constraint && cursor_mode != CurResize && cursor_mode != CurMove) {
+		if (active_constraint && cursor_mode != CurResize && cursor_mode != CurMove && cursor_mode != CurMoveSolo) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
 			if (c && active_constraint->surface == seat->pointer_state.focused_surface) {
 				sx = cursor->x - c->geom.x - c->bw;
@@ -2466,7 +2443,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		return;
 	}
 
-	if ((cursor_mode == CurMove || cursor_mode == CurResize) && !grabc) {
+	if ((cursor_mode == CurMove || cursor_mode == CurMoveSolo || cursor_mode == CurResize) && !grabc) {
 		cursor_mode = CurNormal;
 		return;
 	}
@@ -2475,10 +2452,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * geom is in world space; the cursor is in screen space, so convert via
 	 * SCREEN_TO_WORLD (which accounts for pan + zoom). grabcx/grabcy hold the
 	 * grab offset in world units (see moveresize()). */
-	if (cursor_mode == CurMove && grabc) {
+	if ((cursor_mode == CurMove || cursor_mode == CurMoveSolo) && grabc) {
 		int old_x = grabc->geom.x, old_y = grabc->geom.y;
-		int new_x = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabcx;
-		int new_y = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabcy;
+		int new_x = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabcx;
+		int new_y = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabcy;
 		int dx = new_x - old_x, dy = new_y - old_y;
 
 		/* Move the grabbed client to the new position. */
@@ -2493,8 +2470,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * unlike grabc itself which stays pinned exactly under the cursor.
 		 * Based off target_geom (not geom) when a member is still mid-glide,
 		 * so repeated small deltas during one continuous drag accumulate
-		 * correctly instead of compounding against a stale animated position. */
-		if (dx || dy) {
+		 * correctly instead of compounding against a stale animated position.
+		 * Skipped entirely for CurMoveSolo (Super+Ctrl+LMB): that mode moves
+		 * just the grabbed window, leaving its connections intact but not
+		 * dragging the rest of the component along. */
+		if (cursor_mode == CurMove && (dx || dy)) {
 			Client *component[256];
 			int n = collect_component(grabc, component, (int)LENGTH(component));
 			int i;
@@ -2513,9 +2493,16 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		}
 		return;
 	} else if (cursor_mode == CurResize && grabc) {
-		resize(grabc, (struct wlr_box){.x = grabc->geom.x, .y = grabc->geom.y,
-			.width = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabc->geom.x,
-			.height = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabc->geom.y}, 1);
+		/* resize_anchor_x/y (set once in moveresize()) is the fixed corner
+		 * opposite whichever one was grabbed; the grabbed corner tracks the
+		 * cursor, so the anchor is always the min and the size is always
+		 * the distance to it, regardless of which of the 4 corners this is. */
+		int wx = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x));
+		int wy = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y));
+		resize(grabc, (struct wlr_box){
+			.x = MIN(wx, resize_anchor_x), .y = MIN(wy, resize_anchor_y),
+			.width = abs(wx - resize_anchor_x),
+			.height = abs(wy - resize_anchor_y)}, 1);
 		return;
 	} else if (cursor_mode == CurPan) {
 		viewport_pan_grab_update();
@@ -2573,19 +2560,44 @@ moveresize(const Arg *arg)
 
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
-		/* Offset stored in world units (cursor is screen space). */
-		grabcx = (int)lroundf(SCREEN_TO_WORLD_X(cursor->x)) - grabc->geom.x;
-		grabcy = (int)lroundf(SCREEN_TO_WORLD_Y(cursor->y)) - grabc->geom.y;
+	case CurMoveSolo:
+		/* Offset stored in world units (cursor is screen space). Solo move
+		 * (Super+Ctrl+LMB) uses the exact same offset math as a normal move
+		 * — the only difference is motionnotify() skips dragging the rest
+		 * of the connection component along. */
+		grabcx = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabc->geom.x;
+		grabcy = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabc->geom.y;
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "all-scroll");
 		break;
-	case CurResize:
+	case CurResize: {
+		/* Grab whichever corner of the window is nearest the cursor, not
+		 * always the bottom-right one: the opposite corner is the fixed
+		 * anchor for the whole drag, and the grabbed corner is warped to
+		 * meet the cursor so the resize starts exactly where you clicked. */
+		int wx = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x));
+		int wy = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y));
+		int cx = grabc->geom.x + grabc->geom.width / 2;
+		int cy = grabc->geom.y + grabc->geom.height / 2;
+		int grab_x, grab_y;
+		const char *xcursor;
+
+		resize_anchor_x = wx < cx ? grabc->geom.x + grabc->geom.width : grabc->geom.x;
+		resize_anchor_y = wy < cy ? grabc->geom.y + grabc->geom.height : grabc->geom.y;
+		grab_x = resize_anchor_x == grabc->geom.x ? grabc->geom.x + grabc->geom.width : grabc->geom.x;
+		grab_y = resize_anchor_y == grabc->geom.y ? grabc->geom.y + grabc->geom.height : grabc->geom.y;
+
+		if (grab_x == grabc->geom.x)
+			xcursor = grab_y == grabc->geom.y ? "nw-resize" : "sw-resize";
+		else
+			xcursor = grab_y == grabc->geom.y ? "ne-resize" : "se-resize";
+
 		/* Doesn't work for X11 output - the next absolute motion event
 		 * returns the cursor to where it started. Warp target is screen space. */
 		wlr_cursor_warp_closest(cursor, NULL,
-				WORLD_TO_SCREEN_X(grabc->geom.x + grabc->geom.width),
-				WORLD_TO_SCREEN_Y(grabc->geom.y + grabc->geom.height));
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "se-resize");
+				WORLD_TO_SCREEN_X(grabc->mon, grab_x), WORLD_TO_SCREEN_Y(grabc->mon, grab_y));
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, xcursor);
 		break;
+	}
 	}
 }
 
@@ -2812,11 +2824,16 @@ printstatus(void)
 		}
 	}
 
-	/* Output viewport state for debugging and status bars */
-	printf("viewport %.0f %.0f %.2f follow %s follow_new %s\n",
-		viewport.x, viewport.y, viewport.zoom,
-		viewport.follow ? "on" : "off",
-		viewport.follow_new_windows ? "on" : "off");
+	/* Output per-monitor camera state for debugging and status bars */
+	wl_list_for_each(m, &mons, link) {
+		if (!m->wlr_output)
+			continue;
+		printf("viewport %s %.0f %.0f %.2f follow %s follow_new %s\n",
+			m->wlr_output->name,
+			m->cam.x, m->cam.y, m->cam.zoom,
+			m->cam.follow ? "on" : "off",
+			m->cam.follow_new_windows ? "on" : "off");
+	}
 	
 	/* Output crop mode state */
 	printf("crop %s\n", crop_editor.active ? "active" : "inactive");
@@ -2903,7 +2920,6 @@ quit(const Arg *arg)
 }
 
 #include "modules/ui/offscreen_indicators.c"
-#include "modules/ui/overlay_clock.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
@@ -2920,7 +2936,7 @@ rendermon(struct wl_listener *listener, void *data)
 	 * easing toward its target — no separate polling timer; viewport_kick()
 	 * (viewport_ops.c) only needs to request the *first* one to start this
 	 * self-sustaining chain. */
-	if (viewport.animating)
+	if (m->cam.animating)
 		wlr_output_schedule_frame(m->wlr_output);
 	/* Step window spring-glide in the frame callback so it is vsync-aligned with
 	 * the camera; keep frames coming while anything is still moving. */
@@ -2934,7 +2950,7 @@ rendermon(struct wl_listener *listener, void *data)
 	 * *content* scales with the camera, not just the frame. */
 	wl_list_for_each(c, &clients, link) {
 		if (client_is_rendered_on_mon(c, m)) {
-			client_set_buffer_scale(c, viewport.zoom);
+			client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
 			/* Same reset-on-commit problem as buffer scale above: a cropped
 			 * client's clip must be reapplied every frame or it reverts to the
 			 * full, uncropped surface as soon as the client commits again. */
@@ -3019,7 +3035,7 @@ client_apply_crop_clip(Client *c)
 	if (!c || !c->scene_surface)
 		return;
 
-	zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	zf = MON_ZOOM_SAFE(c->mon);
 	z_bw = (int)lroundf(c->bw * zf);
 
 	client_get_clip(c, &clip);
@@ -3125,12 +3141,15 @@ resize(Client *c, struct wlr_box geo, int interact)
 		 * coordinates. (Fullscreen is exempt: its geom is deliberately
 		 * output-layout space already, not pannable world space — see
 		 * client_apply_zoom_frame()'s matching bypass.) */
-		float zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+		float zf = MON_ZOOM_SAFE(c->mon);
+		/* Per-monitor cameras: bound the drag to the world region visible
+		 * on the window's own monitor, not the whole layout union. */
+		struct wlr_box vis = c->mon ? c->mon->m : sgeom;
 		struct wlr_box world_bbox = {
-			.x = (int)lroundf(SCREEN_TO_WORLD_X(sgeom.x)),
-			.y = (int)lroundf(SCREEN_TO_WORLD_Y(sgeom.y)),
-			.width = (int)lroundf((float)sgeom.width / zf),
-			.height = (int)lroundf((float)sgeom.height / zf),
+			.x = (int)lroundf(SCREEN_TO_WORLD_X(c->mon, vis.x)),
+			.y = (int)lroundf(SCREEN_TO_WORLD_Y(c->mon, vis.y)),
+			.width = (int)lroundf((float)vis.width / zf),
+			.height = (int)lroundf((float)vis.height / zf),
 		};
 		applybounds(c, &world_bbox);
 	} else {
@@ -3170,7 +3189,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 	client_apply_crop_clip(c);
 
 	/* Scale the displayed buffer to match the zoomed frame. */
-	client_set_buffer_scale(c, viewport.zoom);
+	client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
 }
 
 /* ── Hold-Super spotlight ───────────────────────────────────────────────────
@@ -3179,6 +3198,7 @@ resize(Client *c, struct wlr_box geo, int interact)
  * rest, then restore the prior view on release. */
 static int spotlight_active;
 static float spotlight_saved_x, spotlight_saved_y, spotlight_saved_zoom;
+static Monitor *spotlight_saved_mon; /* whose camera the spotlight hijacked */
 
 void
 spotlight_enter(void)
@@ -3188,13 +3208,14 @@ spotlight_enter(void)
 	if (spotlight_active || !selmon)
 		return;
 	f = focustop(selmon);
-	if (!f)
+	if (!f || !f->mon)
 		return;
 
 	spotlight_active = 1;
-	spotlight_saved_x = viewport.target_x;
-	spotlight_saved_y = viewport.target_y;
-	spotlight_saved_zoom = viewport.target_zoom;
+	spotlight_saved_mon = f->mon;
+	spotlight_saved_x = f->mon->cam.target_x;
+	spotlight_saved_y = f->mon->cam.target_y;
+	spotlight_saved_zoom = f->mon->cam.target_zoom;
 
 	viewport_focus_window(f);
 	wl_list_for_each(c, &clients, link) {
@@ -3213,8 +3234,8 @@ spotlight_exit(void)
 		return;
 	spotlight_active = 0;
 
-	viewport_animate_to(spotlight_saved_x, spotlight_saved_y,
-			spotlight_saved_zoom);
+	viewport_animate_to(spotlight_saved_mon, spotlight_saved_x,
+			spotlight_saved_y, spotlight_saved_zoom);
 	wl_list_for_each(c, &clients, link)
 		setopacity(c, 1.0f);
 }
@@ -3330,20 +3351,19 @@ client_set_buffer_scale(Client *c, float scale)
 void
 client_apply_zoom_scale(void)
 {
-	static float applied = -1.0f;
 	Client *c;
 
-	if (fabsf(viewport.zoom - applied) < 0.01f)
-		return;                     /* zoom unchanged since last apply */
-	applied = viewport.zoom;
-
+	/* Per-monitor cameras: each client renders at its holder's zoom DPI, so
+	 * there's no single "applied" zoom to shortcut on — client_set_scale()
+	 * itself no-ops when the surface is already at the target scale, which
+	 * keeps the settle-time call cheap. */
 	wl_list_for_each(c, &clients, link) {
 		float out_scale, target;
 		struct wlr_surface *s = client_surface(c);
 		if (!c->mon || !s || !s->mapped)
 			continue;
 		out_scale = c->mon->wlr_output ? c->mon->wlr_output->scale : 1.0f;
-		target = out_scale * viewport.zoom;
+		target = out_scale * MON_ZOOM_SAFE(c->mon);
 		if (target < out_scale)        target = out_scale;      /* never below native */
 		if (target > zoom_render_max)  target = zoom_render_max;
 		client_set_scale(s, target);
@@ -3361,6 +3381,34 @@ run(char *startup_cmd)
 	ipc_init(socket);
 	binds_init();
 	persistence_init();
+
+	/* Bootstrap the persistent tmux session every spawn()/spawn_named()
+	 * launch becomes a window in (see spawn_named() above) — doing it here,
+	 * after WAYLAND_DISPLAY/KALIN_IPC_SOCKET are set above, means the tmux
+	 * *server's* environment (captured at session-creation time, then
+	 * reused for every window it ever creates) has both set correctly, so
+	 * GUI apps launched into it can actually reach this compositor. Harmless
+	 * if the session already exists (a previous compositor run's session
+	 * outlives this process — tmux's server is a separate long-lived
+	 * daemon): new-session fails with "duplicate session", which is exactly
+	 * what we want, just discarded rather than logged as an error. */
+	{
+		pid_t tpid = fork();
+		if (tpid == 0) {
+			int devnull = open("/dev/null", O_WRONLY);
+			if (devnull >= 0) {
+				dup2(devnull, STDOUT_FILENO);
+				dup2(devnull, STDERR_FILENO);
+			}
+			setsid();
+			execlp("tmux", "tmux", "new-session", "-d", "-s", "kalin-apps", NULL);
+			_exit(1);
+		} else if (tpid > 0) {
+			waitpid(tpid, NULL, 0);
+		} else {
+			wlr_log(WLR_ERROR, "Failed to fork for tmux session bootstrap: %s", strerror(errno));
+		}
+	}
 
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
 	 * master, etc */
@@ -3756,7 +3804,6 @@ setup(void)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
-	overlay_clock_init();
 	offscreen_indicators_init();
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -3935,13 +3982,22 @@ setup(void)
 	unsetenv("DISPLAY");
 }
 
-void
-spawn(const Arg *arg)
+/* Fork, and in the child re-exec `arg->v` as a new tmux window named
+ * `window_name` inside the persistent "kalin-apps" session (bootstrapped in
+ * run()) instead of exec'ing it directly. Every launched app's stdout/
+ * stderr becomes visible live via `tmux attach -t kalin-apps`, and tmux's
+ * own window list / kill-window become the management interface — no more
+ * tracking raw pids in the compositor for that purpose. The child becomes a
+ * short-lived tmux client (exits once the window is created); the actual
+ * command keeps running as a child of the tmux *server*, so its real pid is
+ * never visible to us here, which is fine since nothing needs it. */
+static void
+spawn_named(const Arg *arg, const char *window_name)
 {
 	pid_t pid;
 	const char *cmd = ((char **)arg->v)[0];
 	int errpipe[2];
-	
+
 	if (pipe(errpipe) < 0) {
 		wlr_log(WLR_ERROR, "Failed to create spawn pipe: %s", strerror(errno));
 		return;
@@ -3960,18 +4016,34 @@ spawn(const Arg *arg)
 		close(errpipe[1]);
 		return;
 	}
-	
+
 	if (pid == 0) {
+		char *targv[32];
+		size_t i, n;
 		int err;
+
 		close(errpipe[0]);
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
-		execvp(cmd, (char **)arg->v);
+
+		targv[0] = "tmux";
+		targv[1] = "new-window";
+		targv[2] = "-t";
+		targv[3] = "kalin-apps";
+		targv[4] = "-n";
+		targv[5] = (char *)window_name;
+		targv[6] = "--";
+		n = 7;
+		for (i = 0; ((char **)arg->v)[i] && n < LENGTH(targv) - 1; i++, n++)
+			targv[n] = ((char **)arg->v)[i];
+		targv[n] = NULL;
+
+		execvp("tmux", targv);
 		err = errno;
 		/* Best-effort: report exec failure to the parent. Nothing we can
 		 * do in the doomed child if the write itself fails. */
 		if (write(errpipe[1], &err, sizeof(err)) < 0) { /* ignore */ }
-		wlr_log(WLR_ERROR, "Failed to execvp %s: %s", cmd, strerror(err));
+		wlr_log(WLR_ERROR, "Failed to exec tmux for %s: %s", cmd, strerror(err));
 		_exit(1);
 	}
 
@@ -3987,8 +4059,14 @@ spawn(const Arg *arg)
 		}
 	}
 	close(errpipe[0]);
-	
-	wlr_log(WLR_DEBUG, "Spawned process %s (pid %d)", cmd, pid);
+
+	wlr_log(WLR_DEBUG, "Spawned %s as tmux window '%s' in kalin-apps (client pid %d)", cmd, window_name, pid);
+}
+
+void
+spawn(const Arg *arg)
+{
+	spawn_named(arg, ((char **)arg->v)[0]);
 }
 
 /* One unnamed scratchpad terminal: first toggle spawns it (it self-floats via
@@ -4233,7 +4311,6 @@ updatemons(struct wl_listener *listener, void *data)
 	wlr_scene_rect_set_size(root_bg, sgeom.width, sgeom.height);
 
 	wallpaper_configure(sgeom.width, sgeom.height);
-	overlay_clock_configure(sgeom.width, sgeom.height);
 	offscreen_indicators_configure(sgeom.width, sgeom.height);
 
 	/* Make sure the clients are hidden when dwl is locked */

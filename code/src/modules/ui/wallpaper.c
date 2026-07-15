@@ -158,8 +158,11 @@ wallpaper_update(void)
 		return;
 
 	tile_size = wallpaper.tile_size;
-	cam_x = viewport.x;
-	cam_y = viewport.y;
+	/* One shared wallpaper tree can only follow one camera; track the cursor's
+	 * monitor (multi-camera). Per-monitor wallpaper is deferred polish — see
+	 * obsidian/multi-camera.md. */
+	cam_x = selmon ? selmon->cam.x : 0.0f;
+	cam_y = selmon ? selmon->cam.y : 0.0f;
 
 	/* World-anchored background: apply the same world->screen transform as windows.
 	 * Sub-tile camera motion must move this every call, so this can't be cached. */

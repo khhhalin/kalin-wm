@@ -1,8 +1,13 @@
 /* Viewport camera operations: pan, zoom, follow, and animation tick.
  *
- * Separately-compiled TU: reads the shared `viewport` camera state and links
- * against dwl.c's externed globals/functions (selmon, mons, clients,
- * arrange, focustop, printstatus) via kalin.h. */
+ * Per-monitor cameras (multi-camera, see obsidian/multi-camera.md): every
+ * Monitor owns a `cam` Viewport over the one shared world. Bind-level entry
+ * points (pan/zoom/reset/fit/follow toggles) act on the monitor under the
+ * cursor (selmon — xytomon() keeps it there); client-centric ops act on the
+ * client's holder (c->mon).
+ *
+ * Separately-compiled TU: links against dwl.c's externed globals/functions
+ * (selmon, mons, clients, arrange, focustop, printstatus) via kalin.h. */
 #include "kalin.h"
 
 void viewport_tick(void); /* defined below; called from every monitor's frame callback */
@@ -10,14 +15,11 @@ void viewport_tick(void); /* defined below; called from every monitor's frame ca
 /* Kick every enabled output into rendering one more frame. rendermon()
  * (dwl.c) already calls viewport_tick() unconditionally on every real output
  * frame, and re-requests another one (below, mirroring clients_anim_step())
- * for as long as viewport.animating stays set — so an animation just needs
- * *one* frame requested to start the self-sustaining chain, the same
+ * for as long as any camera's animating flag stays set — so an animation just
+ * needs *one* frame requested to start the self-sustaining chain, the same
  * mechanism window spring-glide already uses. No separate wall-clock timer:
- * once the camera settles, nothing keeps requesting frames and the output
- * goes back to fully idle. Schedules on every monitor rather than just
- * selmon since viewport_tick()'s dt-based easing doesn't care which output's
- * frame event drove it, and this way the animation can't stall if selmon
- * changes mid-flight. */
+ * once every camera settles, nothing keeps requesting frames and the outputs
+ * go back to fully idle. */
 void
 viewport_kick(void)
 {
@@ -28,18 +30,20 @@ viewport_kick(void)
 }
 
 static void
-viewport_move_to(float x, float y, int smooth)
+viewport_move_to(Monitor *m, float x, float y, int smooth)
 {
-	viewport.target_x = x;
-	viewport.target_y = y;
+	if (!m)
+		return;
+	m->cam.target_x = x;
+	m->cam.target_y = y;
 
-	if (smooth && viewport.smooth_pan) {
-		viewport.animating = 1;
+	if (smooth && m->cam.smooth_pan) {
+		m->cam.animating = 1;
 		viewport_kick();
 	} else {
-		viewport.x = x;
-		viewport.y = y;
-		viewport.animating = 0;
+		m->cam.x = x;
+		m->cam.y = y;
+		m->cam.animating = 0;
 	}
 }
 
@@ -57,10 +61,81 @@ viewport_move_to(float x, float y, int smooth)
 /* Momentum ("flick") panning after a trackpad swipe lifts — see
  * viewport_coast_start() and gestures.c. Exponential velocity decay, same
  * fixed-step accumulator viewport_tick() already uses for the target-lerp
- * case, just a different physics model while viewport.coasting is set. */
+ * case, just a different physics model while cam.coasting is set. */
 #define COAST_FRICTION_PER_SEC 3.5f   /* higher = friction wins sooner */
 #define COAST_MIN_START_SPEED  120.0f /* world units/sec; below this, don't bother coasting */
 #define COAST_STOP_SPEED       15.0f  /* world units/sec; below this, coast is considered settled */
+
+/* One fixed physics step for one monitor's camera. Returns 1 if this camera
+ * is still animating after the step. */
+static int
+viewport_step_cam(Monitor *m)
+{
+	Viewport *v = &m->cam;
+	float k, dx, dy, dz;
+
+	if (v->coasting) {
+		float speed, friction;
+
+		v->x += v->vel_x * VIEWPORT_FIXED_DT;
+		v->y += v->vel_y * VIEWPORT_FIXED_DT;
+		v->target_x = v->x;
+		v->target_y = v->y;
+
+		friction = expf(-COAST_FRICTION_PER_SEC * VIEWPORT_FIXED_DT);
+		v->vel_x *= friction;
+		v->vel_y *= friction;
+		speed = hypotf(v->vel_x, v->vel_y);
+
+		viewport_camera_tick(m);
+
+		if (speed < COAST_STOP_SPEED) {
+			v->coasting = 0;
+			v->animating = 0;
+			v->vel_x = 0.0f;
+			v->vel_y = 0.0f;
+			status_mark_dirty();
+			return 0;
+		}
+		return 1;
+	}
+
+	/* Critically-damped exponential approach toward the target. */
+	k = 1.0f - expf(-18.0f * VIEWPORT_FIXED_DT);
+
+	dx = v->target_x - v->x;
+	dy = v->target_y - v->y;
+	dz = v->target_zoom - v->zoom;
+
+	if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f && fabsf(dz) < 0.001f) {
+		v->x = v->target_x;
+		v->y = v->target_y;
+		v->zoom = v->target_zoom;
+		v->animating = 0;
+		/* Not arrange(): a camera move alone never changes window
+		 * positions; the final exact snap only needs the
+		 * camera-dependent refresh. */
+		viewport_camera_tick(m);
+		/* Camera settled: ask clients to re-render at the final zoom DPI so
+		 * zoomed content is crisp rather than upscaled. */
+		client_apply_zoom_scale();
+		/* Publish the settled state to status/IPC/foreign-toplevel so the
+		 * shell OSD shows the final zoom level. */
+		status_mark_dirty();
+		return 0;
+	}
+
+	v->x += dx * k;
+	v->y += dy * k;
+	v->zoom += dz * k;
+	/* Not the full arrange(): the visibility/state bookkeeping inside
+	 * arrange() is independent of the camera, so re-running it on every
+	 * step is wasted work; viewport_camera_tick() covers what actually
+	 * depends on the camera (wallpaper, on-screen window position,
+	 * pointer hit-test). */
+	viewport_camera_tick(m);
+	return 1;
+}
 
 void
 viewport_tick(void)
@@ -69,30 +144,37 @@ viewport_tick(void)
 	static int have_last = 0;
 	static float accum = 0.0f;
 	struct timespec now;
-	float elapsed, k;
-	float dx, dy, dz;
+	Monitor *m;
+	float elapsed;
+	int any_animating = 0;
 
-	/* Defensive: keep zoom finite and in a sane range on EVERY frame (before the
-	 * not-animating early-out), so a NaN/inf or near-zero zoom can never reach
-	 * WORLD_TO_SCREEN — enormous coordinates hang a real GPU driver and freeze
-	 * the whole session. Cheap insurance. */
-	if (isnan(viewport.target_zoom) || viewport.target_zoom < 0.05f)
-		viewport.target_zoom = 1.0f;
-	else if (viewport.target_zoom > 20.0f)
-		viewport.target_zoom = 20.0f;
-	if (isnan(viewport.zoom) || viewport.zoom < 0.05f)
-		viewport.zoom = 1.0f;
-	else if (viewport.zoom > 20.0f)
-		viewport.zoom = 20.0f;
+	/* Defensive: keep every camera's zoom finite and in a sane range on EVERY
+	 * frame (before the not-animating early-out), so a NaN/inf or near-zero
+	 * zoom can never reach WORLD_TO_SCREEN — enormous coordinates hang a real
+	 * GPU driver and freeze the whole session. Cheap insurance. */
+	wl_list_for_each(m, &mons, link) {
+		Viewport *v = &m->cam;
+		if (isnan(v->target_zoom) || v->target_zoom < 0.05f)
+			v->target_zoom = 1.0f;
+		else if (v->target_zoom > 20.0f)
+			v->target_zoom = 20.0f;
+		if (isnan(v->zoom) || v->zoom < 0.05f)
+			v->zoom = 1.0f;
+		else if (v->zoom > 20.0f)
+			v->zoom = 20.0f;
+		if (v->animating)
+			any_animating = 1;
+	}
 
-	if (!viewport.animating || !selmon) {
+	if (!any_animating) {
 		have_last = 0;
 		accum = 0.0f;
 		return;
 	}
 
-	/* Frame-rate-independent easing: measure real elapsed time so the camera
-	 * converges at the same rate regardless of refresh rate. */
+	/* Frame-rate-independent easing: measure real elapsed time so the cameras
+	 * converge at the same rate regardless of refresh rate. One shared clock/
+	 * accumulator steps every animating camera in lockstep. */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	if (!have_last) {
 		elapsed = VIEWPORT_FIXED_DT;
@@ -109,109 +191,58 @@ viewport_tick(void)
 		elapsed = 0.1f; /* clamp after a stall so we don't jump */
 	accum += elapsed;
 
-	while (accum >= VIEWPORT_FIXED_DT && viewport.animating) {
+	while (accum >= VIEWPORT_FIXED_DT && any_animating) {
 		accum -= VIEWPORT_FIXED_DT;
+		any_animating = 0;
+		wl_list_for_each(m, &mons, link)
+			if (m->cam.animating && viewport_step_cam(m))
+				any_animating = 1;
+	}
 
-		if (viewport.coasting) {
-			float speed, friction;
-
-			viewport.x += viewport.vel_x * VIEWPORT_FIXED_DT;
-			viewport.y += viewport.vel_y * VIEWPORT_FIXED_DT;
-			viewport.target_x = viewport.x;
-			viewport.target_y = viewport.y;
-
-			friction = expf(-COAST_FRICTION_PER_SEC * VIEWPORT_FIXED_DT);
-			viewport.vel_x *= friction;
-			viewport.vel_y *= friction;
-			speed = hypotf(viewport.vel_x, viewport.vel_y);
-
-			viewport_camera_tick(selmon);
-
-			if (speed < COAST_STOP_SPEED) {
-				viewport.coasting = 0;
-				viewport.animating = 0;
-				viewport.vel_x = 0.0f;
-				viewport.vel_y = 0.0f;
-				have_last = 0;
-				accum = 0.0f;
-				status_mark_dirty();
-			}
-			continue;
-		}
-
-		/* Critically-damped exponential approach toward the target. */
-		k = 1.0f - expf(-18.0f * VIEWPORT_FIXED_DT);
-
-		dx = viewport.target_x - viewport.x;
-		dy = viewport.target_y - viewport.y;
-		dz = viewport.target_zoom - viewport.zoom;
-
-		if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f && fabsf(dz) < 0.001f) {
-			viewport.x = viewport.target_x;
-			viewport.y = viewport.target_y;
-			viewport.zoom = viewport.target_zoom;
-			viewport.animating = 0;
-			have_last = 0;
-			accum = 0.0f;
-			/* Not arrange(): a camera move alone never changes window
-			 * positions; the final exact snap only needs the
-			 * camera-dependent refresh. */
-			viewport_camera_tick(selmon);
-			/* Camera settled: ask clients to re-render at the final zoom DPI so
-			 * zoomed content is crisp rather than upscaled. */
-			client_apply_zoom_scale();
-			/* Publish the settled state to status/IPC/foreign-toplevel so the
-			 * shell OSD shows the final zoom level. */
-			status_mark_dirty();
-			break;
-		}
-
-		viewport.x += dx * k;
-		viewport.y += dy * k;
-		viewport.zoom += dz * k;
-		/* Not the full arrange(): the visibility/state bookkeeping inside
-		 * arrange() is independent of the camera, so re-running it on every
-		 * step is wasted work; viewport_camera_tick()
-		 * covers what actually depends on viewport.x/y/zoom (wallpaper,
-		 * on-screen window position, pointer hit-test). */
-		viewport_camera_tick(selmon);
+	if (!any_animating) {
+		have_last = 0;
+		accum = 0.0f;
 	}
 }
 
-/* Start a momentum coast at the given world-units/sec velocity — called
- * from gestures.c when a 3-finger swipe's fingers lift with enough speed to
- * feel like a deliberate flick, rather than fully committing every swipe
- * release to a coast (a slow, deliberate-stop swipe shouldn't drift on).
- * No-ops below COAST_MIN_START_SPEED. */
+/* Start a momentum coast on m's camera at the given world-units/sec velocity
+ * — called from gestures.c when a 3-finger swipe's fingers lift with enough
+ * speed to feel like a deliberate flick, rather than fully committing every
+ * swipe release to a coast (a slow, deliberate-stop swipe shouldn't drift
+ * on). No-ops below COAST_MIN_START_SPEED. */
 void
-viewport_coast_start(float vx, float vy)
+viewport_coast_start(Monitor *m, float vx, float vy)
 {
-	if (hypotf(vx, vy) < COAST_MIN_START_SPEED)
+	if (!m || hypotf(vx, vy) < COAST_MIN_START_SPEED)
 		return;
-	viewport.vel_x = vx;
-	viewport.vel_y = vy;
-	viewport.coasting = 1;
-	viewport.animating = 1;
+	m->cam.vel_x = vx;
+	m->cam.vel_y = vy;
+	m->cam.coasting = 1;
+	m->cam.animating = 1;
 	viewport_kick();
 }
 
 void
 viewport_pan(const Arg *arg)
 {
+	Monitor *m = selmon;
 	float *d = (float *)arg->v;
 	float z;
 	float tx, ty;
-	
+
+	if (!m)
+		return;
+
 	/* Pan speed is inverse to zoom (faster when zoomed out) */
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-	tx = viewport.target_x + d[0] / z;
-	ty = viewport.target_y + d[1] / z;
-	viewport_move_to(tx, ty, 1);
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
+	tx = m->cam.target_x + d[0] / z;
+	ty = m->cam.target_y + d[1] / z;
+	viewport_move_to(m, tx, ty, 1);
 
 	/* Camera-only: never needs a layout recompute, just the camera-dependent
 	 * refresh (wallpaper, on-screen window position, pointer hit-test). */
-	if (selmon && !viewport.animating)
-		viewport_camera_tick(selmon);
+	if (!m->cam.animating)
+		viewport_camera_tick(m);
 
 	status_mark_dirty();
 }
@@ -219,28 +250,30 @@ viewport_pan(const Arg *arg)
 void
 viewport_zoom(const Arg *arg)
 {
+	Monitor *m = selmon;
 	float factor = arg->f;
 	float tz;
-	if (factor <= 0.0f)
+
+	if (!m || factor <= 0.0f)
 		return;
 
 	/* Multiply the *target* so repeated presses accumulate smoothly. */
-	tz = viewport.target_zoom * factor;
+	tz = m->cam.target_zoom * factor;
 	if (tz < 0.1f)
 		tz = 0.1f;
 	if (tz > 5.0f)
 		tz = 5.0f;
-	viewport.target_zoom = tz;
+	m->cam.target_zoom = tz;
 
-	wlr_log(WLR_DEBUG, "Viewport zoom target: %.2f", viewport.target_zoom);
+	wlr_log(WLR_DEBUG, "Viewport zoom target (%s): %.2f",
+		m->wlr_output ? m->wlr_output->name : "?", m->cam.target_zoom);
 
-	if (viewport.smooth_pan) {
-		viewport.animating = 1;
+	if (m->cam.smooth_pan) {
+		m->cam.animating = 1;
 		viewport_kick();
 	} else {
-		viewport.zoom = tz;
-		if (selmon)
-			viewport_camera_tick(selmon);
+		m->cam.zoom = tz;
+		viewport_camera_tick(m);
 	}
 
 	status_mark_dirty();
@@ -249,29 +282,33 @@ viewport_zoom(const Arg *arg)
 void
 viewport_reset(const Arg *arg)
 {
+	Monitor *m = selmon;
 	(void)arg; /* unused */
 
-	viewport.target_x = 0.0f;
-	viewport.target_y = 0.0f;
-	viewport.target_zoom = 1.0f;
+	if (!m)
+		return;
 
-	if (viewport.smooth_pan) {
-		viewport.animating = 1;
+	m->cam.target_x = 0.0f;
+	m->cam.target_y = 0.0f;
+	m->cam.target_zoom = 1.0f;
+
+	if (m->cam.smooth_pan) {
+		m->cam.animating = 1;
 		viewport_kick();
 	} else {
-		viewport.x = 0.0f;
-		viewport.y = 0.0f;
-		viewport.zoom = 1.0f;
-		viewport.animating = 0;
-		if (selmon)
-			viewport_camera_tick(selmon);
+		m->cam.x = 0.0f;
+		m->cam.y = 0.0f;
+		m->cam.zoom = 1.0f;
+		m->cam.animating = 0;
+		viewport_camera_tick(m);
 	}
 
 	status_mark_dirty();
 }
 
-/* Frame all windows on the focused monitor: zoom/pan so the whole canvas
- * fits on screen. The primary "where is everything / get me back" navigation. */
+/* Frame all windows held by the focused monitor: zoom/pan its camera so they
+ * all fit on that screen. The primary "where is everything / get me back"
+ * navigation. */
 void
 viewport_fit_all(const Arg *arg)
 {
@@ -327,24 +364,24 @@ viewport_fit_all(const Arg *arg)
 	cx = (minx + maxx) / 2.0f;
 	cy = (miny + maxy) / 2.0f;
 
-	viewport.target_zoom = z;
-	viewport.target_x = cx - (float)m->w.width / (2.0f * z);
-	viewport.target_y = cy - (float)m->w.height / (2.0f * z);
+	m->cam.target_zoom = z;
+	m->cam.target_x = cx - (float)m->w.width / (2.0f * z);
+	m->cam.target_y = cy - (float)m->w.height / (2.0f * z);
 
-	if (viewport.smooth_pan) {
-		viewport.animating = 1;
+	if (m->cam.smooth_pan) {
+		m->cam.animating = 1;
 		viewport_kick();
 	} else {
-		viewport.zoom = z;
-		viewport.x = viewport.target_x;
-		viewport.y = viewport.target_y;
+		m->cam.zoom = z;
+		m->cam.x = m->cam.target_x;
+		m->cam.y = m->cam.target_y;
 		viewport_camera_tick(m);
 	}
 
 	status_mark_dirty();
 }
 
-/* Center camera on a specific window */
+/* Center the holder's camera on a specific window */
 void
 viewport_center_on(Client *c)
 {
@@ -352,18 +389,18 @@ viewport_center_on(Client *c)
 	float z;
 	if (!c || !c->mon)
 		return;
-	
+
 	m = c->mon;
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-	
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
+
 	/* Center the camera so the window appears in the middle of the monitor */
-	viewport_move_to(
+	viewport_move_to(m,
 		c->geom.x + c->geom.width / 2.0f - m->w.width / (2.0f * z),
 		c->geom.y + c->geom.height / 2.0f - m->w.height / (2.0f * z),
 		1
 	);
 
-	if (!viewport.animating)
+	if (!m->cam.animating)
 		viewport_camera_tick(m);
 }
 
@@ -382,15 +419,15 @@ viewport_center_on_x(Client *c)
 		return;
 
 	m = c->mon;
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
 
-	viewport_move_to(
+	viewport_move_to(m,
 		c->geom.x + c->geom.width / 2.0f - m->w.width / (2.0f * z),
-		viewport.target_y,
+		m->cam.target_y,
 		1
 	);
 
-	if (!viewport.animating)
+	if (!m->cam.animating)
 		viewport_camera_tick(m);
 }
 
@@ -403,20 +440,20 @@ viewport_center_on_y(Client *c)
 		return;
 
 	m = c->mon;
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
 
-	viewport_move_to(
-		viewport.target_x,
+	viewport_move_to(m,
+		m->cam.target_x,
 		c->geom.y + c->geom.height / 2.0f - m->w.height / (2.0f * z),
 		1
 	);
 
-	if (!viewport.animating)
+	if (!m->cam.animating)
 		viewport_camera_tick(m);
 }
 
-/* Pan the camera the minimum amount needed so c's whole geometry is within
- * the visible viewport, instead of re-centering on it. A no-op if c is
+/* Pan the holder's camera the minimum amount needed so c's whole geometry is
+ * within its visible viewport, instead of re-centering on it. A no-op if c is
  * already fully visible. On an axis where c is bigger than the viewport,
  * aligns to c's near (top/left) edge rather than splitting the difference,
  * matching ordinary "scroll into view" behavior.
@@ -431,6 +468,7 @@ static void
 viewport_ensure_visible(Client *c)
 {
 	Monitor *m;
+	Viewport *v;
 	float z, vw, vh;
 	float wx0, wy0, wx1, wy1;
 	float nx, ny;
@@ -439,7 +477,8 @@ viewport_ensure_visible(Client *c)
 		return;
 
 	m = c->mon;
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	v = &m->cam;
+	z = v->zoom > 0.0f ? v->zoom : 1.0f;
 	vw = m->w.width / z;
 	vh = m->w.height / z;
 
@@ -448,32 +487,32 @@ viewport_ensure_visible(Client *c)
 	wx1 = c->geom.x + c->geom.width;
 	wy1 = c->geom.y + c->geom.height;
 
-	nx = viewport.x;
-	ny = viewport.y;
+	nx = v->x;
+	ny = v->y;
 
-	if (wx1 - wx0 > vw || wx0 < viewport.x)
+	if (wx1 - wx0 > vw || wx0 < v->x)
 		nx = wx0;
-	else if (wx1 > viewport.x + vw)
+	else if (wx1 > v->x + vw)
 		nx = wx1 - vw;
 
-	if (wy1 - wy0 > vh || wy0 < viewport.y)
+	if (wy1 - wy0 > vh || wy0 < v->y)
 		ny = wy0;
-	else if (wy1 > viewport.y + vh)
+	else if (wy1 > v->y + vh)
 		ny = wy1 - vh;
 
-	if (nx == viewport.x && ny == viewport.y)
+	if (nx == v->x && ny == v->y)
 		return; /* already fully visible: no camera movement at all */
 
-	viewport_move_to(nx, ny, 1);
-	if (!viewport.animating)
+	viewport_move_to(m, nx, ny, 1);
+	if (!v->animating)
 		viewport_camera_tick(m);
 }
 
 /* When the hold-Super menu (see WindowActions.qml) opens on a window that
  * isn't (near) full monitor width, its arc flies out from the window's
  * right screen edge and can run past the right edge of the screen if the
- * window itself already sits close to it. Pan the camera right by just
- * enough screen-space to make room. Mirrors the shell's own dock-mode
+ * window itself already sits close to it. Pan the holder's camera right by
+ * just enough screen-space to make room. Mirrors the shell's own dock-mode
  * threshold (85% of monitor width) so this never fires for an already-full-
  * width window, which docks the menu to the screen edge regardless of the
  * window's own position — see menu_shown's caller in dwl.c. */
@@ -483,64 +522,76 @@ viewport_menu_reveal(Client *c)
 {
 	Monitor *m;
 	float z, win_w_screen, win_right_screen, overflow;
-	float d[2];
-	Arg a;
 
 	if (!c || !c->mon)
 		return;
 	m = c->mon;
-	z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
 
 	win_w_screen = c->geom.width * z;
 	if (win_w_screen >= m->w.width * 0.85f)
 		return; /* shell already docks the menu to the screen edge */
 
-	win_right_screen = (c->geom.x - viewport.x) * z + win_w_screen;
+	win_right_screen = (c->geom.x - m->cam.x) * z + win_w_screen;
 	overflow = win_right_screen + MENU_ARC_RESERVE_PX - m->w.width;
 	if (overflow <= 0.0f)
 		return; /* already enough room to the window's right */
 
-	d[0] = overflow;
-	d[1] = 0.0f;
-	a.v = d;
-	viewport_pan(&a);
+	viewport_move_to(m,
+		m->cam.target_x + overflow / z,
+		m->cam.target_y,
+		1
+	);
+	if (!m->cam.animating)
+		viewport_camera_tick(m);
+	status_mark_dirty();
 }
 
-/* Toggle camera follow mode */
+/* Toggle camera follow mode on the monitor under the cursor */
 void
 viewport_toggle_follow(const Arg *arg)
 {
+	Monitor *m = selmon;
 	(void)arg;
-	
-	viewport.follow = !viewport.follow;
-	
-	wlr_log(WLR_INFO, "Camera follow mode: %s", 
-		viewport.follow ? "enabled" : "disabled");
-	
-	if (viewport.follow && selmon) {
-		Client *c = focustop(selmon);
+
+	if (!m)
+		return;
+
+	m->cam.follow = !m->cam.follow;
+
+	wlr_log(WLR_INFO, "Camera follow mode (%s): %s",
+		m->wlr_output ? m->wlr_output->name : "?",
+		m->cam.follow ? "enabled" : "disabled");
+
+	if (m->cam.follow) {
+		Client *c = focustop(m);
 		if (c)
 			viewport_center_on(c);
 	}
-	
+
 	status_mark_dirty();
 }
 
-/* Toggle auto-pan to new windows */
+/* Toggle auto-pan to new windows on the monitor under the cursor */
 void
 viewport_toggle_follow_new(const Arg *arg)
 {
+	Monitor *m = selmon;
 	(void)arg;
-	
-	viewport.follow_new_windows = !viewport.follow_new_windows;
-	wlr_log(WLR_INFO, "Auto-pan to new windows: %s", 
-		viewport.follow_new_windows ? "enabled" : "disabled");
-	
+
+	if (!m)
+		return;
+
+	m->cam.follow_new_windows = !m->cam.follow_new_windows;
+	wlr_log(WLR_INFO, "Auto-pan to new windows (%s): %s",
+		m->wlr_output ? m->wlr_output->name : "?",
+		m->cam.follow_new_windows ? "enabled" : "disabled");
+
 	status_mark_dirty();
 }
 
-/* Fit + center the camera on a single window (zoom in to fill, with margin).
- * Used by the hold-Super spotlight to focus the active window. */
+/* Fit + center the holder's camera on a single window (zoom in to fill, with
+ * margin). Used by the hold-Super spotlight to focus the active window. */
 void
 viewport_focus_window(Client *c)
 {
@@ -563,25 +614,27 @@ viewport_focus_window(Client *c)
 
 	cx = c->geom.x + c->geom.width / 2.0f;
 	cy = c->geom.y + c->geom.height / 2.0f;
-	viewport.target_zoom = z;
+	m->cam.target_zoom = z;
 	/* Bias the window left of centre (~40% of the width) so the Android-style
 	 * side menu has room to fan out on its right. */
-	viewport.target_x = cx - (float)m->w.width * 0.40f / z;
-	viewport.target_y = cy - (float)m->w.height / (2.0f * z);
-	viewport.animating = 1;
+	m->cam.target_x = cx - (float)m->w.width * 0.40f / z;
+	m->cam.target_y = cy - (float)m->w.height / (2.0f * z);
+	m->cam.animating = 1;
 	viewport_kick();
 	status_mark_dirty();
 }
 
-/* Animate the camera back to an explicit (x, y, zoom) — restores the
+/* Animate m's camera back to an explicit (x, y, zoom) — restores the
  * pre-spotlight view. */
 void
-viewport_animate_to(float x, float y, float zoom)
+viewport_animate_to(Monitor *m, float x, float y, float zoom)
 {
-	viewport.target_x = x;
-	viewport.target_y = y;
-	viewport.target_zoom = zoom;
-	viewport.animating = 1;
+	if (!m)
+		return;
+	m->cam.target_x = x;
+	m->cam.target_y = y;
+	m->cam.target_zoom = zoom;
+	m->cam.animating = 1;
 	viewport_kick();
 	status_mark_dirty();
 }
@@ -591,10 +644,10 @@ void
 viewport_follow_focus(void)
 {
 	Client *c;
-	
-	if (!viewport.follow || !selmon)
+
+	if (!selmon || !selmon->cam.follow)
 		return;
-	
+
 	c = focustop(selmon);
 	/* Panels (c->ispanel) live in screen space, not world space — their
 	 * c->geom is a screen-pixel rect (bottom-right-ish for these panels),
@@ -612,8 +665,10 @@ viewport_follow_focus(void)
  *
  * Direct manipulation: the world point under the cursor at grab-start stays
  * under the cursor for the duration of the drag. Grab-start state is stashed
- * in these file-statics rather than the shared `viewport` struct since it's
- * only meaningful while cursor_mode == CurPan.
+ * in these file-statics rather than the camera struct since it's only
+ * meaningful while cursor_mode == CurPan. The grab is pinned to the monitor
+ * the drag started on (pan_mon): crossing a monitor boundary mid-drag keeps
+ * panning the original camera instead of hijacking the neighbor's.
  *
  * The grab-start itself (arming cursor_mode == CurPan) lives in dwl.c's
  * bind_invoke(), not here: it needs xytonode()/cursor_mode, both internal-
@@ -622,14 +677,16 @@ viewport_follow_focus(void)
  * the pan. */
 static double pan_screen_x0, pan_screen_y0;
 static float pan_view_x0, pan_view_y0;
+static Monitor *pan_mon;
 
 void
 viewport_pan_grab_start(void)
 {
+	pan_mon = selmon;
 	pan_screen_x0 = cursor->x;
 	pan_screen_y0 = cursor->y;
-	pan_view_x0 = viewport.x;
-	pan_view_y0 = viewport.y;
+	pan_view_x0 = pan_mon ? pan_mon->cam.x : 0.0f;
+	pan_view_y0 = pan_mon ? pan_mon->cam.y : 0.0f;
 }
 
 /* Per-motion-event update while CurPan is active; called from
@@ -637,15 +694,19 @@ viewport_pan_grab_start(void)
 void
 viewport_pan_grab_update(void)
 {
-	float z = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
+	Monitor *m = pan_mon;
+	float z;
 
-	viewport.x = pan_view_x0 - (float)(cursor->x - pan_screen_x0) / z;
-	viewport.y = pan_view_y0 - (float)(cursor->y - pan_screen_y0) / z;
-	viewport.target_x = viewport.x;
-	viewport.target_y = viewport.y;
-	viewport.animating = 0;
+	if (!m)
+		return;
+	z = m->cam.zoom > 0.0f ? m->cam.zoom : 1.0f;
 
-	if (selmon)
-		viewport_camera_tick(selmon);
+	m->cam.x = pan_view_x0 - (float)(cursor->x - pan_screen_x0) / z;
+	m->cam.y = pan_view_y0 - (float)(cursor->y - pan_screen_y0) / z;
+	m->cam.target_x = m->cam.x;
+	m->cam.target_y = m->cam.y;
+	m->cam.animating = 0;
+
+	viewport_camera_tick(m);
 	status_mark_dirty();
 }

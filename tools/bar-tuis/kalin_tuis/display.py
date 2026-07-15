@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 """Display settings panel — Textual TUI replacement for the QML DisplayService
 / DisplayWidget pair (see ~/environment/quickshell/modules/services/DisplayService.qml).
 
 Meant to be docked as a real, borderless Wayland window into the bar's display
 panel region by the compositor (see DockedPanel.qml in ~/environment/quickshell
-— this script itself has no docking logic, it's just what gets docked).
+— this app itself has no docking logic, it's just what gets docked).
 
 Backend selection, mirroring KalinViewport.enabled's own check:
   - If $KALIN_IPC_SOCKET is set, we're under kalin-wm — talk to it directly
@@ -23,8 +22,6 @@ Backend selection, mirroring KalinViewport.enabled's own check:
     there even if present — the inverse of what might be assumed.)
   - If neither backend is usable, show a clear "not supported" state instead
     of crashing.
-
-Run directly: `python3 display_panel.py` (no args). Quit with `q` or Ctrl+C.
 """
 from __future__ import annotations
 
@@ -32,18 +29,20 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 from dataclasses import dataclass, field
 
-from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.timer import Timer
-from textual.widgets import Footer, Header, Label, ProgressBar, Static
+from textual.app import ComposeResult
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Label, Static
+
+from .app import KalinPanelApp
+from .theme import SHARED_CSS
+from .util import KALIN_IPC_SOCKET, kalin_ipc_send, kalin_ipc_state
+from .widgets import Gauge
 
 POLL_INTERVAL = 2.0
 INTERNAL_PANEL_RE = re.compile(r"^(eDP|LVDS|DSI)", re.IGNORECASE)
-KALIN_IPC_SOCKET = os.environ.get("KALIN_IPC_SOCKET", "")
 
 
 @dataclass
@@ -81,35 +80,12 @@ def detect_backend() -> Backend:
     return Backend("unavailable", "Neither kalin-wm ($KALIN_IPC_SOCKET) nor niri detected.")
 
 
-def _read_kalin_state() -> dict:
-    """One request/response round trip: connect, read the next broadcast
-    line (kalin-wm sends one on every state change, so this is effectively
-    "read the current state"), disconnect. Mirrors how the other two
-    backends work — spawn/query, get one snapshot, done — rather than
-    holding a long-lived connection open across Textual's poll interval."""
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(5)
-        s.connect(KALIN_IPC_SOCKET)
-        f = s.makefile("r")
-        line = f.readline()
-    return json.loads(line)
-
-
-def _send_kalin_command(cmd: str) -> None:
-    """Fire-and-forget: the command handlers don't ack per-command, only via
-    the continuous state stream (which the next poll picks up naturally)."""
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(5)
-        s.connect(KALIN_IPC_SOCKET)
-        s.sendall((cmd + "\n").encode())
-
-
 def query_outputs_kalin_ipc() -> tuple[list[OutputInfo], dict | None]:
     """Returns (outputs, brightness) — brightness is {"value","max"} (raw,
     not percent — see backlight.c) or None if no backlight device exists,
     straight from the same state line so they're always consistent with
     each other (no separate round trip the way brightnessctl needed)."""
-    state = _read_kalin_state()
+    state = kalin_ipc_state()
     outputs = []
     for o in state.get("outputs", []):
         outputs.append(
@@ -135,13 +111,13 @@ def set_output_mode_kalin(o: OutputInfo, width: int, height: int, refresh: float
     enabled pass through unchanged (see ipc.c's set-output doc: <=0 means
     "leave as-is" for scale, but x/y/enabled are always applied, so pass the
     output's own current values back for those)."""
-    _send_kalin_command(
+    kalin_ipc_send(
         f"set-output {o.name} {width} {height} {refresh} 0 {o.x} {o.y} {1 if o.enabled else 0}"
     )
 
 
 def set_brightness_kalin(raw_value: int) -> None:
-    _send_kalin_command(f"set-brightness {raw_value}")
+    kalin_ipc_send(f"set-brightness {raw_value}")
 
 
 def query_outputs_niri() -> list[OutputInfo]:
@@ -243,7 +219,7 @@ class OutputCard(Vertical):
     """One panel's info + brightness control."""
 
     def __init__(self, output: OutputInfo) -> None:
-        super().__init__(classes="output-card")
+        super().__init__(classes="card output-card")
         self.output = output
 
     def compose(self) -> ComposeResult:
@@ -252,52 +228,28 @@ class OutputCard(Vertical):
         yield Label(f"[b]{o.name}[/b]  {o.description}", classes="output-title")
         yield Label(f"{mode_str}   scale {o.scale:g}x   pos ({o.x}, {o.y})", classes="output-meta")
         if o.brightness_percent is not None:
-            with Horizontal(classes="brightness-row"):
-                yield Label("Brightness", classes="brightness-label")
-                yield ProgressBar(
-                    total=100,
-                    show_eta=False,
-                    id=f"bar-{o.name}",
-                )
-                yield Label(f"{o.brightness_percent}%", id=f"pct-{o.name}", classes="brightness-pct")
+            yield Gauge("Brightness", o.brightness_percent, classes="brightness-row")
         else:
             yield Label("No backlight control on this output.", classes="output-meta dim")
 
-    def on_mount(self) -> None:
-        if self.output.brightness_percent is not None:
-            bar = self.query_one(f"#bar-{self.output.name}", ProgressBar)
-            bar.update(progress=self.output.brightness_percent)
-
     def update_brightness(self, percent: int) -> None:
         self.output.brightness_percent = percent
-        bar = self.query_one(f"#bar-{self.output.name}", ProgressBar)
-        bar.update(progress=percent)
-        self.query_one(f"#pct-{self.output.name}", Label).update(f"{percent}%")
+        self.query_one(Gauge).update_value(percent)
 
 
-class DisplayPanelApp(App):
+class DisplayPanelApp(KalinPanelApp):
     """Textual TUI: connected outputs + per-panel brightness."""
 
-    CSS = """
-    Screen {
-        background: $surface;
-    }
+    PANEL_TITLE = "Display Settings"
 
-    #status-line {
-        padding: 0 1;
-        color: $text-muted;
-        height: 1;
-    }
-
+    CSS = SHARED_CSS + """
     #outputs {
         padding: 1;
     }
 
     .output-card {
-        border: round $primary;
         padding: 1 2;
         margin-bottom: 1;
-        height: auto;
     }
 
     .output-title {
@@ -308,28 +260,8 @@ class DisplayPanelApp(App):
         color: $text-muted;
     }
 
-    .output-meta.dim {
-        color: $text-disabled;
-    }
-
     .brightness-row {
-        height: 1;
         margin-top: 1;
-        align-vertical: middle;
-    }
-
-    .brightness-label {
-        width: 12;
-    }
-
-    .brightness-pct {
-        width: 5;
-        text-align: right;
-    }
-
-    ProgressBar {
-        width: 1fr;
-        margin: 0 1;
     }
 
     #unavailable {
@@ -341,8 +273,6 @@ class DisplayPanelApp(App):
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
         ("up", "adjust_brightness_up", "Brightness +5"),
         ("down", "adjust_brightness_down", "Brightness -5"),
         ("m", "cycle_mode", "Cycle resolution"),
@@ -352,20 +282,15 @@ class DisplayPanelApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.backend = detect_backend()
-        self._poll_timer: Timer | None = None
         self._outputs: list[OutputInfo] = []
         self._kalin_brightness_max = 0  # raw max, for percent<->raw conversion on write
 
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        yield Label("", id="status-line")
+    def compose_panel(self) -> ComposeResult:
         yield VerticalScroll(id="outputs")
-        yield Footer()
 
     def on_mount(self) -> None:
-        self.title = "Display Settings"
-        self._refresh()
-        self._poll_timer = self.set_interval(POLL_INTERVAL, self._refresh)
+        super().on_mount()
+        self.start_poll(POLL_INTERVAL, self._refresh)
 
     def action_refresh_now(self) -> None:
         self._refresh()
@@ -414,10 +339,8 @@ class DisplayPanelApp(App):
                 break
 
     def _refresh(self) -> None:
-        status = self.query_one("#status-line", Label)
-
         if self.backend.kind == "unavailable":
-            status.update(f"[red]Unavailable:[/red] {self.backend.reason}")
+            self.set_status(f"[red]Unavailable:[/red] {self.backend.reason}")
             self._show_unavailable(self.backend.reason)
             return
 
@@ -431,11 +354,11 @@ class DisplayPanelApp(App):
                 backlights = query_backlights()
                 merge_backlights(outputs, backlights)
         except Exception as exc:  # noqa: BLE001 - surface any backend failure in the UI
-            status.update(f"[red]Failed to query outputs ({self.backend.kind}):[/red] {exc}")
+            self.set_status(f"[red]Failed to query outputs ({self.backend.kind}):[/red] {exc}")
             self._show_unavailable(f"Failed to query outputs via {self.backend.kind}: {exc}")
             return
 
-        status.update(f"[green]{self.backend.kind}[/green] · {len(outputs)} output(s)")
+        self.set_status(f"[green]{self.backend.kind}[/green] · {len(outputs)} output(s)")
         self._outputs = outputs
         self._render_outputs(outputs)
 
@@ -469,7 +392,3 @@ class DisplayPanelApp(App):
 
 def main() -> None:
     DisplayPanelApp().run()
-
-
-if __name__ == "__main__":
-    main()

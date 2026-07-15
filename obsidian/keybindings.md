@@ -42,7 +42,8 @@ Window management ([[connection-graph]]):
 - `Super+D` / `Super+Shift+D` — dim / brighten focused window (per-window opacity)
 - `Super+grave` — toggle scratchpad `foot --app-id=kalin-scratchpad`
 - `Super+BTN_LEFT` (drag) — move window (drags its whole connected component — see [[connection-graph]])
-- `Super+BTN_RIGHT` / `Super+Ctrl+BTN_RIGHT` (drag) — resize window
+- `Super+Ctrl+BTN_LEFT` (drag on a window) — solo move: move just that window, leaving its connections intact but *not* dragging the rest of the component along (see [[connection-graph]]). On empty canvas this is camera pan instead — see below.
+- `Super+BTN_RIGHT` / `Super+Ctrl+BTN_RIGHT` (drag) — resize window, grabbing whichever corner is nearest the cursor (not always bottom-right); the opposite corner stays anchored
 
 Camera ([[viewport]]):
 - `Super+Shift+Arrows` / `Super+Shift+HJKL` — [[pan]]
@@ -50,7 +51,7 @@ Camera ([[viewport]]):
 - `Super+0` — [[fit-all]] (`viewport.fit`)
 - `Super+BackSpace` — reset camera (`viewport.reset`)
 - `Super+Z` / `Super+Shift+Z` — toggle [[follow-mode]] / follow-new-windows
-- `Super+Ctrl+BTN_LEFT` (drag on empty canvas) — direct-manipulation camera pan
+- `Super+Ctrl+BTN_LEFT` (drag on empty canvas) — direct-manipulation camera pan; on a window this is solo move instead (see Window management above)
 
 Monitors:
 - `Super+comma` / `Super+period` — focus monitor left / right

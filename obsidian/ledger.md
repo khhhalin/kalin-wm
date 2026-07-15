@@ -1,7 +1,209 @@
 # Ledger
 
-- Running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
+- **Frozen archive (as of 2026-07-15).** This is no longer the running record — the vault graph of object notes is (see [[agent-workflow]]). Kept for its historical decision trail; not appended to going forward.
+- Historical running log of decisions, progress, and changes for [[kalin-wm]]. Newest first.
 - Dates are absolute.
+
+## 2026-07-15 — [[multi-camera]] phase 1: per-monitor independent cameras (core)
+
+Replaced the single global `viewport` camera with a per-`Monitor` `cam` over the
+one shared world (single-view: every window keeps one global position, renders
+on one monitor, and the monitor under the cursor owns all camera input). This is
+the "park one monitor, roam the other" feature Kalin asked for.
+
+- Transform macros `WORLD_TO_SCREEN_*`/`SCREEN_TO_WORLD_*` now take a monitor and
+  fold in its layout offset (`m->m`); for a single monitor at (0,0) the math is
+  byte-identical to before. **Macro param is `mon_`, not `m`** — a param named
+  `m` gets textually substituted into the `->m` box-member access
+  (`(m)->m.x` → garbage), which is exactly the first compile error hit.
+- Swept every camera reader onto the right camera (holder `c->mon` for client
+  transforms, `selmon` for bind-level pan/zoom/fit/follow/overview/gestures):
+  `viewport_ops.c` (ops + `viewport_tick` iterates all animating cams),
+  `overview.c`, `gestures.c`, `crop_mode.c`, `connection_graph.c`,
+  `client_anim.c`, `directional_focus.c`, `dwl.c`, `ipc.c`. Interactive-drag
+  clamp now bounds to the window's own monitor (`m->m`), not the `sgeom` union.
+- IPC: rects (`focused`/`connections`/`pending`) transform per-holder; added a
+  `"viewports":[{output,x,y,zoom,...}]` array; kept the scalar `"viewport"` =
+  selmon's camera so the shell OSD/KalinViewport keep working unchanged.
+- Verified: build + 25 unit tests green; single-monitor nested no-regression;
+  and — via the new headless harness (below) — **camera isolation proven
+  numerically**: warp to HEADLESS-1 + `pan 300 0` moved only H-1's camera
+  (0→300), warp to HEADLESS-2 + `zoom 1.5` moved only H-2's zoom (1.0→1.5),
+  each output's other axes untouched; per-output `grim` shows independent
+  scenes.
+- **New: `tools/headless-mc/` — headless multi-output test harness.** kalin-wm
+  on wlroots' headless backend (`WLR_HEADLESS_OUTPUTS=N` + pixman), driven over
+  IPC, per-output `grim` screenshots, no GPU/session/real-desktop. Fills the
+  gap the single-GPU test VM can't. Added two IPC commands it needs (also
+  generally useful): `warp <x> <y>` (deterministic pointer → picks `selmon`,
+  since headless has no real pointer) and `screenshot`/`screenshot-ui`. Wired
+  into the kalin-wm skill + `tools/headless-mc/README.md`. Bug found and fixed
+  building it: `warp`'s first cut called `motionnotify(0,…)`, whose selmon
+  update is gated on non-zero event time (time==0 = internal focus-restore
+  only), so selmon never moved — pass time=1 (deltas still zero).
+- **Not yet running as the real session** (needs a compositor restart — Kalin's
+  call). Wallpaper still tracks only selmon's camera (one shared scene tree;
+  per-monitor wallpaper is phase 4). Hand-off (drag/keybind to move a window to
+  the other monitor) and the shell per-output overlay work are phases 2–3.
+
+## 2026-07-15 — [[screenshot-ui]]: freeze-frame, TUI-styled readout, WYSIWYG export
+
+Three user-visible upgrades to the Super+Shift+S screenshot UI, all in
+`screenshot_ui.c` (+ a small `capture.c` split):
+
+- **Freeze-frame**: the monitor's scene is rendered once at open
+  (`capture_render_native`, now public) and shown as a scene buffer under
+  the dim — the world visibly stops while selecting, like niri.
+- **TUI-styled readout**: a bottom-center panel (warm-amber palette matching
+  [[bar-tuis]], opaque `#1e1915` bg + amber border) shows the live selection
+  `W X H   AT (X,Y)` plus the key hints. Text is rasterized with a
+  hand-rolled 5x7 bitmap font (digits/uppercase/symbols) into a custom
+  owned-pixels `wlr_buffer` — no font library, ~90 lines. (An external
+  public-domain font8x8 header was considered and rejected: no new deps,
+  and no unauditable vendored tables.)
+- **WYSIWYG export**: confirm now crops from the frozen pixels
+  (`capture_export_pixels`, split out of `capture_export_selection`) instead
+  of re-rendering the scene. This also fixes a real pre-existing bug: the
+  re-render happened *before* the overlay was destroyed, so every saved
+  screenshot included the 35% dim (and border pixels at the selection edge).
+
+Plumbing: `ipc.c` gained `screenshot-ui` and `screenshot` commands (open the
+UI / immediate capture — same as the binds), added for host-side testing of
+a nested instance (input can't be injected into a nested compositor, IPC
+can) and kept as a real API for future shell widgets. The owned-pixels
+buffer impl (`pixel_buffer_*`) frees its data only when the renderer drops
+its last lock, so texture-upload lifetime can never see freed memory.
+
+Verified: nested-on-host instance (`WLR_BACKENDS=wayland ./build/kalin-wm -d`),
+UI opened + self-captured over the new IPC commands — freeze, dim, amber
+border, and the info panel all render; font legible. Build + 25 unit tests
+green. Not yet exercised: a live drag (info text re-rasterizes on change —
+same code path) and the confirm keybind end-to-end; both worth a quick real
+run. Dev gotcha discovered on the way: plain `make` only prints usage — the
+build target is `make all`; a stale `build/kalin-wm` cost a debugging loop.
+
+## 2026-07-15 — [[bar-tuis]]: custom Textual TUIs for all seven docked bar panels + IPC framing fix
+
+Every docked panel of the bar now runs a custom TUI from one new suite
+(`tools/bar-tuis/kalin_tuis/`, dispatcher `kalin-bar-tui <panel>`), replacing
+btop/nmtui/bluetuith/wiremix/the fzf clip-picker loop, and pulling battery out
+of the QML SidePanel into its own docked panel (`SystemPanel.qml` deleted;
+SidePanel is calendar-only now). Shared warm-amber theme matched to foot.ini +
+Theme.qml — full design/backend map in [[bar-tuis]]. Packaging: one `barTuis`
+wrapper in home-config/desktop.nix (textual+psutil+dbus-fast env, backend CLIs
+PATH-prefixed) + parallel `testBarTuis` in test-vm/vm.nix; bluetuith/wiremix/
+clipPickerLoop dropped from home-config (btop kept as a general tool,
+`kalin-clip-picker` kept for Super+V). **Rebuild not yet run** — the QML
+already invokes `kalin-bar-tui`, so panels are broken-by-design until
+`nixos-rebuild switch` lands the wrapper (dev shim on PATH covers testing).
+
+Real bugs found and fixed along the way:
+
+- **`DockedPanel.spawned` never reset on process exit** — a quit/crashed TUI
+  (`q` is bound in every panel) left a permanently dead bar button. Fixed with
+  `Process.onExited`.
+- **Close-before-map race**: a panel closed while its first spawn was still
+  starting no-op'd its undock/minimize (app_id not mapped yet), and the client
+  then mapped *visible* via the armed dockPrep rect. Reproduced in the VM
+  (cold python spawn there takes 60s+; host is sub-second). Fixed by guarding
+  `firstSpawnDelay` on `open` + a 60-tick `lateSpawnSettle` re-assert.
+- **`ipc.c` broadcast desync** (pre-existing, exposed by panel churn): short
+  writes on the non-blocking client fds truncated a state line mid-record and
+  every later broadcast glued onto it — quickshell logged `bad state line`
+  storms and panels stuck open on stale `dock_hover`. `ipc_client_send()` now
+  keeps line framing (per-client resync `\n`), and `ipc_build_state()`
+  restores the trailing `\n` on truncation. One truncated record is still
+  lost (self-healing); full per-client output buffering remains a possible
+  follow-up. Build + 25 unit tests green.
+- **Mixer volume source**: `pw-dump`'s node `Props` disagreed with reality for
+  ALSA devices (WirePlumber keeps volume/mute on the device *route*) — the
+  panel showed 100%/unmuted while the sink was 125%/muted. Switched to
+  `wpctl get-volume <id>` per node (already cubic-scaled, no cbrt).
+
+Two more found live the same day, once DP-3 was plugged in:
+
+- **Outputs JSON corrupted by snprintf truncation** (`ipc_build_state`): the
+  modes/outputs/conns builder loops broke out when an entry didn't fit —
+  but snprintf had already written the partial entry into the buffer, and
+  the final `%s` (which reads to the NUL, not to the tracked length) emitted
+  it: `{"width":1280,"height":]`. With DP-3's long mode list this made
+  *every* state line unparseable (the real source of the "bad state line"
+  storm — the short-write framing issue above was only a secondary path).
+  Fixed by restoring the NUL at each break site; buffers bumped
+  (IPC_BUF_SIZE 8192→16384, outputs 2048→4096, modesbuf 1024→2048) so two
+  monitors' full mode lists actually fit. Build + 25 unit tests green.
+- **Per-monitor bars never actually worked: `screen` property shadowing.**
+  `BottomBar.qml` and `SidePanel.qml` (roots are `PanelWindow`) declared
+  `required property ShellScreen screen`, which *shadows* PanelWindow's own
+  `screen` property — the caller's `screen:` binding set the shadow and the
+  real window screen stayed default, so every monitor's bar stacked on the
+  first output (two bars on LVDS-1, none on DP-3). Removed the declarations;
+  the built-in property now receives the binding and each monitor gets its
+  own bar. The 2026-07-11 "bar on every screen" work created the per-screen
+  *instances* but their windows all landed on one output.
+
+Verified: all 7 panels smoke-tested headless (Textual pilot) against live
+host backends; mixer/stats/wifi/battery visually verified docked on the host
+(via IPC dockprep + grim); VM pass with `--override-input quickshell-config
+path:…` (the pinned input is the GitHub repo, not the working tree!) —
+hover→spawn→dock, close-on-leave, coordinator swap, and graceful
+degradation (BlueZ "unit failed" card, 0 wifi networks) all confirmed;
+close-before-map race re-tested clean after the fixes.
+
+Two requests working toward a first stable release:
+
+- **Resize grabs the nearest corner, not always bottom-right.** `moveresize()`
+  (`dwl.c`, `CurResize` case) used to unconditionally warp the cursor to
+  `grabc`'s bottom-right corner and `motionnotify()` always anchored
+  `geom.x/geom.y` (top-left) as fixed. Now `moveresize()` picks whichever of
+  the 4 corners is nearest the cursor at grab time (comparing against the
+  window's center), stores the *opposite* corner as a fixed world-space
+  anchor (`resize_anchor_x/y`, new file-statics mirroring `grabcx/grabcy`),
+  warps the cursor to the grabbed corner, and sets a matching
+  nw/ne/sw/se-resize cursor icon. `motionnotify()`'s `CurResize` branch is now
+  anchor-relative (`x = MIN(cursor, anchor)`, `width = abs(cursor - anchor)`),
+  which reduces to the old bottom-right-anchored behavior as a special case
+  — no regression for that corner, and the other 3 now work the same way.
+- **`Super+Ctrl+BTN_LEFT` on a window: solo move.** This chord already existed
+  for direct-manipulation camera pan (`ACT_VIEWPORT_PAN_GRAB`), but only did
+  anything on empty canvas — clicking it on a window was a silent no-op.
+  Added a new `CurMoveSolo` cursor mode: same grab-offset math as normal
+  `Super+BTN_LEFT` move, but `motionnotify()`'s connected-component glide
+  block (`collect_component()` + drag-along) only runs for plain `CurMove`,
+  not `CurMoveSolo` — so the window moves alone, the rest of its
+  [[connection-graph]] component stays put, and nothing is severed (this
+  path never calls `sever_connection()`). `ACT_VIEWPORT_PAN_GRAB` now tries
+  `moveresize(CurMoveSolo)` first and only falls back to
+  `viewport_pan_grab_start()` if there's no normal (managed, non-fullscreen)
+  client under the cursor — preserves the original pan-on-empty-canvas
+  behavior exactly.
+
+Verified: clean rebuild + 25/25 unit tests. VM: right-click-dragged a
+terminal's near-top-left area with Super held — cursor warped to that exact
+corner and the window resized from there while the opposite (bottom-right)
+corner stayed pinned. Separately, spawned a second terminal (connected via
+spawn-adjacency to the first) and `Super+Ctrl`-dragged it across the
+screen — it moved on its own while its sibling stayed exactly in place;
+a plain `Super`-drag on the same window immediately after was unaffected
+(still just the grabbed-window offset math, no change in the plain-`CurMove`
+path). Didn't re-confirm the dotted connection-line rendering itself in this
+pass — out of scope for this change, unrelated code path.
+
+## 2026-07-12 — Removed the compositor's own overlay clock
+
+The compositor drew its own bottom-right HH:MM digital clock
+(`modules/ui/overlay_clock.c`, a hand-rolled seven-segment display built
+from `wlr_scene_rect`s) alongside the [[quickshell-shell]]'s own bar clock
+(`ClockButton.qml`) — a redundant second clock. Removed entirely at the
+user's request, keeping only the shell's: deleted `overlay_clock.c`, its
+`#include`/`overlay_clock_init()`/`overlay_clock_configure()` call sites in
+`dwl.c`, and its tuning constants from `config.def.h` and the local
+`config.h`. Updated `code/src/modules/README.md`'s module list and
+[[wallpaper]] (which mentioned it drew into the same UI layer).
+
+Verified: clean rebuild, 25/25 unit tests, live-restarted the real
+compositor, screenshotted the desktop — only the shell's bar clock remains
+visible, no separate floating clock element.
 
 ## 2026-07-12 — Move windows in overview mode; connection lines visible there too, inset toward center; fit-width/height center the camera on their axis
 

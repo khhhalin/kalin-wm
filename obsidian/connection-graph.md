@@ -44,8 +44,19 @@ it's fundamentally graph-topology manipulation, not the geometric cone-search
   parent↔old-neighbor, shift old-neighbor and everything still transitively
   connected beyond it (`collect_component()`, a BFS over all 8 slots) right
   to make room, then connect parent↔new↔old-neighbor.
-- **Group drag.** Dragging any window drags its whole connected component
-  (`collect_component()` from the grabbed window) together as a rigid group.
+- **Group drag.** Dragging any window (`Super+BTN_LEFT`) drags its whole
+  connected component (`collect_component()` from the grabbed window)
+  together as a rigid group.
+- **Solo drag (2026-07-13).** `Super+Ctrl+BTN_LEFT` on a window (`CurMoveSolo`,
+  `moveresize()`/`motionnotify()` in dwl.c) moves just that window — same
+  offset math as a normal drag, but the component-glide block is skipped, so
+  the rest of the graph stays put and the connection just stretches to the
+  new distance. Doesn't sever anything (no `sever_connection()` call on this
+  path at all); it's purely "move without dragging neighbors," not "detach."
+  On empty canvas the same chord still does its original job, direct-
+  manipulation camera pan (`ACT_VIEWPORT_PAN_GRAB` in `bind_invoke()` tries
+  the solo-move grab first and falls back to pan if nothing's under the
+  cursor).
 - **Directional swap.** `Super+Ctrl+Arrow` (`swap_neighbor_dir()`) trades
   the focused window's position with its neighbor in that direction (spring-
   glide animated, not an instant snap), flipping their connection's slot

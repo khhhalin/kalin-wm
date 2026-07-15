@@ -34,17 +34,6 @@ static const float zoom_render_max = 3.0f;
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 
-/* Overlay clock (bottom-right, HH:MM, minute updates for low CPU use) */
-static const int overlay_clock_enabled      = 1;
-static const int overlay_clock_margin_px    = 16;
-static const int overlay_clock_padding_px   = 8;
-static const int overlay_clock_digit_w      = 20;
-static const int overlay_clock_digit_h      = 36;
-static const int overlay_clock_segment_px   = 4;
-static const int overlay_clock_digit_gap_px = 6;
-static const float overlay_clock_fg[]       = COLOR(0xffffffff);
-static const float overlay_clock_bg[]       = COLOR(0x000000a6);
-
 /* exit confirmation - require double-press within this many seconds */
 #define EXIT_CONFIRMATION_SECONDS 2
 

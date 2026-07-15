@@ -68,9 +68,9 @@ cone_search_focus(float angle, float cone_width)
 		if (!m)
 			return NULL;
 		/* Viewport center in world coords - guard against zero zoom */
-		zoom = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-		sel_cx = viewport.x + m->w.width / (2.0f * zoom);
-		sel_cy = viewport.y + m->w.height / (2.0f * zoom);
+		zoom = MON_ZOOM_SAFE(m);
+		sel_cx = m->cam.x + m->w.width / (2.0f * zoom);
+		sel_cy = m->cam.y + m->w.height / (2.0f * zoom);
 	}
 
 	/* Search for nearest window within cone */

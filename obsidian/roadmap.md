@@ -35,6 +35,10 @@
 
 ## In progress
 
+- **[[multi-camera]] — independent per-monitor viewports** (started 2026-07-15):
+  single-view shared world, camera ops follow the cursor's monitor, drag
+  hand-off + send-to-monitor bind. Design + touch list in the note.
+
 - Verify the [[nixos-session]] end-to-end after `nixos-rebuild switch`: quickshell bar auto-starts, `Super+T`/`Super+P`/`Super+O` work, and the taskbar lists running apps.
 - **[[protocols]] — implement missing popular Wayland protocols**, starting
   with `xdg-toplevel-icon-v1` (confirmed missing: our own log warns
@@ -51,6 +55,7 @@
 
 ## Recently completed (see [[ledger]])
 
+- [[bar-tuis]]: custom Textual TUIs for all seven docked bar panels (wifi/bluetooth/mixer/stats/clipboard/battery/display), battery out of the QML SidePanel, DockedPanel lifecycle races fixed, and the ipc.c broadcast line-framing fix. Awaiting the home-config rebuild that puts `kalin-bar-tui` on PATH.
 - Ported the [[quickshell-shell]] to the kalin-wm backend: `TaskbarService` and window actions now use `CompositorService`/[[foreign-toplevel]]; `WorkspaceIndicator` is hidden on kalin-wm.
 - Wired the [[nixos-session]] to start the shell + terminal via the `kalin-wm-session` wrapper.
 - Replaced [[column-layout]]/[[anchored-window]] entirely with free
@@ -66,6 +71,10 @@
   same-appid windows onto one saved slot), connection-graph save/restore,
   and a `mkdir -p` fix for a bug that had silently disabled persistence
   entirely since it was introduced.
+- Resize (`Super+BTN_RIGHT`) now grabs whichever corner of the window is
+  nearest the cursor instead of always the bottom-right one; added
+  `Super+Ctrl+BTN_LEFT` solo move (move a window without dragging its
+  connected component along, without severing) — see [[connection-graph]].
 
 ## v1.0 features — open
 

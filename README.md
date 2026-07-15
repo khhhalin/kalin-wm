@@ -126,8 +126,7 @@ To make it available as a login-manager session entry, install the package and w
 - `code/config/` — compile-time config + the default bind DSL
 - `scripts/` — development helpers
 - `code/tests/` — unit tests (`make test-unit`)
-- `obsidian/` — design vault: goal note, ledger (dated decision log), and one note per subsystem — the actual source of truth for how this project works, more current than this README
-- `.claude/skills/kalin-wm/` — a [Claude Code](https://claude.com/claude-code) skill with the build/test/run/VM workflow, if you use Claude Code on this repo
+- `obsidian/` — design vault: goal note and one note per subsystem, the actual source of truth for how this project works (more current than this README); `AGENTS.md` covers build/test/run/VM commands. `ledger.md` is a frozen archive of past decisions.
 
 ## Status
 

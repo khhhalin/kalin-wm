@@ -203,11 +203,12 @@ cropend(const Arg *arg)
 		wh = c->geom.height;
 		base_w = ww;
 		base_h = wh;
-		/* The window is displayed at (world - camera) * zoom, sized geom * zoom.
-		 * The crop selection is in screen pixels, so map through the same zoom. */
-		float crop_zf = viewport.zoom > 0.0f ? viewport.zoom : 1.0f;
-		screen_wx = (int)((wx - viewport.x) * crop_zf);
-		screen_wy = (int)((wy - viewport.y) * crop_zf);
+		/* The window is displayed at (world - holder camera) * zoom + monitor
+		 * offset, sized geom * zoom. The crop selection is in screen pixels,
+		 * so map through the same (per-monitor) camera. */
+		float crop_zf = MON_ZOOM_SAFE(c->mon);
+		screen_wx = WORLD_TO_SCREEN_X(c->mon, wx);
+		screen_wy = WORLD_TO_SCREEN_Y(c->mon, wy);
 
 		/* Check for division by zero */
 		if (ww <= 0 || wh <= 0) {
