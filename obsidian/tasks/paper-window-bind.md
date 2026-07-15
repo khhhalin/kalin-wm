@@ -12,8 +12,12 @@
   - `obsidian/implementation/keybindings.md` (its impl note)
   - `obsidian/agents/paper-window-bind/` (report zone)
 - impl-note: `obsidian/implementation/keybindings.md`.
-- Status: running — dispatched 2026-07-15 against main (638f466), which carries
-  the merged `shaders.h` API this task calls.
+- Status: merged (2026-07-15, merge commit 7650e03). Build green, all unit
+  tests pass. Keybind: `Super+i` → `toggle-paper` (bind DSL, not config.h — the
+  task note's assumption was stale). Scope note: 3 additive bind-DSL edits
+  (`binds.h`, `bind_actions.c`, `default_binds.h`) were outside the declared
+  scope but necessary and blessed at the gate. GPU-unverified — live gate needs
+  `WLR_RENDERER=gles2` + `KALIN_SHADER_DIR` (shaders_dir is CWD-relative).
 - Branch: worker's own worktree branch (report it back).
 - Why: [[shaders]] design intent — per-window paper-mode assignment via focused-window
   toggle + appid rule ([[keybindings]] new bind).

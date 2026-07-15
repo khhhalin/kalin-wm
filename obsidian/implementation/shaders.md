@@ -1,15 +1,25 @@
 # shaders
 
-- **Status: Phase 0 output pass + per-window paper-mode machinery in tree,
-  both gated OFF / undriven, NOT yet GPU-verified (2026-07-15).** GPU
-  fragment-shader post-processing. Design intent + full phasing: [[shaders]] in
-  `plan/`. This note is the as-built record.
+- **Status: Phase 0 output pass + per-window paper mode fully wired in tree,
+  NOT yet GPU-verified (2026-07-15).** GPU fragment-shader post-processing.
+  Design intent + full phasing: [[shaders]] in `plan/`. This note is the
+  as-built record.
 - As-built: (a) Phase 0 output pass — offscreen-render + fragment-pass plumbing
   and a passthrough shader; (b) the per-window composite-shader machinery
   (subtree → offscreen → paper.frag → shaded buffer) with paper.frag's uniforms
-  wired. The window path is fully built but not yet called from `dwl.c` — the
-  wiring (keybind/window-rule, scene-node reinjection) is the separate
-  `paper-window-bind` task.
+  wired; (c) the dwl.c driver (`paper-window-bind`): `Client.paper_mode` +
+  `Super+i` `toggle-paper` bind + `Rule.paper` appid column, driven per-frame
+  from `rendermon()` via `client_apply_paper()` — shade, reinject as an
+  input-transparent overlay above the still-enabled surface
+  (`point_accepts_input` returns false, so `xytonode()` falls through to the
+  real surface and input keeps working), tear down on toggle-off/unmap.
+  Uniform defaults live in `config.def.h` (`paper_strength/color/ink/preserve`).
+- **Caveat found at the gate:** the live gitignored `code/config/config.h` does
+  not regenerate on merge — new config symbols (the paper block) must be ported
+  into it by hand or the build breaks. Also `shaders_dir` is CWD-relative and
+  the `kalinwm` launcher doesn't run from the repo root, so the live compositor
+  logs "cannot read shaders/passthrough.frag" and self-disables — set
+  `KALIN_SHADER_DIR` (or install the .frag files) before the live GPU gate.
 
 ## Where it lives
 
@@ -77,10 +87,13 @@
 
 Follows the [[shaders|plan]] "composite-time window shader" path: the window's
 own scene subtree is rendered offscreen, shaded, and handed back to reinject as
-a `wlr_scene_buffer`. Built but **not yet called from `dwl.c`** — driving it
-(a keybind/window-rule toggle + creating/attaching the scene-buffer node on the
-`Client`, plus calling `shaders_window_release()` on unmap/destroy) is the
-`paper-window-bind` task, which owns `dwl.c`/`config.h`/`kalin.h`.
+a `wlr_scene_buffer`. **Driven from `dwl.c`** (merged `paper-window-bind`):
+`client_apply_paper()` runs per-frame from `rendermon()` for clients with
+`paper_mode` (or a leftover overlay), disables the previous overlay before
+capture (feedback exclusion), shades, and positions the overlay 1:1 over the
+subtree bbox as a `c->scene` child above `scene_surface`; `unmapnotify()`
+detaches the buffer and calls `shaders_window_release()` before the scene tree
+is destroyed.
 
 API (`shaders.h`, opaque):
 - `struct shader_paper_params { float strength; float paper[3]; float ink[3];

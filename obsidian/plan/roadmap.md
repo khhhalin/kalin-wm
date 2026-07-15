@@ -65,11 +65,13 @@
   blur-behind, dim/focus, paper-mode reading tint) and **camera/output**
   (color-grade/CRT/vignette over the whole [[viewport]]). Full design, phasing,
   and risks in [[shaders]].
-- **In progress — paper mode (per-window reading tint):** the composite-time
-  window-shader machinery (subtree → offscreen → `paper.frag` → reinject) landed
-  in `main` (task `paper-shader-core`, 2026-07-15) — as-built in [[shaders]].
-  Remaining: `paper-window-bind` (dwl.c `Client.paper_mode` + keybind + appid
-  rule, the API's first caller), then live GPU verification (`WLR_RENDERER=gles2`).
+- **Paper mode (per-window reading tint) — fully wired, GPU-unverified:** both
+  fleet tasks merged 2026-07-15 (`paper-shader-core` machinery +
+  `paper-window-bind` driver: `Super+i` toggle, `Rule.paper` appid column,
+  per-frame overlay from `rendermon()`) — as-built in [[shaders]]. Remaining:
+  the live GPU gate — `WLR_RENDERER=gles2` + `KALIN_SHADER_DIR` set (shaders_dir
+  is CWD-relative), verify passthrough is identical and paper renders upright
+  (shared vertical-flip assumption).
 - Shape is forced by the [[scene-graph]]: `wlr_scene` exposes no GLSL hook, so the
   plan keeps the scene and drops to **raw GLES2 only at the compositing stage**
   (offscreen texture → shader pass → output). Requires pinning `WLR_RENDERER=gles2`
