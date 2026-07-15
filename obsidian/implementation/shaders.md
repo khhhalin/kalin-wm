@@ -1,14 +1,33 @@
 # shaders
 
-- **Status: paper mode partially GPU-verified at the 2026-07-15 live gate;
-  output pass still unverified.** Verified on Intel GLES2: the paper program
-  compiles and the warm remap renders (measured `#dfd8c5` vs `#e8e5e3`
-  unshaded control on a white window). Found + fixed there: the shaded overlay
-  rendered **vertically flipped** — the window path now uses an identity-V quad
-  (`quad_uv_win`); upright re-verification and input-routing checks were cut
-  short (parallel-session interference), finish next gate run. The output pass
-  keeps the original flipped quad and needs its own gate (`WLR_RENDERER=gles2`
-  + `KALIN_SHADER_DIR`, `shaders_output_enabled=1`).
+- **Status: paper mode GPU-verified and working at the 2026-07-16 live gate;
+  output pass still unverified.** On Intel GLES2 a paper-mode foot window renders
+  the warm remap with its actual content preserved (white bg → `#dfd8c5` paper,
+  black text kept dark). Earlier ("partially verified", 2026-07-15) was wrong: the
+  effect looked like it worked but every paper window was in fact frozen on a blank
+  pre-content frame — see the **occlusion-freeze** fix below. Also fixed at the
+  2026-07-15 gate: the shaded overlay rendered **vertically flipped**; the window
+  path now uses an identity-V quad (`quad_uv_win`). The output pass keeps the
+  original flipped quad and needs its own gate (`WLR_RENDERER=gles2` +
+  `KALIN_SHADER_DIR`, `shaders_output_enabled=1`).
+- **Occlusion-freeze (fixed 2026-07-16, commit `cdac083`).** The shaded overlay is
+  an *opaque* `wlr_scene_buffer` above the surface, so wlr_scene culled the real
+  surface as occluded → `wlr_scene_output_send_frame_done` skipped it → wlroots
+  sent `wl_surface.leave` → foot (and any client that pauses off-output) stopped
+  committing new buffers → the effect re-shaded one stale blank frame forever (a
+  flat paper slab, no content). Fix: `client_apply_paper()` sets the overlay
+  opacity to `0.99` so wlr_scene keeps the surface visible on the output and it
+  keeps rendering. `set_opaque_region(empty)` does **not** work here — the shaded
+  swapchain is XRGB (opaque by format), which overrides it. Also hardened
+  `composite_subtree()`: the wlroots render pass runs its ops at *submit*, so the
+  per-node textures are now destroyed after `wlr_render_pass_submit()`, not inline.
+  Debugging note: point-sampling the offscreen buffer is unreliable (sparse text is
+  easily missed) — scan min/max over the whole buffer.
+- **Deploy gap:** the `kalinwm` dev-launcher and the packaged session must export
+  `KALIN_SHADER_DIR` (or the .frag files must be installed to a fixed path) — the
+  default `shaders_dir` is CWD-relative, so a launch from the wrong cwd silently
+  disables all shaders (logs `cannot read shaders/paper.frag`). Not yet wired into
+  the launcher/home-config.
 - As-built: (a) Phase 0 output pass — offscreen-render + fragment-pass plumbing
   and a passthrough shader; (b) the per-window composite-shader machinery
   (subtree → offscreen → paper.frag → shaded buffer) with paper.frag's uniforms
