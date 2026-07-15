@@ -50,6 +50,7 @@ static const struct { const char *name; int id; } action_names[] = {
     { "toggle-ontop",         ACT_TOGGLE_ONTOP },
     { "toggle-overlap",       ACT_TOGGLE_OVERLAP },
     { "link-pick",            ACT_LINK_PICK },
+    { "toggle-paper",         ACT_TOGGLE_PAPER },
     { "mode",                 ACT_MODE },
 };
 

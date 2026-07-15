@@ -224,6 +224,8 @@ typedef struct {
     const char *id;             /* App ID pattern to match */
     const char *title;          /* Title pattern to match */
     int monitor;                /* Preferred monitor (-1 for current) */
+    int paper;                  /* Default this client to paper mode (see
+                                 * Client.paper_mode / obsidian/plan/shaders.md) */
 } Rule;
 
 /**
@@ -269,6 +271,11 @@ struct Client {
     struct wlr_scene_rect *border[4];       /* Border rectangles: top, bottom, left, right */
     struct wlr_scene_rect *focus_ring[4];   /* Focus ring rectangles: top, bottom, left, right */
     struct wlr_scene_tree *scene_surface;   /* Surface scene tree */
+    struct wlr_scene_buffer *paper_node;    /* Paper-mode overlay: the shaded
+                                             * copy of the window's content,
+                                             * reinjected above scene_surface
+                                             * (see client_apply_paper()). NULL
+                                             * until paper mode first shades. */
     struct wl_list link;                    /* Tiling order link */
     struct wl_list flink;                   /* Focus order link */
     struct wlr_box geom;                    /* Layout-relative geometry, includes border */
@@ -337,6 +344,11 @@ struct Client {
                                   * anything that needs to stay correct across
                                   * that transient undock window too. */
     float opacity;              /* Per-window opacity, 0.1..1.0 */
+    int paper_mode;             /* Composite this window through paper.frag
+                                  * (warm reading tint). Toggled by the
+                                  * paper-mode keybind or a window rule; driven
+                                  * per-frame in rendermon() via
+                                  * client_apply_paper(). */
     uint32_t resize;            /* Configure serial of pending resize */
     int persist_size_pending;   /* Set when persistence_register_client()
                                   * restores a saved width/height on a

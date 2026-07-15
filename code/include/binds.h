@@ -85,6 +85,8 @@ typedef enum {
     ACT_LINK_PICK,         /* none: arm the focused window as a pending connection
                              * source; the next click on another window links them
                              * (see connect_pick_arm(), connection_graph.c) */
+    ACT_TOGGLE_PAPER,      /* none: toggle paper-mode reading tint on the focused
+                             * window (see client_apply_paper(), obsidian/plan/shaders.md) */
     ACT_MODE,              /* blob char* target mode name (engine-internal) */
     ACT_COUNT
 } ActionId;

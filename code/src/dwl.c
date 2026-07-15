@@ -362,6 +362,8 @@ static void togglefullscreen(const Arg *arg);
 void togglemaximized(const Arg *arg);
 void toggleontop(const Arg *arg);
 void toggleoverlap(const Arg *arg);
+static void togglepaper(const Arg *arg);
+static void client_apply_paper(Client *c);
 void toggleminimize(const Arg *arg);
 void togglescratchpad(const Arg *arg);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
@@ -586,6 +588,8 @@ applyrules(Client *c)
 	for (r = rules; r < END(rules); r++) {
 		if ((!r->title || strstr(title, r->title))
 				&& (!r->id || strstr(appid, r->id))) {
+			if (r->paper)
+				c->paper_mode = 1;
 			i = 0;
 			wl_list_for_each(m, &mons, link) {
 				if (r->monitor == i++)
@@ -1984,6 +1988,7 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_TOGGLE_ONTOP:     toggleontop(arg); break;
 	case ACT_TOGGLE_OVERLAP:   toggleoverlap(arg); break;
 	case ACT_LINK_PICK:        connect_pick_arm(); break;
+	case ACT_TOGGLE_PAPER:     togglepaper(arg); break;
 	case ACT_TOGGLE_OVERVIEW:   toggle_overview(arg); break;
 	case ACT_TOGGLE_MINIMIZED:  toggleminimize(arg); break;
 	case ACT_TOGGLE_SCRATCHPAD: togglescratchpad(arg); break;
@@ -2956,6 +2961,11 @@ rendermon(struct wl_listener *listener, void *data)
 			 * client's clip must be reapplied every frame or it reverts to the
 			 * full, uncropped surface as soon as the client commits again. */
 			client_apply_crop_clip(c);
+			/* Paper mode: re-shade the window and reinject the overlay after
+			 * the buffer scale/clip for this frame are settled. Gated so plain
+			 * windows pay nothing. */
+			if (c->paper_mode || c->paper_node)
+				client_apply_paper(c);
 		}
 	}
 
@@ -3348,6 +3358,136 @@ client_set_buffer_scale(Client *c, float scale)
 		scale_h = scale * c->crop.h;
 	}
 	client_scale_buffers(&c->scene_surface->node, scale_w, scale_h, out_scale);
+}
+
+/* Paper mode's reinjected overlay must be invisible to input hit-testing:
+ * xytonode() dereferences wlr_scene_surface_try_from_buffer() on whatever
+ * wlr_scene_node_at() returns, so a plain (non-surface) buffer sitting on top
+ * would both steal the hit and crash on the NULL surface. Returning false makes
+ * wlr_scene_node_at() skip the overlay and fall through to the real surface
+ * underneath — which stays enabled — so a papered window keeps pointer and
+ * keyboard input. */
+static bool
+paper_node_rejects_input(struct wlr_scene_buffer *buffer, double *sx, double *sy)
+{
+	return false;
+}
+
+/* Bounding box (absolute layout coords) of the buffer nodes under a client's
+ * scene subtree — the same box shaders_window_shade() renders into, recomputed
+ * here so the shaded overlay can be positioned exactly over its content. Mirrors
+ * shaders.c's bounds pass; wlr_scene_node_for_each_buffer() skips rect and
+ * disabled nodes, so borders/focus rings and last frame's (disabled) overlay
+ * are excluded, as intended. */
+struct paper_bounds {
+	int x0, y0, x1, y1;
+	bool any;
+};
+
+static void
+paper_bounds_iter(struct wlr_scene_buffer *sb, int sx, int sy, void *data)
+{
+	struct paper_bounds *b = data;
+	int w, h;
+
+	if (!sb || !sb->buffer)
+		return;
+	if (sb->dst_width > 0 && sb->dst_height > 0) {
+		w = sb->dst_width;
+		h = sb->dst_height;
+	} else {
+		w = sb->buffer->width;
+		h = sb->buffer->height;
+	}
+	if (w <= 0 || h <= 0)
+		return;
+	if (!b->any) {
+		b->x0 = sx;
+		b->y0 = sy;
+		b->x1 = sx + w;
+		b->y1 = sy + h;
+		b->any = true;
+		return;
+	}
+	if (sx < b->x0)
+		b->x0 = sx;
+	if (sy < b->y0)
+		b->y0 = sy;
+	if (sx + w > b->x1)
+		b->x1 = sx + w;
+	if (sy + h > b->y1)
+		b->y1 = sy + h;
+}
+
+/* Drive paper mode for one client each frame (from rendermon()): render the
+ * window's subtree through paper.frag and reinject the shaded copy as an overlay
+ * above the surface, or tear the overlay down when paper mode is off. The real
+ * surface stays enabled underneath (occluded by the opaque overlay) so input
+ * routing is unaffected. See obsidian/plan/shaders.md and the paper-shader-core
+ * API in shaders.h. */
+static void
+client_apply_paper(Client *c)
+{
+	struct shader_paper_params params;
+	struct wlr_buffer *shaded;
+	struct paper_bounds b = {0};
+	int lx, ly;
+
+	if (!c || !c->scene || !c->scene_surface)
+		return;
+
+	if (!c->paper_mode) {
+		/* Toggled off (or off from the start): drop any overlay and release
+		 * the offscreen buffers. shaders_window_release() is a no-op for a
+		 * client that was never shaded. */
+		if (c->paper_node) {
+			wlr_scene_buffer_set_buffer(c->paper_node, NULL);
+			wlr_scene_node_destroy(&c->paper_node->node);
+			c->paper_node = NULL;
+		}
+		shaders_window_release(c);
+		return;
+	}
+
+	/* Exclude last frame's overlay from the capture: shaders_window_shade()
+	 * and the bounds pass below both walk c->scene, and a disabled node is
+	 * skipped — so the effect never feeds back on its own output. */
+	if (c->paper_node)
+		wlr_scene_node_set_enabled(&c->paper_node->node, false);
+
+	params.strength = paper_strength;
+	params.paper[0] = paper_color[0];
+	params.paper[1] = paper_color[1];
+	params.paper[2] = paper_color[2];
+	params.ink[0] = paper_ink[0];
+	params.ink[1] = paper_ink[1];
+	params.ink[2] = paper_ink[2];
+	params.preserve = paper_preserve;
+
+	shaded = shaders_window_shade(c, &params);
+	if (!shaded)
+		/* Shaders unavailable (Pixman/Vulkan) or a transient failure: leave
+		 * the window unshaded this frame (overlay stays disabled). */
+		return;
+
+	/* Recompute the captured box and express its origin relative to c->scene
+	 * so the overlay lands 1:1 over the content it was rendered from (the
+	 * shaded buffer maps 1:1 to this box in layout units). */
+	wlr_scene_node_for_each_buffer(&c->scene->node, paper_bounds_iter, &b);
+	if (!b.any || !wlr_scene_node_coords(&c->scene->node, &lx, &ly))
+		return;
+
+	if (!c->paper_node) {
+		c->paper_node = wlr_scene_buffer_create(c->scene, NULL);
+		if (!c->paper_node)
+			return;
+		c->paper_node->point_accepts_input = paper_node_rejects_input;
+		wlr_scene_node_place_above(&c->paper_node->node,
+				&c->scene_surface->node);
+	}
+	wlr_scene_buffer_set_buffer(c->paper_node, shaded);
+	wlr_scene_node_set_position(&c->paper_node->node, b.x0 - lx, b.y0 - ly);
+	wlr_scene_node_set_enabled(&c->paper_node->node, true);
 }
 
 /* Ask each mapped client to render at zoom DPI so zoomed content is crisp, not
@@ -4152,6 +4292,21 @@ toggleoverlap(const Arg *arg)
 	}
 }
 
+/* Toggle the paper-mode reading tint on the focused window. The flag is read
+ * every frame by client_apply_paper() (rendermon()), which builds or tears down
+ * the shaded overlay; schedule a frame so the change shows immediately even when
+ * the output is otherwise idle. */
+static void
+togglepaper(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (!sel)
+		return;
+	sel->paper_mode = !sel->paper_mode;
+	if (sel->mon && sel->mon->wlr_output)
+		wlr_output_schedule_frame(sel->mon->wlr_output);
+}
+
 void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
@@ -4275,6 +4430,15 @@ unmapnotify(struct wl_listener *listener, void *data)
 		if (c->flink.prev && c->flink.next)
 			wl_list_remove(&c->flink);
 	}
+
+	/* Paper mode: detach the borrowed shaded buffer from its overlay node
+	 * before the scene tree (which owns the node) is torn down, then release
+	 * the client's offscreen buffers. Safe when the client was never papered. */
+	if (c->paper_node) {
+		wlr_scene_buffer_set_buffer(c->paper_node, NULL);
+		c->paper_node = NULL;
+	}
+	shaders_window_release(c);
 
 	wlr_scene_node_destroy(&c->scene->node);
 	status_mark_dirty();
