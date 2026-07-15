@@ -3,7 +3,7 @@
 - Owner: fleet worker (worktree-isolated).
 - Objective: clear all compiler warnings in the remaining non-dwl, non-crop modules.
 - Scope (may edit only): `code/src/modules/capture.c`, `code/src/modules/backlight.c`, `code/src/modules/ipc.c`, `code/src/crash_report.c`, `code/src/modules/input/keyboard.c`.
-- Status: todo.
+- Status: merged.
 - Branch: worker's own worktree branch (reports the name back).
 - Why: [[agent-workflow]] work rules — defensive C, no dead code, fix warnings.
 

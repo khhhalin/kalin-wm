@@ -3,7 +3,7 @@
 - Owner: fleet worker (worktree-isolated).
 - Objective: clear all compiler warnings in `code/src/modules/crop/crop_mode.c` (4 warnings).
 - Scope (may edit only): `code/src/modules/crop/crop_mode.c`.
-- Status: todo.
+- Status: merged.
 - Branch: worker's own worktree branch (reports the name back).
 - Why: [[agent-workflow]] work rules — defensive C, fix warnings; [[crop-mode]] is the affected subsystem.
 

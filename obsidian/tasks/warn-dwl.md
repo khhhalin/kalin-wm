@@ -3,7 +3,7 @@
 - Owner: fleet worker (worktree-isolated).
 - Objective: clear all compiler warnings in `code/src/dwl.c`.
 - Scope (may edit only): `code/src/dwl.c`.
-- Status: todo.
+- Status: merged.
 - Branch: worker's own worktree branch (reports the name back).
 - Why: [[agent-workflow]] work rules — defensive C, no dead code, fix warnings; touches the [[stability]] priority.
 
