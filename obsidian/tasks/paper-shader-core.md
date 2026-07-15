@@ -12,8 +12,8 @@
   - `obsidian/implementation/shaders.md` (its impl note)
   - `obsidian/agents/paper-shader-core/` (report zone)
 - impl-note: `obsidian/implementation/shaders.md`.
-- Status: running.
-- Branch: worker's own worktree branch (report it back).
+- Status: merged (2026-07-15, ff into main at 8e802c9; keeper wired the math test into `make test-unit`). Build green, all unit tests pass. GPU path unverified — first caller lands in `paper-window-bind`.
+- Branch: `worktree-agent-afb1e23be341223bd`.
 - Why: [[shaders]] design intent — per-window paper-mode reading tint as a
   composite-time window shader (render window subtree offscreen → shade → reinject).
 

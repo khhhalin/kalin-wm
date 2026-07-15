@@ -12,8 +12,8 @@
   - `obsidian/implementation/keybindings.md` (its impl note)
   - `obsidian/agents/paper-window-bind/` (report zone)
 - impl-note: `obsidian/implementation/keybindings.md`.
-- Status: blocked — do not dispatch until `paper-shader-core` is merged to main
-  (this task calls its `shaders.h` API and will not compile without it).
+- Status: ready — `paper-shader-core` merged to main (8e802c9); the `shaders.h`
+  API this task calls is now available. Dispatch against current main.
 - Branch: worker's own worktree branch (report it back).
 - Why: [[shaders]] design intent — per-window paper-mode assignment via focused-window
   toggle + appid rule ([[keybindings]] new bind).
