@@ -1,9 +1,14 @@
 # shaders
 
-- **Status: Phase 0 output pass + per-window paper mode fully wired in tree,
-  NOT yet GPU-verified (2026-07-15).** GPU fragment-shader post-processing.
-  Design intent + full phasing: [[shaders]] in `plan/`. This note is the
-  as-built record.
+- **Status: paper mode partially GPU-verified at the 2026-07-15 live gate;
+  output pass still unverified.** Verified on Intel GLES2: the paper program
+  compiles and the warm remap renders (measured `#dfd8c5` vs `#e8e5e3`
+  unshaded control on a white window). Found + fixed there: the shaded overlay
+  rendered **vertically flipped** — the window path now uses an identity-V quad
+  (`quad_uv_win`); upright re-verification and input-routing checks were cut
+  short (parallel-session interference), finish next gate run. The output pass
+  keeps the original flipped quad and needs its own gate (`WLR_RENDERER=gles2`
+  + `KALIN_SHADER_DIR`, `shaders_output_enabled=1`).
 - As-built: (a) Phase 0 output pass — offscreen-render + fragment-pass plumbing
   and a passthrough shader; (b) the per-window composite-shader machinery
   (subtree → offscreen → paper.frag → shaded buffer) with paper.frag's uniforms
