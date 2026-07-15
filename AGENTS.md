@@ -148,12 +148,12 @@ If you use the home-managed Zsh config, these aliases are defined in `~/home-con
 - `code/config/config.h` — compile-time keybindings and constants.
 - `code/config/config.def.h` — upstream defaults; copy to `config.h` to customize.
 - `code/src/dwl.c` + `code/src/modules/` — compositor source.
-- `obsidian/kalin-wm.md` — project goal note.
-- `obsidian/agent-workflow.md` — coding rules and workflow.
-- `obsidian/keybindings.md` — keybinding reference.
-- `obsidian/nixos-session.md` — how the login session is wired.
-- `obsidian/quickshell-shell.md` — shell integration details.
-- `obsidian/build-system.md` — build and flake details.
-- `obsidian/roadmap.md` — open work.
-- `obsidian/dev-restart.md` — live dev-session restart procedure.
-- `obsidian/ledger.md` — frozen archive of past decisions (the vault graph is the running record now).
+- `obsidian/plan/kalin-wm.md` — project goal note.
+- `obsidian/plan/agent-workflow.md` — coding rules and workflow.
+- `obsidian/implementation/keybindings.md` — keybinding reference.
+- `obsidian/implementation/nixos-session.md` — how the login session is wired.
+- `obsidian/implementation/quickshell-shell.md` — shell integration details.
+- `obsidian/implementation/build-system.md` — build and flake details.
+- `obsidian/plan/roadmap.md` — open work.
+- `obsidian/implementation/dev-restart.md` — live dev-session restart procedure.
+- `obsidian/implementation/ledger.md` — frozen archive of past decisions (the vault graph is the running record now).

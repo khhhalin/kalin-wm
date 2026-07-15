@@ -1,7 +1,8 @@
 # Fleet workflow
 
 - The `fleet` skill runs kalin-wm work as a supervised set of parallel worker agents that cannot clobber each other; this note records the kalin-wm-specific adaptation. It extends [[agent-workflow]], it does not replace it — the stability-first work rules there still bind every worker.
-- The keeper (Kalin's live conversation) owns the canon vault and `obsidian/tasks/`; workers run in isolated git worktrees and are the only writers of their own `obsidian/agents/<task-id>/`.
+- Two layers: the keeper (Kalin's live conversation) owns `obsidian/plan/` (goal, [[roadmap]], design intent); workers maintain `obsidian/implementation/` (the as-built subsystem notes) for the subsystems they change.
+- Workers run in isolated git worktrees and are the only writers of their own `obsidian/agents/<task-id>/` gate report. Because task file-scopes are disjoint, the implementation notes they touch are disjoint too — no conflict, so workers edit `implementation/` directly.
 
 ## Partition rule (kalin-wm-specific)
 - Each `tasks/<task-id>.md` lists an explicit disjoint `scope` of file paths; no two active tasks may overlap.
@@ -17,4 +18,4 @@
 - Never run `nix build`/`nixos-rebuild` to "verify the package" as routine — disk-space guardrail. Those are keeper-only, on explicit request, after VM tests pass.
 
 ## Fold-back
-- After merging a worker branch, the keeper folds its `agents/<task-id>/report.md` into canon: update the affected object notes (and [[roadmap]] if priorities shifted) via the snippet workflow (setup-vault skill). The vault graph is the record — there is no [[ledger]] to append (it is a frozen archive, see [[agent-workflow]]). Workers do not touch canon.
+- The worker already updated the `implementation/` note(s) for its subsystem. After merging its branch, the keeper reconciles `plan/`: mark shipped [[roadmap]] items, adjust intent — via the snippet workflow (setup-vault skill). The `implementation/` graph is the record; there is no [[ledger]] to append (it is a frozen archive under `implementation/`, see [[agent-workflow]]). Workers do not touch `plan/`.

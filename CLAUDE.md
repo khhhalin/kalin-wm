@@ -16,7 +16,7 @@ for work in this repo.
 ## Coding
 - Match the surrounding code's naming, structure, comment density, and idioms;
   read neighbors first. This codebase is defensive C in the suckless tradition
-  (see `obsidian/agent-workflow.md`) — every pointer deref NULL-checked, every
+  (see `obsidian/plan/agent-workflow.md`) — every pointer deref NULL-checked, every
   divisor non-zero, no dead code, no new dependencies without need.
 - Reuse existing utilities over new abstractions; YAGNI, no speculative
   generality.
@@ -44,23 +44,26 @@ separate rebindings of the same key. None of this produced an error or a
 warning — it just cost real time to rediscover from scratch, in more than one
 session, because the vault said one thing and the code said another.
 
-The vault graph itself is the running record — the object notes carry current
-truth. There is no separate ledger to append: `obsidian/ledger.md` is a frozen
-historical archive (see `obsidian/agent-workflow.md`), and git history holds the
-chronology. Keeping the graph current is the whole discipline.
+The vault has two layers: `obsidian/plan/` (goal, roadmap, design intent — the
+keeper's) and `obsidian/implementation/` (one note per subsystem — the as-built
+reality). The `implementation/` graph is the running record; those notes carry
+current truth. There is no separate ledger to append:
+`obsidian/implementation/ledger.md` is a frozen historical archive (see
+`obsidian/plan/agent-workflow.md`), and git history holds the chronology.
+Keeping `implementation/` current is the whole discipline.
 
-- **Before** starting any non-trivial change: read `obsidian/kalin-wm.md` (the
-  goal note), `obsidian/roadmap.md` (open/planned work), and any object notes
+- **Before** starting any non-trivial change: read `obsidian/plan/kalin-wm.md` (the
+  goal note), `obsidian/plan/roadmap.md` (open/planned work), and any object notes
   that touch the area being changed. Don't assume a note is current — check it
   against the actual code if the change depends on it being right.
 - **After** any change that alters behavior, architecture, keybinds, IPC
   contract, or the status of a planned/in-progress feature:
-  - Update every object note the change touches. If a note now describes
-    something removed or renamed, fix it or mark it superseded with a pointer
-    to what replaced it — don't leave it describing dead architecture.
+  - Update every `implementation/` note the change touches. If a note now
+    describes something removed or renamed, fix it or mark it superseded with a
+    pointer to what replaced it — don't leave it describing dead architecture.
   - If a feature moved from planned to shipped (or vice versa), correct its
-    status inline (in the object note and `roadmap.md`). Don't leave
-    "planned"/"not yet implemented" language on something that already works.
+    status inline (in the `implementation/` note and `plan/roadmap.md`). Don't
+    leave "planned"/"not yet implemented" language on something that already works.
 - When investigating a bug that involved reading vault notes to understand
   "how this is supposed to work," and any of those notes turned out to be
   wrong: fix them as part of the same change, not as a follow-up.
@@ -87,10 +90,10 @@ chronology. Keeping the graph current is the whole discipline.
 ## Pointers
 - `AGENTS.md` — build/run/test/VM commands and expected outputs; read this
   for *how* to do something, not this file.
-- `obsidian/kalin-wm.md` — project goal note.
-- `obsidian/roadmap.md` — open and planned work.
-- `obsidian/ledger.md` — frozen archive of past decisions (not updated going forward).
+- `obsidian/plan/kalin-wm.md` — project goal note.
+- `obsidian/plan/roadmap.md` — open and planned work.
+- `obsidian/implementation/ledger.md` — frozen archive of past decisions (not updated going forward).
 
-Note: `obsidian/agent-workflow.md` claims to supersede the old root
+Note: `obsidian/plan/agent-workflow.md` claims to supersede the old root
 `AGENTS.md`, but `AGENTS.md` still exists and is current — an unresolved
 inconsistency, not a signal to ignore either file.

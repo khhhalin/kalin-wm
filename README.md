@@ -30,7 +30,7 @@ A personal Wayland compositor, forked from [dwl](https://codeberg.org/dwl/dwl) a
 - **A connection-graph window model**: windows are nodes in an up-to-8-way
   directional graph instead of a tiled/floating hierarchy, with the graph
   itself (not just position/size) persisted across restarts.
-- **A dated engineering ledger** (`obsidian/ledger.md`) tracking design
+- **A dated engineering ledger** (`obsidian/implementation/ledger.md`) tracking design
   decisions, bugs, and their root causes as the project evolved — not just
   a changelog, a running record of *why*.
 
@@ -83,7 +83,7 @@ To make it available as a login-manager session entry, install the package and w
 
 ## Default keybindings
 
-`Super` is the Windows/Command key. This table covers the shipped defaults (`code/config/default_binds.h`, written to `~/.config/kalin-wm/binds.conf` on first run only); edit that file to customize — see `obsidian/keybindings.md` for the full bind DSL grammar.
+`Super` is the Windows/Command key. This table covers the shipped defaults (`code/config/default_binds.h`, written to `~/.config/kalin-wm/binds.conf` on first run only); edit that file to customize — see `obsidian/implementation/keybindings.md` for the full bind DSL grammar.
 
 | Key | Action |
 |-----|--------|
@@ -130,7 +130,7 @@ To make it available as a login-manager session entry, install the package and w
 
 ## Status
 
-**Version:** 0.8-dev — MVP complete, v1.0 in progress. See `obsidian/roadmap.md` for open work and `obsidian/ledger.md` for the dated history of how it got here.
+**Version:** 0.8-dev — MVP complete, v1.0 in progress. See `obsidian/plan/roadmap.md` for open work and `obsidian/implementation/ledger.md` for the dated history of how it got here.
 
 ---
 

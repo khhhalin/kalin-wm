@@ -17,7 +17,7 @@
 - Deployment guardrail: never auto-activate the real host login session (`sudo nixos-rebuild switch … home-config#KalinBook`) — only when Kalin explicitly asks, and only after VM tests pass.
 - Disk guardrail: avoid `nix build`/`nixos-rebuild` churn while iterating (each leaves a new store path); use `nix develop -c make` into local `build/`. See [[dev-restart]] and [[test-vm]] for the iterate loop.
 
-- The vault graph itself is the running record of the project: after completing work, an agent updates the affected object notes (and [[roadmap]] if priorities shifted). There is no separate ledger to append.
-- [[ledger]] is a frozen historical archive of past decisions, not updated going forward — the object notes carry current truth.
+- The vault has two layers: `plan/` (goal, [[roadmap]], design intent) and `implementation/` (one note per subsystem, the as-built reality). The `implementation/` graph is the running record — after completing work, an agent updates the affected `implementation/` notes (and `plan/roadmap.md` if priorities shifted). There is no separate ledger to append.
+- [[ledger]] is a frozen historical archive of past decisions under `implementation/`, not updated going forward — the subsystem notes carry current truth.
 - When work is run as a supervised fleet of parallel worker agents, [[fleet-workflow]] adds the kalin-wm-specific rules (disjoint scope, `dwl.c` as the one hot shared file, and worktree-only vs keeper-only verification) on top of these.
 - This note supersedes the old root `AGENTS.md`.
