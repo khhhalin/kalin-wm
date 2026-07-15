@@ -59,6 +59,20 @@
     ("modularization step 1/2") and in [[dwl-fork]] — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
+## Planned — [[shaders]] (designed 2026-07-15, not started)
+
+- GPU fragment shaders at two levels: **per-window** (shadow, rounded corners,
+  blur-behind, dim/focus, paper-mode reading tint) and **camera/output**
+  (color-grade/CRT/vignette over the whole [[viewport]]). Full design, phasing,
+  and risks in [[shaders]].
+- Shape is forced by the [[scene-graph]]: `wlr_scene` exposes no GLSL hook, so the
+  plan keeps the scene and drops to **raw GLES2 only at the compositing stage**
+  (offscreen texture → shader pass → output). Requires pinning `WLR_RENDERER=gles2`
+  and disabling shaders gracefully otherwise.
+- **Subsumes** the "window shadows" and "rounded corners" items below — both are
+  the first per-window shader passes. Effects land incrementally on one shared
+  offscreen-render infrastructure.
+
 ## Recently completed
 
 Pointers only — chronology is in git, detail is in each subsystem's
@@ -78,11 +92,11 @@ implementation note. Trimmed from full narrative 2026-07-15.
 
 ## v1.0 features — open
 
-- Window shadows.
+- Window shadows — now the first per-window pass of [[shaders]] (behind-quad).
 
 ## Post-v1.0 — nice to have
 
-- Rounded corners.
+- Rounded corners — a composite-time per-window pass of [[shaders]].
 - Minimap (corner overview of all windows + viewport rectangle).
 - Bookmarks (named [[viewport]] positions to jump to).
 - Magnetic snapping (windows snap to each other / to a grid).
