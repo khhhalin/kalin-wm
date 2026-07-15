@@ -36,6 +36,7 @@ static const char DEFAULT_BINDS[] =
 "bind Super+Shift+o -> toggle-overlap\n"
 "bind Super+l       -> link-pick\n"
 "bind Super+n       -> toggle-minimized\n"
+"bind Super+i       -> toggle-paper\n"
 "bind Super+grave   -> toggle-scratchpad foot --app-id=kalin-scratchpad\n"
 "bind Super+d       -> opacity -0.1\n"
 "bind Super+Shift+d -> opacity 0.1\n"

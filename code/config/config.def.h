@@ -44,9 +44,11 @@ static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You ca
 static int log_level __attribute__((unused)) = WLR_ERROR;
 
 static const Rule rules[] = {
-	/* app_id             title       monitor */
-	{ "kalin-scratchpad", NULL,       -1 }, /* scratchpad terminal (toggle-scratchpad) */
-	{ "firefox_EXAMPLE",  NULL,       -1 }, /* example: fixed-monitor rule */
+	/* app_id             title       monitor  paper */
+	{ "kalin-scratchpad", NULL,       -1,      0 }, /* scratchpad terminal (toggle-scratchpad) */
+	{ "firefox_EXAMPLE",  NULL,       -1,      0 }, /* example: fixed-monitor rule */
+	/* example: default a reader window to paper mode (see obsidian/plan/shaders.md)
+	{ "zathura",          NULL,       -1,      1 }, */
     /* default/example rule: can be changed but cannot be eliminated; at least one rule must exist */
 };
 
@@ -122,6 +124,17 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
  * shaders_dir holds the .frag files (env KALIN_SHADER_DIR overrides). */
 static const int shaders_output_enabled = 0;
 static const char *const shaders_dir = "shaders";
+
+/* Paper mode (per-window reading tint, see obsidian/plan/shaders.md): the
+ * uniforms fed to shaders/paper.frag for a paper_mode window. White maps toward
+ * paper_color (warm page), black toward paper_ink (warm near-black); strength is
+ * the passthrough..full-paper blend, preserve is how strongly saturated pixels
+ * keep their own hue. These match the paper-shader-core baked-in defaults;
+ * toggled per-window with Super+i or a window rule. */
+static const float paper_strength   = 0.9f;
+static const float paper_color[3]   = { 0.96f, 0.93f, 0.84f };
+static const float paper_ink[3]     = { 0.14f, 0.12f, 0.09f };
+static const float paper_preserve   = 0.6f;
 
 /* All keyboard/pointer bindings now live exclusively in the bind DSL —
  * see default_binds.h (embedded default, bootstrapped to
