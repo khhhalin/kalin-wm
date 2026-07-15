@@ -220,7 +220,6 @@ static void cleanup(void);
 static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
 static void closemon(Monitor *m);
-static int collect_component(Client *start, Client **out, int max);
 static void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 static void commitnotify(struct wl_listener *listener, void *data);
 int client_accept_requested_size(Client *c);
@@ -2456,7 +2455,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		int old_x = grabc->geom.x, old_y = grabc->geom.y;
 		int new_x = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabcx;
 		int new_y = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabcy;
-		int dx = new_x - old_x, dy = new_y - old_y;
+		int move_dx = new_x - old_x, move_dy = new_y - old_y;
 
 		/* Move the grabbed client to the new position. */
 		resize(grabc, (struct wlr_box){
@@ -2474,7 +2473,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * Skipped entirely for CurMoveSolo (Super+Ctrl+LMB): that mode moves
 		 * just the grabbed window, leaving its connections intact but not
 		 * dragging the rest of the component along. */
-		if (cursor_mode == CurMove && (dx || dy)) {
+		if (cursor_mode == CurMove && (move_dx || move_dy)) {
 			Client *component[256];
 			int n = collect_component(grabc, component, (int)LENGTH(component));
 			int i;
@@ -2485,8 +2484,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				base_x = component[i]->animating ? component[i]->target_geom.x : component[i]->geom.x;
 				base_y = component[i]->animating ? component[i]->target_geom.y : component[i]->geom.y;
 				client_set_target_geom(component[i], (struct wlr_box){
-					.x = base_x + dx,
-					.y = base_y + dy,
+					.x = base_x + move_dx,
+					.y = base_y + move_dy,
 					.width = component[i]->geom.width,
 					.height = component[i]->geom.height});
 			}
