@@ -179,6 +179,7 @@ cropend(const Arg *arg)
 	int base_w, base_h;
 	int screen_wx, screen_wy;
 	float cx, cy, cw, ch;
+	float crop_zf;
 	struct wlr_box newgeo;
 	
 	if (!crop_editor.active || !crop_editor.dragging) {
@@ -189,10 +190,10 @@ cropend(const Arg *arg)
 	c = crop_editor.target;
 	if (c) {
 		/* Calculate normalized crop values */
-		sx = MIN(crop_editor.start_x, crop_editor.end_x);
-		sy = MIN(crop_editor.start_y, crop_editor.end_y);
-		ex = MAX(crop_editor.start_x, crop_editor.end_x);
-		ey = MAX(crop_editor.start_y, crop_editor.end_y);
+		sx = (int)MIN(crop_editor.start_x, crop_editor.end_x);
+		sy = (int)MIN(crop_editor.start_y, crop_editor.end_y);
+		ex = (int)MAX(crop_editor.start_x, crop_editor.end_x);
+		ey = (int)MAX(crop_editor.start_y, crop_editor.end_y);
 		w = ex - sx;
 		h = ey - sy;
 		
@@ -206,7 +207,7 @@ cropend(const Arg *arg)
 		/* The window is displayed at (world - holder camera) * zoom + monitor
 		 * offset, sized geom * zoom. The crop selection is in screen pixels,
 		 * so map through the same (per-monitor) camera. */
-		float crop_zf = MON_ZOOM_SAFE(c->mon);
+		crop_zf = MON_ZOOM_SAFE(c->mon);
 		screen_wx = WORLD_TO_SCREEN_X(c->mon, wx);
 		screen_wy = WORLD_TO_SCREEN_Y(c->mon, wy);
 
@@ -236,8 +237,8 @@ cropend(const Arg *arg)
 		/* Clamp to valid range */
 		cx = MAX(0, MIN(1, cx));
 		cy = MAX(0, MIN(1, cy));
-		cw = MAX(0.1, MIN(1 - cx, cw));
-		ch = MAX(0.1, MIN(1 - cy, ch));
+		cw = MAX(0.1f, MIN(1 - cx, cw));
+		ch = MAX(0.1f, MIN(1 - cy, ch));
 		
 		/* Apply crop */
 		c->crop.active = true;
@@ -267,6 +268,10 @@ cropend(const Arg *arg)
 void
 cropdraw(void)
 {
+	int x, y, w, h;
+	int half_handle;
+	int cx, cy;
+
 	if (!crop_editor.active || !crop_editor.dragging) return;
 	if (!crop_editor.border[0] || !crop_editor.border[1]
 			|| !crop_editor.border[2] || !crop_editor.border[3])
@@ -277,10 +282,10 @@ cropdraw(void)
 	if (!crop_editor.crosshair_h || !crop_editor.crosshair_v)
 		return;
 
-	int x = MIN(crop_editor.start_x, crop_editor.end_x);
-	int y = MIN(crop_editor.start_y, crop_editor.end_y);
-	int w = (int)fabs(crop_editor.end_x - crop_editor.start_x);
-	int h = (int)fabs(crop_editor.end_y - crop_editor.start_y);
+	x = (int)MIN(crop_editor.start_x, crop_editor.end_x);
+	y = (int)MIN(crop_editor.start_y, crop_editor.end_y);
+	w = (int)fabs(crop_editor.end_x - crop_editor.start_x);
+	h = (int)fabs(crop_editor.end_y - crop_editor.start_y);
 	
 	/* Ensure minimum size */
 	if (w < 10) w = 10;
@@ -305,7 +310,7 @@ cropdraw(void)
 	}
 	
 	/* Position corner handles */
-	int half_handle = CROP_HANDLE_SIZE / 2;
+	half_handle = CROP_HANDLE_SIZE / 2;
 	/* Top-left */
 	wlr_scene_node_set_position(&crop_editor.handles[0]->node, x - half_handle, y - half_handle);
 	/* Top-right */
@@ -320,8 +325,8 @@ cropdraw(void)
 	}
 	
 	/* Update crosshair lines at center - subtle white */
-	int cx = x + w / 2;
-	int cy = y + h / 2;
+	cx = x + w / 2;
+	cy = y + h / 2;
 	wlr_scene_rect_set_size(crop_editor.crosshair_h, w / 4, 1);
 	wlr_scene_rect_set_size(crop_editor.crosshair_v, 1, h / 4);
 	wlr_scene_node_set_position(&crop_editor.crosshair_h->node, cx - w / 8, cy);
