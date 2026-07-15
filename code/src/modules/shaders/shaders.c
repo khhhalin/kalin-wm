@@ -83,14 +83,17 @@ struct shader_win {
 };
 static struct shader_win *win_list;
 
-/* Fullscreen quad shared by every fragment pass (output + window). V is flipped
- * vs. clip space: wlroots textures have a top-left origin while the GL FBO is
- * bottom-left, so clip bottom (-1) maps to texture top (v=1). NOTE: this
- * vertical orientation is the single most likely first-run bug — the window
- * path inherits the exact same assumption as the Phase 0 output pass, so a fix
- * at the live-GPU gate applies to both. */
-static const GLfloat quad_pos[] = {-1.f, -1.f,  1.f, -1.f, -1.f,  1.f,  1.f,  1.f};
-static const GLfloat quad_uv[]  = { 0.f,  1.f,  1.f,  1.f,  0.f,  0.f,  1.f,  0.f};
+/* Fullscreen quad. quad_uv (V flipped: clip bottom -> texture top) was the
+ * original shared assumption for both passes. The live GPU gate (2026-07-15,
+ * Intel GLES2) proved it WRONG for the window path — the shaded overlay came
+ * out upside-down — so paper_pass uses quad_uv_win (identity V: clip bottom ->
+ * v=0). Empirically: texture-from-buffer sampling and FBO row order cancel out
+ * on this path, no flip needed. The output pass keeps quad_uv until its own
+ * gate run — its sink is scanout, not a sampled scene buffer, so its
+ * orientation must be verified independently, not assumed from this result. */
+static const GLfloat quad_pos[]    = {-1.f, -1.f,  1.f, -1.f, -1.f,  1.f,  1.f,  1.f};
+static const GLfloat quad_uv[]     = { 0.f,  1.f,  1.f,  1.f,  0.f,  0.f,  1.f,  0.f};
+static const GLfloat quad_uv_win[] = { 0.f,  0.f,  1.f,  0.f,  0.f,  1.f,  1.f,  1.f};
 
 /* The vertex stage is fixed infrastructure (a fullscreen quad), not a
  * user-authored effect, so it lives here rather than in a .vert file. */
@@ -459,9 +462,8 @@ shaders_output_destroy(struct Monitor *m)
  * a normal wlroots render pass, paper.frag is run over it into a `shaded`
  * buffer with a raw-GLES2 pass, and `shaded` is lent back to the caller to
  * reinject as a wlr_scene_buffer. Two buffers because a fragment pass can't
- * read and write the same texture. Orientation follows the same top-left/
- * bottom-left flip assumption as the output pass (quad_uv) — unverified, see
- * the note there.
+ * read and write the same texture. Orientation: quad_uv_win (identity V),
+ * GPU-verified upright at the 2026-07-15 live gate — see the quad note above.
  * ========================================================================== */
 
 struct shader_paper_params
@@ -697,7 +699,7 @@ paper_pass(struct wlr_buffer *src, struct wlr_buffer *dst, int w, int h,
 
 	glVertexAttribPointer(paper_attr_pos, 2, GL_FLOAT, GL_FALSE, 0, quad_pos);
 	glEnableVertexAttribArray(paper_attr_pos);
-	glVertexAttribPointer(paper_attr_uv, 2, GL_FLOAT, GL_FALSE, 0, quad_uv);
+	glVertexAttribPointer(paper_attr_uv, 2, GL_FLOAT, GL_FALSE, 0, quad_uv_win);
 	glEnableVertexAttribArray(paper_attr_uv);
 
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
