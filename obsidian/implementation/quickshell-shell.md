@@ -3,6 +3,12 @@
 - The Quickshell shell is kalin-wm's companion desktop shell, written in QML on Quickshell 0.3.0.
 - It lives in `~/environment/quickshell` (a plain directory, not part of the kalin-wm git repo).
 - It provides the bottom bar, [[overview-mode]], window peek, notifications, OSD, and side panels.
+- **Bar visual language (2026-07-15): TUI boxes, one system with the
+  [[screenshot-ui|screenshot UI]] and the [[bar-tuis]].** `Theme.bar` is foot's
+  exact `#1e1915` so the docked panels merge seamlessly into the bar; widgets
+  are hairline-framed boxes (`borderSubtle` idle → amber `accent` hover/active,
+  near-square `buttonRadius: 2`), monospace text, amber = active/focused. All
+  pre-rice gray hardcodes were purged into `Theme.qml` tokens.
 
 - The shell talks to kalin-wm through two channels: the [[foreign-toplevel]] protocol (window list and control) and the [[ipc-socket]] ([[viewport]] camera state and commands).
 - Its `CompositorService` picks the kalin-wm backend when `$KALIN_IPC_SOCKET` is set, otherwise a niri backend.
