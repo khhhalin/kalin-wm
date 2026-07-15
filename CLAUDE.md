@@ -69,9 +69,13 @@ Keeping `implementation/` current is the whole discipline.
   wrong: fix them as part of the same change, not as a follow-up.
 
 ## Git & workflow
-- Commit or push only when asked. Focused commits, messages explaining *why*.
-- Don't amend/rebase/force-push shared history or add AI co-author trailers
-  unless asked.
+- **Committing is allowed without asking** — this includes fleet workers
+  committing to their own branches and the keeper merging reviewed worker
+  branches into local `main` at the integration gate. Keep commits focused,
+  messages explaining *why*.
+- **Pushing to a remote still requires explicit approval, every time** — a push
+  publishes outward. Don't amend/rebase/force-push shared history or add AI
+  co-author trailers unless asked.
 - PRs: concise summary of what changed and why, plus how it was tested.
 
 ## Safety & guardrails
