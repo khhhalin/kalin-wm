@@ -133,18 +133,16 @@ implementation note. Trimmed from full narrative 2026-07-15.
   spring-glide for group-drag / `swap_neighbor_dir()`) already shipped — see
   [[gestures]] and [[connection-graph]]. Edge-drag auto-pan is the one piece left.
 
-## Known minor bugs (found 2026-07-09, not yet fixed)
+## Known minor bugs
 
-- Cursor icon isn't reset to the pointer focus's own preferred shape after a
-  move/resize/pan interaction ends — forced back to "default" instead
-  (`code/src/dwl.c`, upstream dwl-heritage `TODO`).
-- Cursor image jumps to (0,0) after all monitors wake from DPMS/sleep
-  (`code/src/dwl.c`, `FIXME` in the output-config-apply path) — the fix
-  attempted (`wlr_cursor_move(cursor, NULL, 0, 0)`) doesn't actually restore
-  the prior position, per its own comment.
-- Cursor's very first on-screen position at compositor startup is a hacky
-  warp-to-last-position rather than a clean initial placement — minor,
-  cosmetic, low priority.
+- All three 2026-07-09 cursor bugs (shape not restored after grabs, DPMS-wake
+  image at (0,0), hacky startup warp) **fixed 2026-07-17** (fleet task
+  `cursor-bugs` — root causes in `obsidian/agents/cursor-bugs/report.md`).
+  Intentional behavior change: the cursor now starts centred in the layout
+  instead of wherever the hardware had it. **Live verification pending** —
+  grab-release shape reset, DPMS off/on cursor position (and a monitor-hotplug
+  sanity check, since the re-anchor runs on every `updatemons()`), startup
+  placement.
 
 ## Already shipped (see [[ledger]])
 

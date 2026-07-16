@@ -16,8 +16,10 @@
   - impl-note: none expected (bug fixes, no behavior-model change) — update
     [[roadmap]]'s known-bugs list is the *keeper's* job at fold-back.
   - `obsidian/agents/cursor-bugs/` (report zone)
-- Status: for-review (all three bugs fixed; see
-  `obsidian/agents/cursor-bugs/report.md` for root causes and live-verify
-  steps).
+- Status: merged (2026-07-17). All three bugs fixed; build green, all unit
+  tests pass (no new unit test — the fixes are wlroots plumbing with no seam
+  reachable by the wlroots-free tests). Live verification pending — see
+  `obsidian/agents/cursor-bugs/report.md` for root causes and per-bug
+  live-verify steps.
 - Branch: `worktree-agent-a4c6522b0d5af72cc`
 - Why: [[roadmap]] "Known minor bugs"; [[stability]]/daily-drive polish.
