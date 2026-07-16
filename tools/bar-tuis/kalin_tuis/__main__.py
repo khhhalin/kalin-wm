@@ -9,7 +9,8 @@ import sys
 
 # Keep in sync with BottomBar.qml's DockedPanel commands and
 # obsidian/bar-tuis.md.
-PANELS = ("wifi", "bluetooth", "mixer", "stats", "clipboard", "battery", "display", "disk")
+PANELS = ("wifi", "bluetooth", "mixer", "stats", "clipboard", "battery", "display", "disk",
+          "bar")  # "bar" is not a docked panel: the bottom bar itself (kitty-hosted, bar.py)
 
 
 def main() -> int:
