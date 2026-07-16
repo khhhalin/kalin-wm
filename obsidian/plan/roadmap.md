@@ -105,19 +105,16 @@ implementation note. Trimmed from full narrative 2026-07-15.
 - Trackpad [[gestures]] — 3-finger swipe pan (momentum coast) + pinch zoom.
 - [[persistence]] rework — multi-instance identity keying, graph save/restore, `mkdir -p` fix.
 - Resize grabs the nearest corner; `Super+Ctrl+BTN_LEFT` solo move — see [[connection-graph]].
+- **Session resurrection** (requested 2026-07-16, landed 2026-07-17): saved
+  clients respawn at startup via their captured `/proc` cmdline into the
+  `kalin-apps` tmux session; foot-server cmdlines substituted with
+  `foot -e kalin-term`, panels/launcher skipped, ascending-instance replay
+  order. As-built in [[persistence]]; live end-to-end restart still unverified
+  (needs a real compositor restart — see `plan/persistent-desktop.md`).
 
 ## v1.0 features — open
 
 - Window shadows — now the first per-window pass of [[shaders]] (behind-quad).
-- **Session resurrection** (requested 2026-07-16): [[persistence]] restores
-  geometry/connections but not the *processes* — after a restart the user
-  reopens apps by hand. Wanted: respawn saved clients at startup.
-  Complications scoped so far: the client PID's `/proc` cmdline is the
-  foot *server* for every terminal window (`foot --server` — respawning it
-  recreates zero windows; terminals need a tmux-session-aware path via
-  `kalin-term`), and bar-panel clients (`kalin-*-panel-*`) must be skipped
-  because DockedPanel respawns them itself. Also: saved `instance` indices
-  survive only if respawn order matches last spawn order.
 
 ## Post-v1.0 — nice to have
 

@@ -40,21 +40,25 @@ window/session that dies with the compositor is a real cost.
   `Super+Ctrl+t` → `kalin-term-pick`, `Super+grave` scratchpad →
   `... -e kalin-term scratch`. Bar TUIs / clip-picker stay ephemeral.
 
-## Phase 2 — PLANNED (kalin-wm code; sequence AFTER `paper-window-bind` merges — dwl.c is single-owner)
+## Phase 2 — auto-relaunch SHIPPED 2026-07-17; spawn-direct still planned
 
 - **spawn-direct:** a spawn variant that execs argv directly (no `kalin-apps`
   tmux wrapper) + a new bind action; point terminals at it to drop the redundant
   supervisor layer (removes the nesting that `unset TMUX` currently works
   around). Also fold the `Super+t`/`Super+Ctrl+t`/scratchpad binds into
   `default_binds.h` for the embedded default.
-- **Auto-relaunch (Level 2 for GUI):** at map, read the client's real PID via
-  `wl_client_get_credentials()` + `/proc/<pid>/cmdline` to capture its relaunch
-  argv; store it in `SavedClientState` ([[persistence]]); on startup, replay each
-  saved app once (dedup + throttle), letting `persistence_register_client()`
-  re-place it. Terminal windows relaunch as `foot → kalin-term` and re-attach
-  their surviving session; GUI apps relaunch fresh and restore their own state.
-- Startup replay wired into kalinwm `-s` so a restart auto-restores the desktop
-  (generalizes [[dev-restart]]'s manual `foot -e tmux a`).
+- **Auto-relaunch (Level 2 for GUI) — SHIPPED 2026-07-17** (fleet task
+  `session-resurrection`): at map, the client's real PID via
+  `wl_client_get_credentials()` + `/proc/<pid>/cmdline` captures its relaunch
+  command; stored flat in `SavedClientState.cmd` ([[persistence]]); at startup
+  `persistence_respawn_saved()` (called from `run()` after the kalin-apps tmux
+  bootstrap) replays each saved app once (deduped, capped at 32, ascending
+  saved-instance order), letting `persistence_register_client()` re-place it.
+  Foot-server cmdlines are substituted with `foot -e kalin-term` — but this
+  attaches a *fresh* kalin-term session, the old session name isn't
+  recoverable compositor-side. Live end-to-end restart still unverified.
+- Startup replay under kalinwm `-s` — subsumed by the above (replay is
+  unconditional at startup, not `-s`-gated).
 
 ## Honest limits
 

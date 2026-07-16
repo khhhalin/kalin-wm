@@ -14,7 +14,11 @@
     another active worker) — integration call sites go in the report for the
     keeper to wire at the gate.
 - impl-note: `obsidian/implementation/persistence.md`.
-- Status: for-review
+- Status: merged (2026-07-17, merge commit 6ba6db3; keeper wired the single
+  `persistence_respawn_saved()` call into `run()` at the gate — commit 8552627).
+  Build green, all unit tests pass; worker's ad-hoc integration test (real
+  `persistence.o` + fake tmux shim) verified capture/quoting/skip/ordering.
+  **Live end-to-end restart unverified** — needs a real compositor restart.
 - Branch: `worktree-agent-ab85fcd19538e6071`
 - Why: [[roadmap]] "v1.0 features — open" — Session resurrection (requested
   2026-07-16); design intent also in `plan/persistent-desktop.md` Phase 2.
