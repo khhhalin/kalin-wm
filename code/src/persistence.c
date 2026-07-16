@@ -31,9 +31,17 @@ typedef struct RegisteredClient {
 	char appid[128];
 	char title[128];
 	int instance;
+	/* Relaunch command captured at registration (see SavedClientState.cmd)
+	 * — snapshotted here, like appid/title, so save time doesn't depend on
+	 * /proc/<pid> still being readable. Empty when capture failed. */
+	char cmd[512];
 	void *client; /* Client*, opaque here */
 	struct RegisteredClient *next;
 } RegisteredClient;
+
+/* Upper bound on startup respawns — a corrupt or absurdly large save file
+ * must not fork-bomb the session. Way above any realistic window count. */
+#define RESPAWN_MAX 32
 
 /* How many times each (appid,title) pair has been registered this run so
  * far — the source of each new client's "instance" number. */
@@ -332,6 +340,7 @@ loaded_state_from_object(const char *obj)
 	state->crop_saved_base = json_find_int(obj, "crop_saved_base", 0);
 	state->isfullscreen = json_find_int(obj, "isfullscreen", 0);
 	state->isontop = json_find_int(obj, "isontop", 0);
+	json_find_string(obj, "cmd", state->cmd, sizeof(state->cmd));
 }
 
 static void
@@ -490,6 +499,124 @@ find_saved_state(const char *appid, const char *title, int instance)
 	return NULL;
 }
 
+/* Append one argv word to a `sh -c`-safe command string, single-quoting it
+ * unless it's entirely shell-neutral characters, so the respawn shell splits
+ * the command back into the exact argv it was captured from. Returns 0 on
+ * overflow — the caller must then discard the whole command, since
+ * respawning a truncated command line is worse than not respawning. */
+static int
+append_shell_word(char *dst, size_t dstlen, size_t *pos, const char *word)
+{
+	const char *p;
+	int needs_quotes = (word[0] == '\0');
+
+	for (p = word; *p; p++) {
+		int ch = (unsigned char)*p;
+		if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+				|| (ch >= '0' && ch <= '9') || strchr("_-./:=+,@%^", ch))) {
+			needs_quotes = 1;
+			break;
+		}
+	}
+
+#define APPEND_CH(ch) do { \
+		if (*pos + 1 >= dstlen) \
+			return 0; \
+		dst[(*pos)++] = (ch); \
+		dst[*pos] = '\0'; \
+	} while (0)
+
+	if (*pos > 0)
+		APPEND_CH(' ');
+	if (!needs_quotes) {
+		for (p = word; *p; p++)
+			APPEND_CH(*p);
+		return 1;
+	}
+	APPEND_CH('\'');
+	for (p = word; *p; p++) {
+		if (*p == '\'') {
+			/* close quote, escaped literal quote, reopen: '\'' */
+			const char *esc = "'\\''";
+			const char *e;
+			for (e = esc; *e; e++)
+				APPEND_CH(*e);
+		} else {
+			APPEND_CH(*p);
+		}
+	}
+	APPEND_CH('\'');
+	return 1;
+#undef APPEND_CH
+}
+
+/* Capture the shell command that relaunches this client (see
+ * SavedClientState.cmd for the full contract). The pid comes from the
+ * client's Wayland socket credentials; its /proc cmdline is the ground
+ * truth for what to re-exec — with one known trap: for foot in server mode
+ * every terminal window's Wayland client is the *daemon* ("foot --server"),
+ * and respawning that recreates zero windows, so it's substituted with the
+ * tmux-session-aware terminal command instead. Best-effort: any failure
+ * leaves dst empty and the client restores layout-only. */
+static void
+capture_launch_cmd(Client *c, char *dst, size_t dstlen)
+{
+	char path[64];
+	char raw[2048];
+	FILE *fp;
+	size_t rawlen, off, pos = 0;
+	pid_t pid = 0;
+	int first_word = 1, argv0_is_foot = 0;
+
+	if (!dst || dstlen == 0)
+		return;
+	dst[0] = '\0';
+	if (!c || !c->surface.xdg || !c->surface.xdg->client
+			|| !c->surface.xdg->client->client)
+		return;
+	wl_client_get_credentials(c->surface.xdg->client->client, &pid, NULL, NULL);
+	if (pid <= 0)
+		return;
+	snprintf(path, sizeof(path), "/proc/%d/cmdline", (int)pid);
+	fp = fopen(path, "r");
+	if (!fp)
+		return;
+	rawlen = fread(raw, 1, sizeof(raw) - 1, fp);
+	fclose(fp);
+	if (rawlen == 0)
+		return;
+	/* cmdline is NUL-separated argv; make sure a truncated read still
+	 * terminates the final word. */
+	raw[rawlen] = '\0';
+
+	for (off = 0; off < rawlen; off += strlen(raw + off) + 1) {
+		const char *word = raw + off;
+
+		/* The save file's hand-rolled parser scans raw braces/brackets to
+		 * delimit objects and arrays — a command containing any of them
+		 * would corrupt every entry after it. Rare enough that dropping
+		 * the command (layout-only restore) beats corrupting the file. */
+		if (strpbrk(word, "{}[]")) {
+			dst[0] = '\0';
+			return;
+		}
+		if (first_word) {
+			const char *base = strrchr(word, '/');
+			base = base ? base + 1 : word;
+			argv0_is_foot = (strcmp(base, "foot") == 0);
+			first_word = 0;
+		} else if (argv0_is_foot
+				&& (strcmp(word, "--server") == 0 || strcmp(word, "-s") == 0)) {
+			snprintf(dst, dstlen, "foot -e kalin-term");
+			return;
+		}
+		if (!append_shell_word(dst, dstlen, &pos, word)) {
+			dst[0] = '\0';
+			return;
+		}
+	}
+}
+
 int
 persistence_register_client(void *client_ptr)
 {
@@ -515,6 +642,7 @@ persistence_register_client(void *client_ptr)
 	snprintf(reg->appid, sizeof(reg->appid), "%s", appid ? appid : "");
 	snprintf(reg->title, sizeof(reg->title), "%s", title ? title : "");
 	reg->instance = instance;
+	capture_launch_cmd(c, reg->cmd, sizeof(reg->cmd));
 	reg->client = c;
 	reg->next = registered_clients;
 	registered_clients = reg;
@@ -660,8 +788,16 @@ save_client_cb(const SavedClientState *unused, void *data)
 		c->crop.active, c->crop.x, c->crop.y, c->crop.w, c->crop.h);
 	fprintf(ctx->fp, ",\"crop_base_w\":%d,\"crop_base_h\":%d,\"crop_saved_base\":%d",
 		c->crop.base_w, c->crop.base_h, c->crop.saved_base);
-	fprintf(ctx->fp, ",\"isfullscreen\":%d,\"isontop\":%d}",
+	fprintf(ctx->fp, ",\"isfullscreen\":%d,\"isontop\":%d",
 		c->isfullscreen, c->isontop);
+	/* Checked at save time, not capture time: a panel's backing client maps
+	 * (and registers) *before* DockedPanel docks it, so ispanel is only
+	 * trustworthy here. An empty cmd means "layout-only, never respawn" —
+	 * DockedPanel relaunches its own backing terminals at shell startup,
+	 * and respawning them again here would double them. */
+	fputs(",\"cmd\":", ctx->fp);
+	json_escape(ctx->fp, (reg && !c->ispanel) ? reg->cmd : "");
+	fputs("}", ctx->fp);
 }
 
 /* Save every live connection-graph edge, identified by each endpoint's
@@ -739,6 +875,106 @@ persistence_save(void)
 		return -1;
 	}
 	return 0;
+}
+
+/* Saved entries that must never be respawned even when a command was
+ * captured, matched by appid as a second line of defense behind the
+ * save-time ispanel check (a panel saved in the race window between mapping
+ * and being docked would otherwise slip through): shell-panel chrome is
+ * relaunched by DockedPanel itself, and the launcher is a transient toggle
+ * window (spawning it at startup would pop it open uninvited). */
+static int
+respawn_skip_appid(const char *appid)
+{
+	if (!appid || !appid[0])
+		return 0;
+	if (strncmp(appid, "kalin-", 6) == 0 && strstr(appid, "-panel"))
+		return 1;
+	if (strcmp(appid, "kalin-launcher") == 0)
+		return 1;
+	return 0;
+}
+
+/* Launch one saved command as a window in the persistent "kalin-apps" tmux
+ * session — the same path spawn_named() (dwl.c) uses, so the respawned app
+ * inherits the tmux server's captured WAYLAND_DISPLAY/KALIN_IPC_SOCKET and
+ * can reach this compositor. `sh -c` re-splits the captured (shell-quoted)
+ * command back into its argv. The tmux client exits as soon as the window
+ * is created, so waiting for it (same as run()'s session bootstrap does) is
+ * a fast local round trip that serializes window-creation order — without
+ * it the forked clients race and the instance-ordering pass below would be
+ * meaningless. A failed waitpid just means dwl.c's SIGCHLD reaper won the
+ * race for an already-exited child, which is fine. */
+static int
+respawn_exec(const char *cmd, const char *name)
+{
+	pid_t pid;
+
+	if (!cmd || !cmd[0])
+		return -1;
+	pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "respawn: fork failed for %s: %s", cmd, strerror(errno));
+		return -1;
+	}
+	if (pid == 0) {
+		setsid();
+		execlp("tmux", "tmux", "new-window", "-t", "kalin-apps",
+			"-n", (name && name[0]) ? name : "respawn",
+			"--", "sh", "-c", cmd, NULL);
+		_exit(1);
+	}
+	if (waitpid(pid, NULL, 0) < 0 && errno != ECHILD)
+		wlr_log(WLR_ERROR, "respawn: waitpid for %s: %s", cmd, strerror(errno));
+	wlr_log(WLR_DEBUG, "respawn: relaunched '%s' in kalin-apps", cmd);
+	return 0;
+}
+
+void
+persistence_respawn_saved(void)
+{
+	LoadedStateNode *node, *prior;
+	int instance, max_instance = 0, spawned = 0;
+
+	if (!persistence_ready)
+		persistence_init();
+
+	for (node = loaded_states; node; node = node->next)
+		if (node->state.instance > max_instance)
+			max_instance = node->state.instance;
+
+	/* Replay in ascending saved-instance order (all 0s, then all 1s, ...):
+	 * instance numbers are assigned by map order on the next run, so
+	 * launching an appid's windows in their saved order is the only lever
+	 * we have to make this run's counters line up with the save file.
+	 * Best-effort by design — two windows racing to map can still swap. */
+	for (instance = 0; instance <= max_instance && spawned < RESPAWN_MAX; instance++) {
+		for (node = loaded_states; node && spawned < RESPAWN_MAX; node = node->next) {
+			if (node->state.instance != instance)
+				continue;
+			if (!node->state.cmd[0])
+				continue;
+			if (respawn_skip_appid(node->state.appid))
+				continue;
+			/* A well-formed save never repeats an (identity,instance)
+			 * pair, but this list came from disk — don't double-launch
+			 * on a corrupt or hand-edited file. The list is built by
+			 * prepending (reverse file order), so scanning *forward*
+			 * from here makes the earliest file entry the one that
+			 * launches. */
+			for (prior = node->next; prior; prior = prior->next)
+				if (prior->state.instance == instance
+						&& strcmp(identity_key(prior->state.appid, prior->state.title),
+							identity_key(node->state.appid, node->state.title)) == 0)
+					break;
+			if (prior)
+				continue;
+			if (respawn_exec(node->state.cmd, node->state.appid) == 0)
+				spawned++;
+		}
+	}
+	if (spawned > 0)
+		wlr_log(WLR_INFO, "respawn: relaunched %d saved client(s)", spawned);
 }
 
 int

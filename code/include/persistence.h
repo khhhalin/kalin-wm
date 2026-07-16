@@ -39,6 +39,19 @@ typedef struct {
 	int crop_saved_base;
 	int isfullscreen;
 	int isontop;
+	/* Shell command that relaunches this client, captured at map time from
+	 * /proc/<pid>/cmdline (pid via wl_client_get_credentials()) — every
+	 * spawn already runs inside the persistent "kalin-apps" tmux session,
+	 * so the *compositor* never knows the command and has to recover it
+	 * from the client itself. Empty = layout-only restore (no respawn):
+	 * either capture failed, the command couldn't be represented (the flat
+	 * JSON parser brace-scans, so '{' '}' '[' ']' anywhere in the string
+	 * would corrupt parsing), or the client is shell-panel chrome that
+	 * DockedPanel respawns itself. A foot-server client (cmdline
+	 * "foot --server" — respawning that daemon recreates zero windows) is
+	 * substituted with "foot -e kalin-term", which reattaches the tmux
+	 * content-persistence layer instead. */
+	char cmd[512];
 } SavedClientState;
 
 /* One saved connection-graph edge (Client.neighbor[]), identified by each
@@ -81,6 +94,21 @@ int persistence_load(CanvasState *out);
  * managed client, right after c->mon/c->geom are set but before any
  * placement fallback runs. */
 int persistence_register_client(void *client);
+
+/* Best-effort session resurrection: replay every saved client's captured
+ * launch command (SavedClientState.cmd, see above) as a new window in the
+ * persistent "kalin-apps" tmux session, so a compositor restart brings the
+ * apps themselves back — persistence_register_client() then re-places each
+ * one as it maps. Call exactly once at startup, from run() right after the
+ * kalin-apps session bootstrap (the tmux server must already exist and
+ * carry this compositor's WAYLAND_DISPLAY, or respawned apps can't reach
+ * us). Entries are replayed in ascending saved-instance order so that, if
+ * apps map in launch order, this run's per-appid instance counters assign
+ * the same numbers the save file uses (best-effort: apps that race each
+ * other to map can still swap instances). Skips entries with no command,
+ * shell-panel chrome, and duplicates; capped, and never fails startup — a
+ * bad entry is skipped, not fatal. */
+void persistence_respawn_saved(void);
 
 /* Undo persistence_register_client()'s bookkeeping when a client is
  * destroyed, so a later save doesn't describe a stale pointer and a later

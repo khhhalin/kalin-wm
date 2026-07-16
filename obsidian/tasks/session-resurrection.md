@@ -10,28 +10,24 @@
   - `code/include/persistence.h`
   - `obsidian/implementation/persistence.md` (impl note)
   - `obsidian/agents/session-resurrection/` (report zone)
-  - **NOT** `code/src/dwl.c` and **NOT** `code/include/kalin.h` — both are owned
-    by another active task. Keep all per-client bookkeeping inside persistence's
-    own registry (it already keys entries by client pointer). Where an
-    integration call into dwl.c is unavoidable (e.g. triggering respawn at
-    startup after the tmux `kalin-apps` session is bootstrapped in `run()`),
-    expose a clean function in `persistence.h` and specify the exact one-line
-    call site in your report — the keeper wires it at the gate.
+  - Explicitly out of scope: `code/src/dwl.c`, `code/include/kalin.h` (owned by
+    another active worker) — integration call sites go in the report for the
+    keeper to wire at the gate.
 - impl-note: `obsidian/implementation/persistence.md`.
-- Status: running
-- Branch: (worker reports back)
+- Status: for-review
+- Branch: `worktree-agent-ab85fcd19538e6071`
 - Why: [[roadmap]] "v1.0 features — open" — Session resurrection (requested
-  2026-07-16).
+  2026-07-16); design intent also in `plan/persistent-desktop.md` Phase 2.
 
 ## Known complications (scoped 2026-07-16, from the roadmap)
 - **The /proc cmdline trap**: the Wayland client PID's `/proc/<pid>/cmdline` is
   the foot *server* (`foot --server`) for every terminal window — respawning it
-  recreates zero windows. Read `implementation/spawn.md` first: since 2026-07-12
-  every spawn is a `tmux new-window -t kalin-apps -n <name> -- <cmd>...` in the
-  persistent `kalin-apps` tmux session. Consider whether the right identity to
-  save is the tmux-window-level command rather than the client PID's cmdline —
-  tmux's server outlives the compositor, which may make terminal windows
-  recoverable via a tmux-session-aware path (`kalin-term`).
+  recreates zero windows; terminals need the tmux-session-aware path
+  (`foot -e kalin-term`).
+- **tmux-based spawning**: every spawn is a `tmux new-window -t kalin-apps`
+  ([[spawn]], since 2026-07-12) — the compositor never knows the launched
+  command, and respawn must go through the same tmux session so apps inherit
+  its captured `WAYLAND_DISPLAY`.
 - **Skip bar panels**: clients with appid `kalin-*-panel-*` must not be
   respawned — DockedPanel respawns them itself.
 - **Instance ordering**: saved `instance` indices only match if respawn order
@@ -39,6 +35,12 @@
   `instance` order.
 - **Flat JSON only**: the hand-rolled parser is non-nesting-safe — any new
   saved field must stay flat inside the existing `clients` objects (no nested
-  objects/arrays). Bump `version` if the format changes incompatibly.
+  objects/arrays, no raw `{}[]` in strings).
 - Respawn must be best-effort and non-fatal: a saved command that no longer
   exists must not break startup.
+
+## Note
+The keeper's copy of this note was uncommitted on `main` when the worker's
+worktree branched, so the worker reconstructed its own from `plan/roadmap.md`
+and `plan/persistent-desktop.md` — the two copies agreed on the contract and
+were reconciled at the gate (add/add merge).
