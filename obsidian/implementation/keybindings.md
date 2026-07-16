@@ -48,6 +48,10 @@ Window management ([[connection-graph]]):
 
 Camera ([[viewport]]):
 - `Super+Shift+Arrows` / `Super+Shift+HJKL` — [[pan]]
+- `Super+ScrollUp/Down/Left/Right` (two-finger touchpad scroll or wheel while
+  Super held) — [[pan]]; the touchpad replacement for the 3-finger swipe that
+  [[gestures|semi-MT pads]] can never emit. Finger deltas accumulate to one
+  dispatch per `scroll_bind_step` of travel (see [[scrolling]]).
 - `Super+Ctrl+equal` / `Super+Ctrl+minus` — [[zoom]] in / out *(zoom is parked — see [[zoom]])*
 - `Super+0` — [[fit-all]] (`viewport.fit`)
 - `Super+BackSpace` — reset camera (`viewport.reset`)

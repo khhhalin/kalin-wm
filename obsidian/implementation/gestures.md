@@ -1,5 +1,17 @@
 # Trackpad gestures
 
+- **Hardware reality check (2026-07-16): none of this can fire on Kalin's own
+  laptop.** The built-in pad is a `SynPS/2 Synaptics TouchPad` reporting
+  semi-MT (`PROP=9` — bounding box + finger count, no per-finger tracking),
+  and libinput deliberately offers **no gesture capability on semi-MT pads**
+  (`libinput list-devices`: `Capabilities: pointer`, no `gesture`), so
+  swipe/pinch events are never emitted. The code below stays (correct on real
+  multitouch pads, e.g. an external one); the daily-driver pan gesture on
+  this hardware is `Super+two-finger-scroll` → `viewport.pan` instead — see
+  [[keybindings]] and [[scrolling]]. Semi-MT is also why two-finger scroll
+  itself is jittery here (midpoint derived from a noisy bounding box), which
+  the `scroll_smoothing` filter in [[scrolling]] compensates.
+
 - Trackpad gesture navigation for the [[viewport]] camera: a 3-finger swipe
   pans, a pinch zooms. Added 2026-07-09, inspired by [[driftwm]]'s
   gesture-driven canvas navigation (kalin-wm had zero touchpad gesture

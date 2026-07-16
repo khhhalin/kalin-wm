@@ -185,6 +185,7 @@ int  binds_active(void);               /* nonzero once an engine is loaded */
 int  bind_dispatch_key(uint32_t mods, xkb_keysym_t sym);
 int  bind_dispatch_button(uint32_t mods, uint32_t button);
 int  bind_dispatch_scroll(uint32_t mods, uint32_t dir);
+int  bind_scroll_bound(uint32_t mods, uint32_t dir);   /* match only, no run */
 /* action_id resolved by the most recent bind_dispatch_*() call that actually
  * matched a binding, or -1 if the last call matched nothing. Lets callers (e.g.
  * keyboard.c's repeat handling) check bind_action_is_repeatable() without

@@ -838,7 +838,13 @@ axisnotify(struct wl_listener *listener, void *data)
 	struct wlr_pointer_axis_event *event = data;
 	double delta, factor;
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
-	/* Scroll bindings: a modifier + a discrete wheel tick can fire an action. */
+	/* Scroll bindings: a modifier + scroll can fire an action. A wheel
+	 * dispatches once per discrete tick; touchpad finger scroll is a stream
+	 * of fine deltas instead, so those accumulate and dispatch once per
+	 * scroll_bind_step (config.h) of travel. While a matching bind exists
+	 * every finger event is swallowed — sub-step deltas must not leak to
+	 * the client mid-gesture — and the tap/hold gesture is interrupted so
+	 * holding the modifier through a long pan can't pop its hold bind. */
 	if (binds_active() && event->delta != 0) {
 		struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
 		uint32_t mods = kb ? wlr_keyboard_get_modifiers(kb) : 0;
@@ -848,8 +854,24 @@ axisnotify(struct wl_listener *listener, void *data)
 				dir = event->delta < 0 ? SCROLL_UP : SCROLL_DOWN;
 			else
 				dir = event->delta < 0 ? SCROLL_LEFT : SCROLL_RIGHT;
-			if (bind_dispatch_scroll(mods, dir))
+			if (event->source == WL_POINTER_AXIS_SOURCE_WHEEL
+					|| event->source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT) {
+				if (bind_dispatch_scroll(mods, dir))
+					return;
+			} else if (bind_scroll_bound(mods, dir)) {
+				static double acc[2];
+				double step = scroll_bind_step >= 1.0 ? scroll_bind_step : 1.0;
+				int vert = event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL;
+				bind_gesture_interrupt();
+				if (acc[vert] != 0.0 && (acc[vert] > 0.0) != (event->delta > 0.0))
+					acc[vert] = 0.0; /* direction flip: drop stale partial travel */
+				acc[vert] += event->delta;
+				while (fabs(acc[vert]) >= step) {
+					acc[vert] -= copysign(step, acc[vert]);
+					bind_dispatch_scroll(mods, dir);
+				}
 				return;
+			}
 		}
 	}
 	/* Per-source speed factor + optional finger-scroll smoothing (config.h).

@@ -128,6 +128,10 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 static const double scroll_factor_finger = 1.0;
 static const double scroll_factor_wheel = 1.0;
 static const double scroll_smoothing = 0.0;
+/* Finger-scroll travel per bound-action dispatch (modifier+scroll binds,
+ * e.g. Super+scroll camera pan): one wheel notch ≈ 15. Lower fires the
+ * bound action more often per swipe. */
+static const double scroll_bind_step = 15.0;
 
 /* Shaders — see obsidian/plan/shaders.md. Master switch for the camera/output
  * fragment-shader pass. Requires the GLES2 renderer (WLR_RENDERER=gles2); on

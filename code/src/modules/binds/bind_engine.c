@@ -72,10 +72,10 @@ run_binding(const Binding *b)
     bind_invoke(b->action_id, &b->arg);
 }
 
-/* Scan one mode for a matching key/button/scroll binding. Returns 1 if run. */
-static int
-mode_dispatch(BindMode *mode, TriggerKind kind, uint32_t mods,
-              xkb_keysym_t sym, uint32_t code)
+/* Scan one mode for a matching key/button/scroll binding. */
+static Binding *
+mode_match(BindMode *mode, TriggerKind kind, uint32_t mods,
+           xkb_keysym_t sym, uint32_t code)
 {
     int i;
     for (i = 0; i < mode->count; i++) {
@@ -94,10 +94,21 @@ mode_dispatch(BindMode *mode, TriggerKind kind, uint32_t mods,
         } else if (code != s->code) {
             continue;
         }
-        run_binding(b);
-        return 1;
+        return b;
     }
-    return 0;
+    return NULL;
+}
+
+/* Returns 1 if a matching binding was found and run. */
+static int
+mode_dispatch(BindMode *mode, TriggerKind kind, uint32_t mods,
+              xkb_keysym_t sym, uint32_t code)
+{
+    Binding *b = mode_match(mode, kind, mods, sym, code);
+    if (!b)
+        return 0;
+    run_binding(b);
+    return 1;
 }
 
 /* Try the active mode, then fall through to "default" (so global binds keep
@@ -138,6 +149,23 @@ int
 bind_dispatch_scroll(uint32_t mods, uint32_t dir)
 {
     return dispatch(TRIG_SCROLL, mods, XKB_KEY_NoSymbol, dir);
+}
+
+/* Existence check without running anything: axisnotify uses it to swallow
+ * *every* scroll event of a bound (mods, dir) — a touchpad's fine-grained
+ * finger deltas accumulate toward a dispatch step, and the sub-step events
+ * must not leak to the client under the cursor mid-gesture. */
+int
+bind_scroll_bound(uint32_t mods, uint32_t dir)
+{
+    if (!g_engine)
+        return 0;
+    if (mode_match(&g_engine->modes[g_engine->active_mode], TRIG_SCROLL,
+                   mods, XKB_KEY_NoSymbol, dir))
+        return 1;
+    return g_engine->active_mode != 0
+        && mode_match(&g_engine->modes[0], TRIG_SCROLL,
+                      mods, XKB_KEY_NoSymbol, dir) != NULL;
 }
 
 /* ===== modifier `tap` / `hold` gesture timing =====

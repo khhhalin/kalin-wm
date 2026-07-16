@@ -8,9 +8,18 @@
 ## Event path
 
 - `axisnotify()` (`code/src/dwl.c`) receives every `wlr_pointer_axis_event`.
-  Modifier+wheel scroll binds get first refusal (`bind_dispatch_scroll`,
-  see [[keybindings]]); everything else is scaled/smoothed and forwarded
-  to the focused client via `wlr_seat_pointer_notify_axis()`.
+  Modifier+scroll binds get first refusal (see [[keybindings]]); everything
+  else is scaled/smoothed and forwarded to the focused client via
+  `wlr_seat_pointer_notify_axis()`.
+- Bind dispatch is source-aware: a wheel dispatches once per discrete tick
+  (as before), but touchpad finger scroll is a ~90 Hz stream of fine deltas,
+  so those **accumulate and dispatch once per `scroll_bind_step` of travel**
+  (default 15.0 ≈ one wheel notch; sign flip drops partial travel). While a
+  matching bind exists (`bind_scroll_bound()`, match-only sibling of
+  `bind_dispatch_scroll()` in `bind_engine.c`) every finger event is
+  swallowed so sub-step deltas can't leak to the client mid-gesture, and
+  `bind_gesture_interrupt()` keeps a long Super-held pan from popping the
+  Super `hold` window-menu bind.
 
 ## Knobs
 
