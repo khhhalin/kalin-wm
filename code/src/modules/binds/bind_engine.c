@@ -185,6 +185,13 @@ static Binding *hold_shown;   /* fired; menu up, waiting for the modifier releas
 static int hold_interrupted;
 static Binding *tap_armed;    /* candidate quick-tap; fires on a prompt release */
 static uint32_t tap_press_msec;
+static int nonmod_down;       /* non-modifier keys currently held. Guards against
+                               * rolled chords: with e.g. P already down when Super
+                               * is pressed, the interrupt-on-press check never sees
+                               * P, the tap armed anyway, and releasing Super popped
+                               * the launcher mid-chord (found live). Clamped at 0
+                               * because a locked session eats press events but not
+                               * necessarily the paired release. */
 
 /* A modifier-only bind for the given edge whose mods match (active mode, then
  * default). */
@@ -254,6 +261,7 @@ bind_gesture_key(uint32_t mods, int is_modifier_key, int pressed, uint32_t time_
         Binding *b;
         if (!is_modifier_key) {
             /* Any other key press interrupts an arming gesture. */
+            nonmod_down++;
             bind_gesture_interrupt();
             return;
         }
@@ -264,6 +272,10 @@ bind_gesture_key(uint32_t mods, int is_modifier_key, int pressed, uint32_t time_
         if (tap_armed
                 && BIND_CLEANMASK(mods) != BIND_CLEANMASK(tap_armed->trig.steps[0].mods))
             tap_armed = NULL;
+        /* A rolled chord (non-modifier already held when the modifier lands)
+         * is still a chord — never arm a gesture under it. */
+        if (nonmod_down > 0)
+            return;
         if (!hold_armed && !hold_shown && (b = find_gesture_bind(mods, EDGE_HOLD)) != NULL) {
             int ms = b->hold_ms > 0 ? b->hold_ms : BIND_HOLD_DEFAULT_MS;
             hold_armed = b;
@@ -277,7 +289,14 @@ bind_gesture_key(uint32_t mods, int is_modifier_key, int pressed, uint32_t time_
             tap_armed = b;
             tap_press_msec = time_msec;
         }
-    } else if (is_modifier_key) {
+    } else if (!is_modifier_key) {
+        /* Releasing a chord key is still chord activity — without this, the
+         * tail of a rolled chord (modifier re-pressed while the letter is
+         * lifting) can slip back into an armable state. */
+        if (nonmod_down > 0)
+            nonmod_down--;
+        bind_gesture_interrupt();
+    } else {
         /* Modifier release: cancel arming hold, hide a shown menu, or fire a tap
          * once the gesture modifier lifts. */
         if (hold_armed

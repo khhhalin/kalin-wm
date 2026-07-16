@@ -12,6 +12,7 @@
  * Separately-compiled TU: links against dwl.c's externed viewport global
  * and viewport_camera_tick/status_mark_dirty/selmon via kalin.h. */
 #include "kalin.h"
+#include "binds.h"   /* bind_gesture_interrupt(): gestures cancel tap/hold */
 
 #define GESTURE_PAN_FINGERS 3 /* fewer (1-2) already mean click-drag/scroll */
 
@@ -43,6 +44,10 @@ gesture_swipe_begin(struct wl_listener *listener, void *data)
 
 	if (event->fingers != GESTURE_PAN_FINGERS)
 		return;
+	/* A trackpad gesture during a held modifier is chord-like input: without
+	 * this, swiping while Super was down popped the tap-launcher when Super
+	 * lifted (same class as the button-press interrupt in buttonpress()). */
+	bind_gesture_interrupt();
 	g->swipe_active = 1;
 	g->swipe_last_msec = event->time_msec;
 	g->vel_x = 0.0f;
@@ -113,6 +118,7 @@ gesture_pinch_begin(struct wl_listener *listener, void *data)
 {
 	struct GestureDevice *g = wl_container_of(listener, g, pinch_begin);
 	(void)data;
+	bind_gesture_interrupt();
 	g->pinch_active = 1;
 	g->pinch_begin_zoom = selmon ? selmon->cam.zoom : 1.0f;
 	if (selmon) {
