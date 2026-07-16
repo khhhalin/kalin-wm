@@ -100,6 +100,15 @@ implementation note. Trimmed from full narrative 2026-07-15.
 ## v1.0 features — open
 
 - Window shadows — now the first per-window pass of [[shaders]] (behind-quad).
+- **Session resurrection** (requested 2026-07-16): [[persistence]] restores
+  geometry/connections but not the *processes* — after a restart the user
+  reopens apps by hand. Wanted: respawn saved clients at startup.
+  Complications scoped so far: the client PID's `/proc` cmdline is the
+  foot *server* for every terminal window (`foot --server` — respawning it
+  recreates zero windows; terminals need a tmux-session-aware path via
+  `kalin-term`), and bar-panel clients (`kalin-*-panel-*`) must be skipped
+  because DockedPanel respawns them itself. Also: saved `instance` indices
+  survive only if respawn order matches last spawn order.
 
 ## Post-v1.0 — nice to have
 
