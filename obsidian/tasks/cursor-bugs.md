@@ -1,6 +1,6 @@
 # Task: cursor-bugs
 
-- Owner: fleet worker (worktree-isolated). **Not yet dispatched.**
+- Owner: fleet worker (worktree-isolated).
 - Objective: fix the three known cursor bugs (found 2026-07-09, listed in
   [[roadmap]] "Known minor bugs"):
   1. Cursor icon isn't reset to the pointer focus's own preferred shape after a
@@ -16,7 +16,7 @@
   - impl-note: none expected (bug fixes, no behavior-model change) — update
     [[roadmap]]'s known-bugs list is the *keeper's* job at fold-back.
   - `obsidian/agents/cursor-bugs/` (report zone)
-- Status: todo — **blocked on [[multicam-phase2]]** (that task owns `dwl.c`;
-  dispatch this one only after it merges).
+- Status: running (dispatched 2026-07-17, after [[multicam-phase2]] merged and
+  released `dwl.c`).
 - Branch: (worker reports back)
 - Why: [[roadmap]] "Known minor bugs"; [[stability]]/daily-drive polish.
