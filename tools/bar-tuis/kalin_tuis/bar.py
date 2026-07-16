@@ -16,6 +16,13 @@ Data:
     foreign-toplevel); click sends "focus <id>" (unminimize+focus+center).
   - battery /sys, volume wpctl, cpu/mem psutil — cheap polls, matching the
     backend table in obsidian/bar-tuis.md.
+
+Panel toggling: clicking a status group docks/undocks its kalin_tuis panel
+(the foot-hosted TUIs BottomBar's DockedPanel used to own). Click-toggle
+only — DockedPanel's hover-open/grace dance needs cursor-over-QML state the
+bar no longer has; dock_hover-based auto-close is a possible follow-up.
+KALIN_BAR_OUTPUT (set by BarHost) names this bar's output so panels land on
+the right monitor; geometry comes from the "outputs" state broadcast.
 """
 from __future__ import annotations
 
@@ -24,6 +31,7 @@ import glob
 import json
 import os
 import socket
+import subprocess
 from datetime import datetime
 
 from textual.app import App, ComposeResult
@@ -48,6 +56,12 @@ EDGE = "#4a3625"
 ERROR = "#e0552f"
 
 METER_GLYPHS = "▁▂▃▄▅▆▇█"
+
+# Panel geometry — keep in sync with BarConfig.qml's tuiPanelWidth/Height
+# (sized for 80x24 terminal cells; btop refuses smaller) and barHeight.
+PANEL_W, PANEL_H, BAR_H = 700, 480, 44
+
+BAR_OUTPUT = os.environ.get("KALIN_BAR_OUTPUT", "")
 
 ICON_DIRS = (
     "/run/current-system/sw/share/icons/hicolor/{size}/apps/{name}.png",
@@ -81,11 +95,6 @@ def meter(pct: float, cells: int = 3) -> str:
             g = METER_GLYPHS[min(7, int(level * 7.999))]
             out.append(f"[bold {AMBER}]{g}[/]")
     return "".join(out)
-
-
-def group(glyph: str, body: str, hot: bool = False) -> str:
-    bracket = f"bold {AMBER}" if hot else EDGE
-    return (f"[{bracket}]⟨[/] [{LABEL}]{glyph}[/] {body} [{bracket}]⟩[/]")
 
 
 SEP = f" [{DIM}]│[/] "
@@ -125,6 +134,48 @@ def ipc_send(cmd: str) -> None:
         pass  # compositor gone = bar is about to die with it anyway
 
 
+# Toggleable panels: group key -> (appid segment, kalin-bar-tui name, glyph).
+# The appid segments match what BottomBar's DockedPanels used
+# (kalin-<seg>-panel-<output>) so panel instances spawned before the cutover
+# keep being reused after it.
+PANEL_DEFS = {
+    "stats":   ("stats",   "stats",     "󰍛"),
+    "battery": ("battery", "battery",   "󰁹"),
+    "volume":  ("volume",  "mixer",     "󰕾"),
+    "wifi":    ("wifi",    "wifi",      "󰤨"),
+    "bt":      ("bt",      "bluetooth", "󰂯"),
+    "disk":    ("disk",    "disk",      "󰋊"),
+    "display": ("display", "display",   "󰍹"),
+    "clip":    ("clip",    "clipboard", "󰅌"),
+}
+
+
+class PanelGroup(Static):
+    """One right-side ⟨ ⟩ group; click toggles its docked panel TUI. Body
+    markup (meters/values) is pushed by the app's pollers; glyph-only groups
+    (wifi/bt/...) just show their icon."""
+
+    def __init__(self, key: str, widget_id: str) -> None:
+        super().__init__("", id=widget_id, classes="cell")
+        self.key = key
+        self.body = ""
+
+    def set_body(self, body: str) -> None:
+        self.body = body
+        self.refresh_markup()
+
+    def refresh_markup(self) -> None:
+        glyph = PANEL_DEFS[self.key][2]
+        hot = self.app.open_panel == self.key  # type: ignore[attr-defined]
+        inner = f"{self.body} " if self.body else ""
+        bracket = f"bold {AMBER}" if hot else EDGE
+        self.update(
+            f"[{bracket}]⟨[/] [{LABEL}]{glyph}[/] {inner}[{bracket}]⟩[/]" + SEP)
+
+    def on_click(self) -> None:
+        self.app.toggle_panel(self.key)  # type: ignore[attr-defined]
+
+
 class TaskbarEntry(Static):
     """One running app: raster icon (TGP) or glyph fallback; click focuses."""
 
@@ -148,7 +199,9 @@ class TaskbarEntry(Static):
     def on_mount(self) -> None:
         # Focus is marked by tinting the entry's ground, not chrome — there
         # is no room for underlines in a 2-row bar next to a 2-row icon.
-        self.styles.background = "#3d2c1c" if self.focused_flag else None
+        # #4a3625 (Theme.qml border): surfaceActive was too subtle against
+        # the bar ground at this size.
+        self.styles.background = "#4a3625" if self.focused_flag else None
 
     def on_click(self) -> None:
         ipc_send(f"focus {self.client_id}")
@@ -172,15 +225,25 @@ class BarApp(App):
         with Horizontal(id="row"):
             yield Horizontal(id="taskbar")
             yield Static("", id="pad")
-            yield Static("", id="stats", classes="cell")
-            yield Static("", id="battery", classes="cell")
-            yield Static("", id="volume", classes="cell")
+            yield PanelGroup("stats", "stats")
+            yield PanelGroup("battery", "battery")
+            yield PanelGroup("volume", "volume")
+            yield PanelGroup("wifi", "wifi")
+            yield PanelGroup("bt", "bt")
+            yield PanelGroup("disk", "disk")
+            yield PanelGroup("display", "display")
+            yield PanelGroup("clip", "clip")
             yield Static("", id="clock", classes="cell")
 
     def on_mount(self) -> None:
         self.register_theme(KALIN_THEME)
         self.theme = KALIN_THEME.name
         self._taskbar_sig: tuple | None = None
+        self.outputs: list[dict] = []
+        self.open_panel: str | None = None
+        self._panel_procs: dict[str, subprocess.Popen] = {}
+        for g in self.query(PanelGroup):
+            g.refresh_markup()
         self.update_clock()
         self.set_interval(1, self.update_clock)
         self.update_slow()
@@ -188,6 +251,53 @@ class BarApp(App):
         self.update_battery()
         self.set_interval(30, self.update_battery)
         self.run_worker(self.ipc_stream(), exclusive=True)
+
+    # ── docked panel toggling ────────────────────────────────────────────
+    def _own_output(self) -> dict | None:
+        for o in self.outputs:
+            if o.get("name") == BAR_OUTPUT:
+                return o
+        return self.outputs[0] if self.outputs else None
+
+    def toggle_panel(self, key: str) -> None:
+        prev = self.open_panel
+        if prev:
+            seg = PANEL_DEFS[prev][0]
+            appid = f"kalin-{seg}-panel-{BAR_OUTPUT}"
+            ipc_send(f"undock {appid}")
+            ipc_send(f"minimize {appid} 1")
+            self.open_panel = None
+        if key != prev:
+            self._open_panel(key)
+        for g in self.query(PanelGroup):
+            g.refresh_markup()
+
+    def _open_panel(self, key: str) -> None:
+        out = self._own_output()
+        if not out:
+            return
+        seg, tui, _ = PANEL_DEFS[key]
+        appid = f"kalin-{seg}-panel-{BAR_OUTPUT}"
+        x = out["x"] + out["width"] - PANEL_W
+        y = out["y"] + out["height"] - BAR_H - PANEL_H
+        rect = f"{x} {y} {PANEL_W} {PANEL_H}"
+        proc = self._panel_procs.get(key)
+        if proc is None or proc.poll() is not None:
+            # dockprep BEFORE spawning: the panel's first frame is already
+            # docked, never a flash at a floating position (same dance as
+            # DockedPanel.qml / BarHost).
+            ipc_send(f"dockprep {appid} {rect}")
+            try:
+                self._panel_procs[key] = subprocess.Popen(
+                    ["foot", f"--app-id={appid}", "-e", "kalin-bar-tui", tui],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                return  # foot/kalin-bar-tui missing; leave the group cold
+        else:
+            ipc_send(f"minimize {appid} 0")
+            ipc_send(f"dock {appid} {rect}")
+        self.open_panel = key
 
     # ── compositor state stream ──────────────────────────────────────────
     async def ipc_stream(self) -> None:
@@ -211,6 +321,7 @@ class BarApp(App):
             await asyncio.sleep(2)
 
     def apply_state(self, state: dict) -> None:
+        self.outputs = state.get("outputs") or self.outputs
         clients = state.get("clients") or []
         sig = tuple((c["id"], c["appid"], c["focused"]) for c in clients)
         if sig == self._taskbar_sig:
@@ -232,38 +343,37 @@ class BarApp(App):
             import psutil
             cpu = psutil.cpu_percent(interval=None)
             mem = psutil.virtual_memory().percent
-            body = (f"{meter(cpu)} [bold {TEXT}]{cpu:3.0f}%[/]"
-                    f" [{LABEL}]󰧑[/] {meter(mem)} [bold {TEXT}]{mem:3.0f}%[/]")
-            self.query_one("#stats", Static).update(group("󰍛", body) + SEP)
+            self.query_one("#stats", PanelGroup).set_body(
+                f"{meter(cpu)} [bold {TEXT}]{cpu:3.0f}%[/]"
+                f" [{LABEL}]󰧑[/] {meter(mem)} [bold {TEXT}]{mem:3.0f}%[/]")
         except Exception:
-            self.query_one("#stats", Static).update("")
+            self.query_one("#stats", PanelGroup).set_body("")
         try:
             out = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=2)
             # "Volume: 0.65 [MUTED]" — cube already applied by wpctl
             vol = float(out.split()[1]) * 100
             muted = "MUTED" in out
-            val = (f"[bold {ERROR}]mute[/]" if muted
-                   else f"{meter(vol)} [bold {TEXT}]{vol:3.0f}%[/]")
-            self.query_one("#volume", Static).update(group("󰕾", val) + SEP)
+            self.query_one("#volume", PanelGroup).set_body(
+                f"[bold {ERROR}]mute[/]" if muted
+                else f"{meter(vol)} [bold {TEXT}]{vol:3.0f}%[/]")
         except Exception:
-            self.query_one("#volume", Static).update("")
+            self.query_one("#volume", PanelGroup).set_body("")
 
     def update_battery(self) -> None:
         try:
             caps = glob.glob("/sys/class/power_supply/BAT*/capacity")
             if not caps:
-                self.query_one("#battery", Static).update("")
+                self.query_one("#battery", PanelGroup).set_body("")
                 return
             base = os.path.dirname(caps[0])
             pct = float(open(caps[0]).read().strip())
             status = open(os.path.join(base, "status")).read().strip()
             charging = status in ("Charging", "Full")
-            glyph = "󰂄" if charging else "󰁹"
             color = ERROR if (pct <= 20 and not charging) else TEXT
-            body = f"{meter(pct)} [bold {color}]{pct:3.0f}%[/]"
-            self.query_one("#battery", Static).update(group(glyph, body) + SEP)
+            self.query_one("#battery", PanelGroup).set_body(
+                f"{meter(pct)} [bold {color}]{pct:3.0f}%[/]")
         except OSError:
-            self.query_one("#battery", Static).update("")
+            self.query_one("#battery", PanelGroup).set_body("")
 
 
 def main() -> None:
