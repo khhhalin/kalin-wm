@@ -3637,6 +3637,12 @@ run(char *startup_cmd)
 		}
 	}
 
+	/* Session resurrection: relaunch last run's saved clients into the
+	 * kalin-apps session just bootstrapped above (its environment must
+	 * already carry this compositor's WAYLAND_DISPLAY, so this cannot move
+	 * earlier). Best-effort — see persistence_respawn_saved(). */
+	persistence_respawn_saved();
+
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
 	 * master, etc */
 	if (!wlr_backend_start(backend))
