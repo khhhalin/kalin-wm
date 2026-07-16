@@ -1030,9 +1030,10 @@ buttonpress(struct wl_listener *listener, void *data)
 		}
 
 		/* If you released any buttons, we exit interactive move/resize/pan mode. */
-		/* TODO: should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
 			int was_move = (cursor_mode == CurMove || cursor_mode == CurMoveSolo);
+			/* Fallback shape, for when no surface (or a client that never
+			 * sets a cursor) ends up under the pointer below. */
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
 			if (grabc) {
@@ -1047,6 +1048,15 @@ buttonpress(struct wl_listener *listener, void *data)
 					persistence_save();
 			}
 			grabc = NULL;
+			/* setcursor()/setcursorshape() dropped client requests for the
+			 * whole grab, so the surface under the cursor still believes its
+			 * preferred shape is set. A bare re-enter is a wlroots no-op
+			 * while the focused surface is unchanged, so force a leave
+			 * first: the enter from motionnotify() then makes the client
+			 * re-request its cursor, instead of the "default" fallback
+			 * above staying pinned until the next surface crossing. */
+			wlr_seat_pointer_notify_clear_focus(seat);
+			motionnotify(0, NULL, 0, 0, 0, 0);
 			return;
 		}
 		cursor_mode = CurNormal;
