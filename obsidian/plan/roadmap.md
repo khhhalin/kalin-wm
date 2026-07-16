@@ -46,6 +46,12 @@
   off-screen indicators, overview polish. Full breakdown + touch list in the note.
 
 - Verify the [[nixos-session]] end-to-end after `nixos-rebuild switch`: quickshell bar auto-starts, `Super+T`/`Super+P`/`Super+O` work, and the taskbar lists running apps.
+- **[[tui-bar]] — the bottom bar as a kitty-hosted Textual TUI** (started
+  2026-07-16): bar.py + BarHost + `clients`/`focus` IPC all working in nested
+  sessions behind `KALIN_TUI_BAR=1`; live shell keeps the QML BottomBar until
+  panel-toggle parity. Open: P4 packaging (kitty + textual-image, rebuild
+  gate), panel toggling from the bar, tray/MPRIS/calendar replacements,
+  cutover + BottomBar deletion. Full checklist in the note.
 - **[[protocols]] — implement missing popular Wayland protocols**, starting
   with `xdg-toplevel-icon-v1` (confirmed missing: our own log warns
   `compositor does not implement the xdg-toplevel-icon protocol` every
