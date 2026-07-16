@@ -62,7 +62,8 @@ typedef enum {
     ACT_SWAP_DIR,          /* i: DIR_* 0..3 — swap with connection-graph neighbor */
     ACT_FOCUS_STACK,       /* i: -1/+1 */
     ACT_FOCUS_MONITOR,     /* i: 0=left 1=right */
-    ACT_MOVE_MONITOR,      /* i: 0=left 1=right */
+    ACT_MOVE_MONITOR,      /* i: 0=left 1=right — teleport to that monitor's
+                            * camera center, severing cross-camera edges */
     ACT_TOGGLE_FULLSCREEN, /* none */
     ACT_TOGGLE_MAXIMIZED,  /* none: fill mon->w, keep border/bar, unlike fullscreen */
     ACT_FIT_WIDTH,         /* none: stretch to monitor width, keep height/y */

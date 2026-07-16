@@ -61,7 +61,7 @@ Camera ([[viewport]]):
 
 Monitors:
 - `Super+comma` / `Super+period` — focus monitor left / right
-- `Super+Shift+less` / `Super+Shift+greater` — move focused window to monitor left / right
+- `Super+Shift+less` / `Super+Shift+greater` — send focused window to monitor left / right ([[multi-camera]] Phase 2, `tagmon()`): teleports it to the center of what that monitor's camera currently shows and severs cross-camera [[connection-graph]] edges; camera-bypassed docked/fullscreen/maximized windows just switch holder without the teleport
 
 Launching ([[spawn]]):
 - `Super+T` — terminal (`foot`)

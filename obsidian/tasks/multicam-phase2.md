@@ -24,8 +24,8 @@
 - impl-note: `obsidian/implementation/multi-camera.md` (mark Phase 2 done +
   describe as-built), plus `keybindings.md` (new bind) and `connection-graph.md`
   (severing rule) if touched.
-- Status: running
-- Branch: (worker reports back)
+- Status: for-review
+- Branch: worktree-agent-a35364366caf8dd02
 - Why: [[roadmap]] "In progress" — [[multi-camera]] Phase 2; Phase 1 (core)
   landed 2026-07-15.
 

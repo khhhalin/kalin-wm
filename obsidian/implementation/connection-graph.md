@@ -33,6 +33,13 @@ it's fundamentally graph-topology manipulation, not the geometric cone-search
   connection line in the shell (compositor-side hit-testing,
   `connection_click_hit()` — a shell-side click mask covering only the line
   was tried first and abandoned; see the [[ledger]] for why).
+- `sever_cross_monitor_edges(Client *c)` (2026-07-17, [[multi-camera]] Phase
+  2): clears every direct edge between `c` and a neighbor whose holder
+  monitor differs, symmetrically. Called on every cross-monitor hand-off —
+  drag crossing the monitor boundary (`motionnotify()`) and the
+  send-to-monitor bind (`tagmon()`) — because each edge endpoint is
+  transformed through its own holder's camera, so a line spanning two
+  cameras has no coherent geometry; the edge is cut instead of drawn wrong.
 
 ## What the graph is for
 
