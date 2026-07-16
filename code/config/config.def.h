@@ -117,6 +117,18 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 */
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
+/* Scrolling delivered to clients (wheel ticks + touchpad finger scroll) —
+ * see obsidian/implementation/scrolling.md. The factors multiply every
+ * delta before clients see it: < 1.0 slower, > 1.0 faster. The finger
+ * factor also covers continuous sources; wheels (incl. tilt) get their own.
+ * scroll_smoothing blends successive finger deltas with an exponential
+ * moving average to filter touchpad jitter: 0.0 = raw events, higher =
+ * smoother but floatier; keep below 0.9. Wheels are never smoothed —
+ * discrete ticks are already clean. */
+static const double scroll_factor_finger = 1.0;
+static const double scroll_factor_wheel = 1.0;
+static const double scroll_smoothing = 0.0;
+
 /* Shaders — see obsidian/plan/shaders.md. Master switch for the camera/output
  * fragment-shader pass. Requires the GLES2 renderer (WLR_RENDERER=gles2); on
  * Vulkan/Pixman the pass auto-disables. Default 0: the render pipeline is new

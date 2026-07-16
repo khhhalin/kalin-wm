@@ -2,7 +2,8 @@
 
 - Most of kalin-wm's configuration is still compile-time, in the dwm
   tradition — colors, spawn commands, and tunables like `focusringpx` (see
-  [[focus-ring]]) and `offscreen_indicator_*` (see [[off-screen-indicators]])
+  [[focus-ring]]), `offscreen_indicator_*` (see [[off-screen-indicators]]),
+  and the `scroll_*` knobs (see [[scrolling]])
   live in `code/config/config.h` (copied from `config.def.h`); the user
   edits it and rebuilds.
 - **[[keybindings]] are the one exception, and are no longer compile-time.**

@@ -836,6 +836,7 @@ axisnotify(struct wl_listener *listener, void *data)
 	/* This event is forwarded by the cursor when a pointer emits an axis event,
 	 * for example when you move the scroll wheel. */
 	struct wlr_pointer_axis_event *event = data;
+	double delta, factor;
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	/* Scroll bindings: a modifier + a discrete wheel tick can fire an action. */
 	if (binds_active() && event->delta != 0) {
@@ -851,10 +852,28 @@ axisnotify(struct wl_listener *listener, void *data)
 				return;
 		}
 	}
+	/* Per-source speed factor + optional finger-scroll smoothing (config.h).
+	 * A zero finger delta is the scroll-stop event: forward it untouched
+	 * (clients key kinetic scrolling off it) and reset the filter so the
+	 * next flick doesn't inherit stale momentum. */
+	factor = (event->source == WL_POINTER_AXIS_SOURCE_WHEEL
+			|| event->source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT)
+			? scroll_factor_wheel : scroll_factor_finger;
+	delta = event->delta * factor;
+	if (event->source == WL_POINTER_AXIS_SOURCE_FINGER) {
+		static double smooth[2];
+		int vert = event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL;
+		if (event->delta == 0)
+			smooth[vert] = 0;
+		else
+			delta = smooth[vert] = scroll_smoothing * smooth[vert]
+					+ (1.0 - scroll_smoothing) * delta;
+	}
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
-			event->time_msec, event->orientation, event->delta,
-			event->delta_discrete, event->source, event->relative_direction);
+			event->time_msec, event->orientation, delta,
+			(int32_t)lround(event->delta_discrete * factor),
+			event->source, event->relative_direction);
 }
 
 void
