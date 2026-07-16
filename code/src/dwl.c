@@ -3687,15 +3687,16 @@ run(char *startup_cmd)
 
 	status_mark_dirty();
 
-	/* At this point the outputs are initialized, choose initial selmon based on
-	 * cursor position, and set default cursor image */
+	/* At this point the outputs are initialized: place the cursor in the
+	 * centre of the layout (warp_closest clamps into the nearest output if
+	 * the midpoint falls in a dead gap between monitors), pick selmon from
+	 * where it landed, and set the default image. The inherited hack warped
+	 * the cursor to its own backend position — a move that
+	 * wlr_output_cursor_move() discards as a no-op — so the image just
+	 * appeared wherever the hardware had it until the first real motion. */
+	wlr_cursor_warp_closest(cursor, NULL,
+			sgeom.x + sgeom.width / 2.0, sgeom.y + sgeom.height / 2.0);
 	selmon = xytomon(cursor->x, cursor->y);
-
-	/* TODO hack to get cursor to display in its initial location (100, 100)
-	 * instead of (0, 0) and then jumping. Still may not be fully
-	 * initialized, as the image/coordinates are not transformed for the
-	 * monitor when displayed here */
-	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
 	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
 	/* Run the Wayland event loop. This does not return until you exit the
