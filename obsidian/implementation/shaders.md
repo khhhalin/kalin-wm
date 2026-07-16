@@ -38,6 +38,19 @@
   (`point_accepts_input` returns false, so `xytonode()` falls through to the
   real surface and input keeps working), tear down on toggle-off/unmap.
   Uniform defaults live in `config.def.h` (`paper_strength/color/ink/preserve`).
+- **Papyrus knob (yellowness, 2026-07-16).** `Client.paper_yellow` (0..1) is a
+  single dial that ages the page: `client_apply_paper()` no longer feeds the raw
+  `paper_*` config to the shader — it calls `ws_paper_from_yellow(yellow, base,
+  paper_aged)` (pure, in `window_shader_math.h`, unit-tested), which eases
+  `u_strength` with a smoothstep and lerps the page colour from the crisp
+  `paper_color` toward the saturated tan `paper_aged` as yellow rises. `paper_*`
+  is thus the **yellow=1 endpoint**; yellow=0 is passthrough. Config adds
+  `paper_yellow_default` (0.7 — where a fresh `Super+i` toggle-on lands) and
+  `paper_aged {0.85,0.70,0.45}`. Binds: `Super+y` / `Super+Shift+y` →
+  `paper-yellow ±0.1` (`ACT_PAPER_YELLOW`, float delta, repeatable); `toggle-paper`
+  seeds `paper_yellow_default` on enable, and ramping to 0 turns `paper_mode` off.
+  IPC broadcasts it as `focused.yellow`; the quickshell `WindowActions` papyrus
+  gauge mirrors it (`KalinViewport.focusedYellow`).
 - **Caveat found at the gate:** the live gitignored `code/config/config.h` does
   not regenerate on merge — new config symbols (the paper block) must be ported
   into it by hand or the build breaks. Also `shaders_dir` is CWD-relative and
@@ -56,10 +69,11 @@
   keeper follow-up.
 - `code/src/modules/shaders/window_shader_math.h` — pure, GL-free helpers
   (offscreen-size clamp `ws_clamp_dim`/`ws_dim_valid`, paper-uniform
-  `ws_paper_defaults`/`ws_paper_normalize`). Header of `static inline`s so a
-  standalone test can exercise them without a renderer.
+  `ws_paper_defaults`/`ws_paper_normalize`, papyrus-knob mapping
+  `ws_paper_from_yellow`). Header of `static inline`s so a standalone test can
+  exercise them without a renderer.
 - `code/src/modules/shaders/window_shader_math_test.c` — unit test for the
-  above. **Not yet in `make test-unit`** (Makefile out of scope); run manually,
+  above (incl. `paper_from_yellow`, now wired into `make test-unit`). Run manually,
   see the header comment. Keeper: wire it into the `test-unit` target.
 - `code/include/shaders.h` — opaque API. Output pass: `shaders_init`,
   `shaders_render_output`, `shaders_output_destroy`. Per-window paper:

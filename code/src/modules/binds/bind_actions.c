@@ -51,6 +51,7 @@ static const struct { const char *name; int id; } action_names[] = {
     { "toggle-overlap",       ACT_TOGGLE_OVERLAP },
     { "link-pick",            ACT_LINK_PICK },
     { "toggle-paper",         ACT_TOGGLE_PAPER },
+    { "paper-yellow",         ACT_PAPER_YELLOW },
     { "mode",                 ACT_MODE },
 };
 
@@ -93,6 +94,7 @@ bind_action_is_repeatable(int action_id)
     case ACT_FOCUS_DIR:
     case ACT_FOCUS_STACK:
     case ACT_OPACITY:
+    case ACT_PAPER_YELLOW:
         return 1;
     default:
         return 0;
@@ -232,6 +234,7 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         return parse_panvec(argc, argv, out, errbuf, errlen);
     case ACT_VIEWPORT_ZOOM:
     case ACT_OPACITY:
+    case ACT_PAPER_YELLOW:
         if (argc != 1 || parse_float_tok(argv[0], &f) != 0) {
             snprintf(errbuf, errlen, "action needs a numeric argument");
             return -1;

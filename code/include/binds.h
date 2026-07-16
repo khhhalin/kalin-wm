@@ -87,6 +87,8 @@ typedef enum {
                              * (see connect_pick_arm(), connection_graph.c) */
     ACT_TOGGLE_PAPER,      /* none: toggle paper-mode reading tint on the focused
                              * window (see client_apply_paper(), obsidian/plan/shaders.md) */
+    ACT_PAPER_YELLOW,      /* f: ramp the focused window's papyrus knob (0..1) by
+                             * the signed delta (see paperyellow()) */
     ACT_MODE,              /* blob char* target mode name (engine-internal) */
     ACT_COUNT
 } ActionId;

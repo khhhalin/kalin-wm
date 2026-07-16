@@ -81,6 +81,7 @@
 #include "kalin.h"
 #include "binds.h"
 #include "shaders.h"
+#include "modules/shaders/window_shader_math.h"
 
 /* Crop editor state. Type lives in kalin.h; the crop/ipc TUs link against this
  * instance, so it has external linkage. */
@@ -363,6 +364,7 @@ void togglemaximized(const Arg *arg);
 void toggleontop(const Arg *arg);
 void toggleoverlap(const Arg *arg);
 static void togglepaper(const Arg *arg);
+static void paperyellow(const Arg *arg);
 static void client_apply_paper(Client *c);
 void toggleminimize(const Arg *arg);
 void togglescratchpad(const Arg *arg);
@@ -2030,6 +2032,7 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_TOGGLE_OVERLAP:   toggleoverlap(arg); break;
 	case ACT_LINK_PICK:        connect_pick_arm(); break;
 	case ACT_TOGGLE_PAPER:     togglepaper(arg); break;
+	case ACT_PAPER_YELLOW:     paperyellow(arg); break;
 	case ACT_TOGGLE_OVERVIEW:   toggle_overview(arg); break;
 	case ACT_TOGGLE_MINIMIZED:  toggleminimize(arg); break;
 	case ACT_TOGGLE_SCRATCHPAD: togglescratchpad(arg); break;
@@ -3469,7 +3472,7 @@ paper_bounds_iter(struct wlr_scene_buffer *sb, int sx, int sy, void *data)
 static void
 client_apply_paper(Client *c)
 {
-	struct shader_paper_params params;
+	struct shader_paper_params params, base;
 	struct wlr_buffer *shaded;
 	struct paper_bounds b = {0};
 	int lx, ly;
@@ -3496,14 +3499,17 @@ client_apply_paper(Client *c)
 	if (c->paper_node)
 		wlr_scene_node_set_enabled(&c->paper_node->node, false);
 
-	params.strength = paper_strength;
-	params.paper[0] = paper_color[0];
-	params.paper[1] = paper_color[1];
-	params.paper[2] = paper_color[2];
-	params.ink[0] = paper_ink[0];
-	params.ink[1] = paper_ink[1];
-	params.ink[2] = paper_ink[2];
-	params.preserve = paper_preserve;
+	/* config paper_* is the yellow=1 endpoint; the papyrus knob eases strength
+	 * and warms the page toward paper_aged as c->paper_yellow rises. */
+	base.strength = paper_strength;
+	base.paper[0] = paper_color[0];
+	base.paper[1] = paper_color[1];
+	base.paper[2] = paper_color[2];
+	base.ink[0] = paper_ink[0];
+	base.ink[1] = paper_ink[1];
+	base.ink[2] = paper_ink[2];
+	base.preserve = paper_preserve;
+	params = ws_paper_from_yellow(c->paper_yellow, &base, paper_aged);
 
 	shaded = shaders_window_shade(c, &params);
 	if (!shaded)
@@ -4350,8 +4356,33 @@ togglepaper(const Arg *arg)
 	if (!sel)
 		return;
 	sel->paper_mode = !sel->paper_mode;
+	/* Enabling on a window that has never been aged lands on the default
+	 * papyrus knob so the effect is visible; the paper-yellow bind ramps
+	 * from there. Leave a hand-tuned yellow untouched across off/on cycles. */
+	if (sel->paper_mode && sel->paper_yellow <= 0.0f)
+		sel->paper_yellow = paper_yellow_default;
 	if (sel->mon && sel->mon->wlr_output)
 		wlr_output_schedule_frame(sel->mon->wlr_output);
+	/* Push the new yellow so the shell's papyrus gauge reflects it live. */
+	ipc_broadcast_state();
+}
+
+/* Ramp the focused window's papyrus knob by arg->f (clamped to [0,1]) and keep
+ * paper_mode in sync — ramping up from nothing turns the effect on, ramping to
+ * zero turns it off. Read every frame by client_apply_paper(); schedule a frame
+ * so the change shows on an otherwise idle output. */
+static void
+paperyellow(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (!sel || !arg)
+		return;
+	sel->paper_yellow = fmaxf(0.0f, fminf(1.0f, sel->paper_yellow + arg->f));
+	sel->paper_mode = sel->paper_yellow > 0.0f;
+	if (sel->mon && sel->mon->wlr_output)
+		wlr_output_schedule_frame(sel->mon->wlr_output);
+	/* Push the new yellow so the shell's papyrus gauge tracks the ramp live. */
+	ipc_broadcast_state();
 }
 
 void

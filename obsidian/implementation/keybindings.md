@@ -39,7 +39,8 @@ Window management ([[connection-graph]]):
 - `Super+Shift+O` — toggle overlap (let the focused window overlap its connection-graph neighbors instead of pushing them)
 - `Super+L` — link-pick: arm the focused window as a pending connection source; the next click on another window links them (see [[connection-graph]])
 - `Super+N` — toggle minimized
-- `Super+I` — toggle paper mode: composite the focused window through `shaders/paper.frag` (warm reading tint) via the [[shaders|paper-shader-core]] per-window API. Flag lives on `Client.paper_mode`; driven per-frame by `client_apply_paper()` in `rendermon()`, which reinjects a shaded overlay above the surface. Also settable per-appid with a `paper` field on a `rules[]` entry (`applyrules()`). Uniform defaults (`paper_strength`/`paper_color`/`paper_ink`/`paper_preserve`) are in `config.def.h`. **Compile-verified only — the effect needs the GLES2 renderer and self-disables under Pixman, so it is GPU-unverified** (see [[shaders]]).
+- `Super+I` — toggle paper mode: composite the focused window through `shaders/paper.frag` (warm reading tint) via the [[shaders|paper-shader-core]] per-window API. Flag lives on `Client.paper_mode`; driven per-frame by `client_apply_paper()` in `rendermon()`, which reinjects a shaded overlay above the surface. Toggling on seeds `Client.paper_yellow` to `paper_yellow_default` (0.7). Also settable per-appid with a `paper` field on a `rules[]` entry (`applyrules()`). Uniform defaults (`paper_strength`/`paper_color`/`paper_ink`/`paper_preserve` — the yellow=1 endpoint — plus `paper_yellow_default`/`paper_aged`) are in `config.def.h`. GPU-verified working on GLES2 (see [[shaders]]).
+- `Super+Y` / `Super+Shift+Y` — ramp the focused window's papyrus knob (`Client.paper_yellow`, 0..1) by ±0.1 (`paper-yellow` / `ACT_PAPER_YELLOW`, repeatable). 0 = crisp warm page, 1 = aged saturated tan; `client_apply_paper()` maps it through `ws_paper_from_yellow()` (eased strength + page warming). Ramping to 0 turns paper mode off. Broadcast to the shell as `focused.yellow` for the `WindowActions` papyrus gauge.
 - `Super+D` / `Super+Shift+D` — dim / brighten focused window (per-window opacity)
 - `Super+grave` — toggle scratchpad `foot --app-id=kalin-scratchpad`
 - `Super+BTN_LEFT` (drag) — move window (drags its whole connected component — see [[connection-graph]])
@@ -64,9 +65,9 @@ Monitors:
 
 Launching ([[spawn]]):
 - `Super+T` — terminal (`foot`)
-- `Super+P` — launcher (`fuzzel`)
+- `Super+P` — launcher (`foot --app-id=kalin-launcher -e kalin-launch`; see [[app-launcher]])
 - `Super+O` — toggle [[overview-mode]] (native compositor zoom-out, not shell-rendered)
-- `tap Super` — toggle launcher (`fuzzel`)
+- `tap Super` — toggle launcher (same `kalin-launch`; tracked via the `kalin-apps` tmux window "launcher", killed to toggle off)
 - `hold Super` — [[window-menu]]
 - `Super+Print` — screenshot (whole focused monitor, immediate)
 - `Super+Shift+S` — niri-style interactive screenshot UI (see [[screenshot-ui]]): opens with the whole monitor pre-selected, drag to draw a custom region, Escape cancels, Space/Enter confirms (disk + clipboard), Ctrl+C confirms clipboard-only, P toggles pointer visibility

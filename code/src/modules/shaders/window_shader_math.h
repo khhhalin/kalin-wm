@@ -78,4 +78,27 @@ ws_paper_normalize(const struct shader_paper_params *in)
 	return p;
 }
 
+/* Map the papyrus knob (yellow, 0..1) to shader params, blending between a
+ * crisp warm page and an aged tan. `base` is the yellow=1 endpoint (its .paper
+ * is the crisp page colour, .strength the full-effect strength, .ink/.preserve
+ * pass through); `aged` is the page colour yellow=1 warms toward. Strength is
+ * eased with smoothstep so low yellow stays subtle; the page colour lerps
+ * crisp->aged on the same curve. yellow<=0 yields strength 0 (passthrough).
+ * Pure and clamp-safe so window_shader_math_test can exercise it. */
+static inline struct shader_paper_params
+ws_paper_from_yellow(float yellow, const struct shader_paper_params *base,
+		const float aged[3])
+{
+	struct shader_paper_params b = ws_paper_normalize(base);
+	struct shader_paper_params p = b;
+	float y = ws_clampf(yellow, 0.0f, 1.0f);
+	float e = y * y * (3.0f - 2.0f * y);   /* smoothstep(0,1,y) */
+	int i;
+
+	p.strength = b.strength * e;
+	for (i = 0; i < 3; i++)
+		p.paper[i] = b.paper[i] + (aged[i] - b.paper[i]) * e;
+	return ws_paper_normalize(&p);
+}
+
 #endif /* KALIN_WINDOW_SHADER_MATH_H */

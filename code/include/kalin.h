@@ -349,6 +349,13 @@ struct Client {
                                   * paper-mode keybind or a window rule; driven
                                   * per-frame in rendermon() via
                                   * client_apply_paper(). */
+    float paper_yellow;         /* Papyrus knob 0..1: how aged the paper looks.
+                                  * 0 = crisp warm page, 1 = saturated tan
+                                  * papyrus. Drives both the shader strength
+                                  * (eased) and the page-colour warming in
+                                  * client_apply_paper(); ramped by the
+                                  * paper-yellow keybind, broadcast to the shell
+                                  * as focused.yellow for the papyrus gauge. */
     uint32_t resize;            /* Configure serial of pending resize */
     int persist_size_pending;   /* Set when persistence_register_client()
                                   * restores a saved width/height on a

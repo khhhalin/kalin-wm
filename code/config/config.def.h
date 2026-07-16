@@ -151,6 +151,11 @@ static const float paper_strength   = 0.9f;
 static const float paper_color[3]   = { 0.96f, 0.93f, 0.84f };
 static const float paper_ink[3]     = { 0.14f, 0.12f, 0.09f };
 static const float paper_preserve   = 0.6f;
+/* Papyrus knob a fresh Super+i toggle-on lands on (0..1); the paper-yellow
+ * keybind ramps from there. paper_color/paper_strength above are the yellow=1
+ * endpoint, warmed toward paper_aged. */
+static const float paper_yellow_default = 0.7f;
+static const float paper_aged[3]    = { 0.85f, 0.70f, 0.45f };
 
 /* All keyboard/pointer bindings now live exclusively in the bind DSL —
  * see default_binds.h (embedded default, bootstrapped to

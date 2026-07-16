@@ -120,6 +120,48 @@ test_paper_normalize(void)
 	CHECK(feq(again.ink[1], n.ink[1]));
 }
 
+static void
+test_paper_from_yellow(void)
+{
+	/* config paper_* as the yellow=1 endpoint (crisp page) + an aged tan. */
+	struct shader_paper_params base = {
+		.strength = 0.9f,
+		.paper = { 0.96f, 0.93f, 0.84f },
+		.ink = { 0.14f, 0.12f, 0.09f },
+		.preserve = 0.6f,
+	};
+	const float aged[3] = { 0.85f, 0.70f, 0.45f };
+	struct shader_paper_params off = ws_paper_from_yellow(0.0f, &base, aged);
+	struct shader_paper_params full = ws_paper_from_yellow(1.0f, &base, aged);
+	struct shader_paper_params mid = ws_paper_from_yellow(0.5f, &base, aged);
+	struct shader_paper_params over = ws_paper_from_yellow(2.0f, &base, aged);
+
+	printf("paper_from_yellow...\n");
+	/* yellow=0 -> passthrough (strength 0), page still the crisp endpoint. */
+	CHECK(feq(off.strength, 0.0f));
+	CHECK(feq(off.paper[0], base.paper[0]));
+
+	/* yellow=1 -> full strength and the aged tan page; ink/preserve pass through. */
+	CHECK(feq(full.strength, base.strength));
+	CHECK(feq(full.paper[0], aged[0]));
+	CHECK(feq(full.paper[1], aged[1]));
+	CHECK(feq(full.paper[2], aged[2]));
+	CHECK(feq(full.ink[0], base.ink[0]));
+	CHECK(feq(full.preserve, base.preserve));
+
+	/* Monotonic warming: mid page sits between crisp and aged, and mid
+	 * strength between off and full. Green channel: aged < base, so mid < base. */
+	CHECK(mid.strength > off.strength && mid.strength < full.strength);
+	CHECK(mid.paper[1] < base.paper[1] && mid.paper[1] > aged[1]);
+
+	/* Out-of-range yellow clamps to the full endpoint (no overshoot). */
+	CHECK(feq(over.strength, full.strength));
+	CHECK(feq(over.paper[0], full.paper[0]));
+
+	/* NULL base falls back to defaults without crashing. */
+	(void)ws_paper_from_yellow(0.5f, NULL, aged);
+}
+
 int
 main(void)
 {
@@ -129,6 +171,7 @@ main(void)
 	test_clampf();
 	test_paper_defaults();
 	test_paper_normalize();
+	test_paper_from_yellow();
 	if (failures) {
 		printf("FAILED: %d check(s)\n", failures);
 		return 1;
