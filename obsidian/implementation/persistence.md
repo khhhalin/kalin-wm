@@ -1,9 +1,11 @@
 # Persistence
 
-- Persistence saves and restores window position, size, and the
-  [[connection-graph]] across restarts, so the [[infinite-canvas]] and its
-  connections survive a session ending. Own translation unit,
-  `code/src/persistence.c` / `code/include/persistence.h`.
+- Persistence saves and restores window position, size, the
+  [[connection-graph]], and (since 2026-07-17) each client's launch command
+  across restarts, so the [[infinite-canvas]], its connections, and the apps
+  themselves survive a session ending — see "Session resurrection" below.
+  Own translation unit, `code/src/persistence.c` /
+  `code/include/persistence.h`.
 - State file: `~/.local/share/kalin-wm/canvas_state.json`, hand-rolled flat
   JSON (own writer + a small non-nesting-safe parser — objects inside the
   top-level `clients`/`connections` arrays must stay flat, no nested
@@ -67,6 +69,58 @@
   log directory creation — fixed the same way, same reason it was found:
   investigating a real segfault with no crash log to show for it.
 
+## Session resurrection (2026-07-17)
+
+- `persistence_respawn_saved()` (public, `persistence.h`) replays every saved
+  client's *process* at compositor startup, so a restart brings the apps
+  themselves back and `persistence_register_client()` re-places each one as
+  it maps. Called once from `run()` (`dwl.c`), right **after** the
+  `kalin-apps` tmux session bootstrap — the tmux server must already exist
+  and carry this compositor's `WAYLAND_DISPLAY` (see [[spawn]]) or the
+  respawned apps can't connect. Best-effort by contract: a bad entry is
+  skipped, never fatal to startup; total respawns capped (`RESPAWN_MAX`, 32).
+- **Capturing the relaunch command:** at registration, the client's PID comes
+  from `wl_client_get_credentials()` on its Wayland socket, and
+  `/proc/<pid>/cmdline` is shell-quoted word-by-word into one flat string
+  (`RegisteredClient.cmd`, snapshotted like appid/title so save time doesn't
+  depend on `/proc` still being readable). Saved as a `"cmd"` field; replayed
+  via `tmux new-window -t kalin-apps -- sh -c <cmd>` — `sh` re-splits the
+  quoted string into the original argv (args with spaces survive).
+- **The foot-server trap:** for foot in server mode every terminal window's
+  Wayland client is the *daemon*, so the captured cmdline would be
+  `foot --server` — respawning that recreates zero windows. Detected
+  (argv[0] basename `foot` + a `--server`/`-s` arg) and substituted with
+  `foot -e kalin-term`, which opens a real terminal attached to the tmux
+  content-persistence layer (see `plan/persistent-desktop.md`). The session
+  *name* isn't recoverable from the compositor side, so it's a fresh
+  `kalin-term` session, not a reattach of the exact old one — known limit.
+- **Panels are never respawned:** an empty `cmd` means layout-only restore.
+  `save_client_cb()` writes `""` when `c->ispanel` — checked at *save* time,
+  not capture time, because a panel's backing client maps (and registers)
+  before DockedPanel docks it, so `ispanel` is only trustworthy later.
+  Defense in depth for the map-to-dock race window: respawn also skips
+  appids matching `kalin-*` + `-panel`, and `kalin-launcher` (a transient
+  toggle window; respawning it would pop the launcher uninvited).
+- **Instance ordering:** entries replay in ascending saved-`instance` order
+  (all 0s, then all 1s, …), and each `tmux new-window` client is `waitpid()`ed
+  before the next fork (it exits as soon as the window exists — a fast local
+  round trip, same pattern as `run()`'s bootstrap) so window-creation order is
+  serialized. That's the only lever for making the next run's per-appid
+  instance counters line up with the save file; still best-effort — two apps
+  racing to *map* can swap instances.
+- **Parser limitation, honored:** the flat JSON parser delimits objects by
+  scanning raw `{`/`}` (and arrays by `[`/`]`), so a command containing any
+  of those characters is dropped at capture (layout-only restore for that
+  client) rather than written and corrupting every entry after it.
+- Duplicate `(identity,instance)` entries in a corrupt/hand-edited file are
+  deduped at replay (earliest file entry wins; the loaded list is built by
+  prepending, i.e. reverse file order, so the dedup scan runs *forward*).
+- **Save freshness caveat:** `persistence_save()` runs on geometry changes,
+  not on unmap — a window closed after the last save is still in the file
+  and will be respawned once. Fixing that needs a save on unmap in `dwl.c`
+  (after the client leaves the `clients` list), which is outside
+  persistence.c.
+
 ## Save format
 
 ```json
@@ -78,7 +132,8 @@
      "width": 702, "height": 500, "geom_x": 289.0, "geom_y": 150.0,
      "geom_set": 1, "crop_active": 0, "crop_x": 0, "crop_y": 0,
      "crop_w": 0, "crop_h": 0, "crop_base_w": 702, "crop_base_h": 500,
-     "crop_saved_base": 1, "isfullscreen": 0, "isontop": 0}
+     "crop_saved_base": 1, "isfullscreen": 0, "isontop": 0,
+     "cmd": "foot -e kalin-term"}
   ],
   "connections": [
     {"a_appid": "foot", "a_title": "foot", "a_instance": 0,
