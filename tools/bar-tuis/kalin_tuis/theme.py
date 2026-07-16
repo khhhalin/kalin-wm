@@ -45,6 +45,7 @@ KALIN_THEME = Theme(
 # not Textual theme variables) — same sources as above.
 BORDER_HEX = "#4a3625"       # Theme.qml border; also literal in SHARED_CSS below
 TEXT_MUTED_HEX = "#b08d5f"   # = variables["text-muted"]
+PRIMARY_HEX = "#f0a030"      # Theme.qml accent (amber), = KALIN_THEME.primary
 
 # Literal #4a3625 (Theme.qml `border`, = BORDER_HEX) below instead of a custom
 # theme variable — one less floating-Textual-API surface to depend on.

@@ -1,6 +1,6 @@
 # bar-tuis
 
-- The custom Textual (Python) TUI suite behind every docked bar panel of the [[quickshell-shell]] — wifi, bluetooth, mixer, stats, clipboard, battery, display.
+- The custom Textual (Python) TUI suite behind every docked bar panel of the [[quickshell-shell]] — wifi, bluetooth, mixer, stats, clipboard, battery, display, disk.
 - Source: `tools/bar-tuis/kalin_tuis/` in this repo. One dispatcher entry point: `python3 -m kalin_tuis <panel>`, packaged as `kalin-bar-tui` (home-config/desktop.nix `barTuis`, PATH-prefixed with its backend CLIs; `kalin-display-panel` remains as a one-line alias). test-vm/vm.nix carries a parallel `testBarTuis` wrapper.
 - Replaced (2026-07-15): btop, nmtui, bluetuith, wiremix, `kalin-clip-picker-loop` (the loop existed only because fzf exits on selection — the clipboard TUI copies and stays alive; the one-shot `kalin-clip-picker` remains for the `Super+V` keybind), and the QML SidePanel battery pane (`SystemPanel.qml`, deleted).
 
@@ -23,6 +23,7 @@
 | clipboard | `cliphist list/decode/delete` + `wl-copy` (bytes end-to-end for images) | poll 5s, hash-diff |
 | battery | dbus-fast → UPower DisplayDevice `PropertiesChanged` (+ statics enriched once from the real `battery_BATn` device — the aggregate lacks Model/EnergyFullDesign) + `powerprofilesctl` | events + 30s safety poll |
 | display | kalin IPC / niri, unchanged from the old `tools/display-panel/` | poll 2s |
+| disk | `du -xa --max-depth=1 -B1` per visited dir (async, accepts du's exit 1 = unreadable subtrees skipped), `shutil.disk_usage` for the fs gauge | on navigation; per-dir results cached for the panel's lifetime, `r` rescans (deliberately no poll — a du of `/` is minutes cold, and the answer doesn't change under you) |
 
 - **Mixer hard lesson**: a device node's own `Props.channelVolumes`/`mute` in `pw-dump` can disagree with reality — WirePlumber keeps ALSA device volume/mute on the *device route*. `wpctl get-volume` is the ground truth (and its value is already cubic-scaled; no cbrt).
 

@@ -142,6 +142,7 @@ Battery pane, still on the old `SidePanel`/`rightOwner` system) is now one
 | `VolumeWidget` | `kalin-volume-panel` | `kalin-bar-tui mixer` |
 | `DisplayWidget` | `kalin-display-panel` | `kalin-bar-tui display` |
 | `ClipboardButton` | `kalin-clip-panel` | `kalin-bar-tui clipboard` |
+| `DiskUsageWidget` | `kalin-disk-panel` | `kalin-bar-tui disk` |
 
 As of 2026-07-15 every panel runs a custom Textual TUI from the
 [[bar-tuis]] suite (`tools/bar-tuis/` in this repo, one `kalin-bar-tui

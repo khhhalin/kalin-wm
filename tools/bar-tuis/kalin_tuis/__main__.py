@@ -9,7 +9,7 @@ import sys
 
 # Keep in sync with BottomBar.qml's DockedPanel commands and
 # obsidian/bar-tuis.md.
-PANELS = ("wifi", "bluetooth", "mixer", "stats", "clipboard", "battery", "display")
+PANELS = ("wifi", "bluetooth", "mixer", "stats", "clipboard", "battery", "display", "disk")
 
 
 def main() -> int:
