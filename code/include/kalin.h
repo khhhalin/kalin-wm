@@ -749,6 +749,7 @@ void togglemaximized(const Arg *arg);
 void toggleontop(const Arg *arg);
 void toggleoverlap(const Arg *arg);
 void sever_connection(uint32_t id_a, uint32_t id_b);
+void sever_cross_monitor_edges(Client *c);
 void connect_clients(Client *a, Client *b);
 void resolve_growth_overlap(Client *c);
 void connect_pick_arm(void);

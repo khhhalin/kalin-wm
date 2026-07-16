@@ -522,6 +522,7 @@ void swap_neighbor_dir(const Arg *arg);
 void connect_clients(Client *a, Client *b);
 void resolve_growth_overlap(Client *c);
 void sever_connection(uint32_t id_a, uint32_t id_b);
+void sever_cross_monitor_edges(Client *c);
 int opposite_octant(int oct);
 int connection_click_hit(double sx, double sy, uint32_t *out_a, uint32_t *out_b);
 void close_gap(Client *a, Client *b);
@@ -2503,10 +2504,34 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * SCREEN_TO_WORLD (which accounts for pan + zoom). grabcx/grabcy hold the
 	 * grab offset in world units (see moveresize()). */
 	if ((cursor_mode == CurMove || cursor_mode == CurMoveSolo) && grabc) {
-		int old_x = grabc->geom.x, old_y = grabc->geom.y;
-		int new_x = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabcx;
-		int new_y = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabcy;
-		int move_dx = new_x - old_x, move_dy = new_y - old_y;
+		Monitor *drag_mon = xytomon(cursor->x, cursor->y);
+		int old_x, old_y, new_x, new_y, move_dx, move_dy;
+		int handed_off = 0;
+
+		/* Drag hand-off (multi-camera): when the cursor crosses onto another
+		 * monitor mid-drag, reassign the holder so the transform below goes
+		 * through the camera actually under the cursor. No re-basing math is
+		 * needed — grabcx/grabcy are window-internal world offsets, so the
+		 * SCREEN_TO_WORLD below re-derives a world position that puts the
+		 * grabbed point back under the cursor through the *new* camera.
+		 * Camera-bypassed clients (docked/fullscreen/maximized — screen-space
+		 * geometry, see client_apply_zoom_frame()) keep the old release-time
+		 * setmon() in buttonpress() instead. Edges into the old monitor are
+		 * severed: a connection line through two different cameras has no
+		 * coherent geometry (see sever_cross_monitor_edges()). */
+		if (drag_mon && grabc->mon && drag_mon != grabc->mon
+				&& !grabc->docked && !grabc->isfullscreen && !grabc->ismaximized) {
+			setmon(grabc, drag_mon);
+			sever_cross_monitor_edges(grabc);
+			handed_off = 1;
+		}
+
+		old_x = grabc->geom.x;
+		old_y = grabc->geom.y;
+		new_x = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabcx;
+		new_y = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabcy;
+		move_dx = new_x - old_x;
+		move_dy = new_y - old_y;
 
 		/* Move the grabbed client to the new position. */
 		resize(grabc, (struct wlr_box){
@@ -2523,8 +2548,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * correctly instead of compounding against a stale animated position.
 		 * Skipped entirely for CurMoveSolo (Super+Ctrl+LMB): that mode moves
 		 * just the grabbed window, leaving its connections intact but not
-		 * dragging the rest of the component along. */
-		if (cursor_mode == CurMove && (move_dx || move_dy)) {
+		 * dragging the rest of the component along. Also skipped on the
+		 * hand-off tick: move_dx/dy then include the camera re-basing jump,
+		 * not cursor motion, and any surviving (same-monitor) component
+		 * member would be flung by it. */
+		if (cursor_mode == CurMove && !handed_off && (move_dx || move_dy)) {
 			Client *component[256];
 			int n = collect_component(grabc, component, (int)LENGTH(component));
 			int i;
@@ -4303,8 +4331,32 @@ void
 tagmon(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
-	if (sel)
-		setmon(sel, dirtomon(arg->i));
+	Monitor *m;
+
+	/* dirtomon() dereferences selmon, so only ask for a target once we know
+	 * there's a focused client (which implies a live selmon) to send. */
+	if (!sel || !selmon)
+		return;
+	m = dirtomon(arg->i);
+	if (!m || m == sel->mon)
+		return;
+	setmon(sel, m);
+	/* Send-to-monitor (multi-camera): the old world position is arbitrary
+	 * through the new holder's camera, so teleport to the center of what
+	 * that camera currently shows. Camera-bypassed clients (docked/
+	 * fullscreen/maximized) keep their screen-space geometry — setmon()'s
+	 * own resize/setfullscreen already relocates those. Cross-camera edges
+	 * are severed for the same reason as the drag hand-off in
+	 * motionnotify(); the new position is persisted like a drag drop is. */
+	if (!sel->isfullscreen && !sel->ismaximized && !sel->docked) {
+		int cwx = (int)lroundf(SCREEN_TO_WORLD_X(m, m->m.x + m->m.width / 2.0));
+		int cwy = (int)lroundf(SCREEN_TO_WORLD_Y(m, m->m.y + m->m.height / 2.0));
+		resize(sel, (struct wlr_box){
+			.x = cwx - sel->geom.width / 2, .y = cwy - sel->geom.height / 2,
+			.width = sel->geom.width, .height = sel->geom.height}, 0);
+	}
+	sever_cross_monitor_edges(sel);
+	persistence_save();
 }
 
 

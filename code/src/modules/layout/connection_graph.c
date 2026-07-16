@@ -317,6 +317,33 @@ sever_connection(uint32_t id_a, uint32_t id_b)
 	status_mark_dirty();
 }
 
+/* Sever every direct edge between c and a neighbor held by a *different*
+ * monitor. Multi-camera hand-off rule (drag hand-off and send-to-monitor,
+ * see obsidian/implementation/multi-camera.md): each endpoint of an edge is
+ * transformed through its own holder's camera, so a line spanning two
+ * cameras has no coherent geometry — the edge is cut instead of drawn wrong.
+ * Symmetric like sever_connection() above: both sides' slots are cleared. */
+void
+sever_cross_monitor_edges(Client *c)
+{
+	int i, j, cut = 0;
+
+	if (!c)
+		return;
+	for (i = 0; i < 8; i++) {
+		Client *n = c->neighbor[i];
+		if (!n || n->mon == c->mon)
+			continue;
+		for (j = 0; j < 8; j++)
+			if (n->neighbor[j] == c)
+				n->neighbor[j] = NULL;
+		c->neighbor[i] = NULL;
+		cut = 1;
+	}
+	if (cut)
+		status_mark_dirty();
+}
+
 /* Hit-test a screen-space point against every live connection line and
  * report the nearest one's two endpoint ids if within CONN_HIT_RADIUS_PX.
  * Returns 1 and fills out_a and out_b if a line was hit, else returns 0.
