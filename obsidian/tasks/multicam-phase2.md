@@ -24,7 +24,12 @@
 - impl-note: `obsidian/implementation/multi-camera.md` (mark Phase 2 done +
   describe as-built), plus `keybindings.md` (new bind) and `connection-graph.md`
   (severing rule) if touched.
-- Status: for-review
+- Status: merged (2026-07-17, merge commit 9a9fe0c). Build green, all unit
+  tests pass; keeper added the `sever_cross_monitor_edges` unit test to
+  `test_connection_graph.c` at the gate (test dir was out of worker scope).
+  Deviation blessed: reused the existing `move-monitor` bind/`ACT_MOVE_MONITOR`
+  instead of a new `ACT_*` — a parallel action would have been dead weight.
+  Dual-output GPU verification (`WLR_WL_OUTPUTS=2`) still pending — keeper/live.
 - Branch: worktree-agent-a35364366caf8dd02
 - Why: [[roadmap]] "In progress" — [[multi-camera]] Phase 2; Phase 1 (core)
   landed 2026-07-15.

@@ -40,8 +40,11 @@
   (core) has landed** — `Monitor.cam` replaces the global viewport, every
   transform routes through the client's holder (`c->mon`) or the cursor monitor,
   verified with independent dual-output panning (25 unit tests green, no
-  single-monitor regression). Remaining: **Phase 2** drag hand-off +
-  send-to-monitor bind + cross-camera edge severing; **Phase 3** IPC/shell
+  single-monitor regression). **Phase 2 (cross-monitor moves) landed 2026-07-17**
+  — drag hand-off reassigns `c->mon` mid-drag, the existing `move-monitor` bind
+  now teleports to the target camera's center (no new `ACT_*`), and cross-camera
+  connection edges are severed on hand-off (`sever_cross_monitor_edges()`).
+  Dual-output GPU check still pending. Remaining: **Phase 3** IPC/shell
   per-output keying of the `viewports` array; **Phase 4** per-monitor wallpaper,
   off-screen indicators, overview polish. Full breakdown + touch list in the note.
 

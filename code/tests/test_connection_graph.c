@@ -28,6 +28,7 @@ typedef struct Client {
 	int id;
 	struct wlr_box geom;
 	struct Client *neighbor[8];
+	int mon; /* stand-in for Client.mon (Monitor *): only equality matters */
 } Client;
 
 static int resize_calls = 0;
@@ -158,6 +159,27 @@ sever_connection_ptr(Client *a, Client *b)
 			a->neighbor[i] = NULL;
 		if (b->neighbor[i] == a)
 			b->neighbor[i] = NULL;
+	}
+}
+
+/* Reimplements sever_cross_monitor_edges() (connection_graph.c): cut every
+ * direct edge between c and a neighbor held by a different monitor —
+ * multi-camera hand-off rule. Symmetric: both sides' slots are cleared. */
+static void
+sever_cross_monitor_edges(Client *c)
+{
+	int i, j;
+
+	if (!c)
+		return;
+	for (i = 0; i < 8; i++) {
+		Client *n = c->neighbor[i];
+		if (!n || n->mon == c->mon)
+			continue;
+		for (j = 0; j < 8; j++)
+			if (n->neighbor[j] == c)
+				n->neighbor[j] = NULL;
+		c->neighbor[i] = NULL;
 	}
 }
 
@@ -325,8 +347,8 @@ static int failures = 0;
 static void
 test_connect_basic_link_both_sides(void)
 {
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {200, 0, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {200, 0, 100, 100}, {0}, 0 };
 
 	printf("Running connect_basic_link_both_sides...\n");
 	connect_clients(&a, &b);
@@ -338,9 +360,9 @@ test_connect_basic_link_both_sides(void)
 static void
 test_connect_noop_if_slot_occupied(void)
 {
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {200, 0, 100, 100}, {0} };
-	Client x = { 3, {200, 300, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {200, 0, 100, 100}, {0}, 0 };
+	Client x = { 3, {200, 300, 100, 100}, {0}, 0 };
 
 	a.neighbor[OCT_E] = &b; b.neighbor[OCT_W] = &a;
 
@@ -358,8 +380,8 @@ test_connect_no_double_link_when_already_connected(void)
 	 * OCT_NE/OCT_SW, left over from before one of them moved). Reconnecting
 	 * them per their *current* geometry (which now lines up as due
 	 * East/West) must not add a second edge on top of the existing one. */
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {200, 0, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {200, 0, 100, 100}, {0}, 0 };
 
 	a.neighbor[OCT_NE] = &b; b.neighbor[OCT_SW] = &a;
 
@@ -374,8 +396,8 @@ test_connect_no_double_link_when_already_connected(void)
 static void
 test_sever_clears_both_sides(void)
 {
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {200, 0, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {200, 0, 100, 100}, {0}, 0 };
 	a.neighbor[OCT_E] = &b; b.neighbor[OCT_W] = &a;
 
 	printf("Running sever_clears_both_sides...\n");
@@ -386,15 +408,36 @@ test_sever_clears_both_sides(void)
 }
 
 static void
+test_sever_cross_monitor_cuts_only_foreign_edges(void)
+{
+	/* a is connected to b (other monitor) and c (same monitor): a hand-off
+	 * sever must cut a-b on both sides and leave a-c untouched. */
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {200, 0, 100, 100}, {0}, 1 };
+	Client c = { 3, {0, 200, 100, 100}, {0}, 0 };
+
+	a.neighbor[OCT_E] = &b; b.neighbor[OCT_W] = &a;
+	a.neighbor[OCT_S] = &c; c.neighbor[OCT_N] = &a;
+
+	printf("Running sever_cross_monitor_cuts_only_foreign_edges...\n");
+	sever_cross_monitor_edges(&a);
+	CHECK(a.neighbor[OCT_E] == NULL, "a's edge to the other-monitor b must be cut");
+	CHECK(b.neighbor[OCT_W] == NULL, "b's back-edge must be cut too");
+	CHECK(a.neighbor[OCT_S] == &c, "a's same-monitor edge to c must survive");
+	CHECK(c.neighbor[OCT_N] == &a, "c's back-edge must survive");
+	printf(a.neighbor[OCT_E] == NULL && a.neighbor[OCT_S] == &c ? "  PASS\n" : "  (see failures above)\n");
+}
+
+static void
 test_close_gap_shifts_downstream_component(void)
 {
 	/* a at x=0..100, b at x=300..400 (200px gap between edges, way more
 	 * than SPAWN_GAP): closing should shift b (and anything transitively
 	 * connected beyond it) left so the edge-to-edge gap becomes exactly
 	 * SPAWN_GAP. */
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {300, 0, 100, 100}, {0} };
-	Client tail = { 3, {450, 0, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {300, 0, 100, 100}, {0}, 0 };
+	Client tail = { 3, {450, 0, 100, 100}, {0}, 0 };
 
 	b.neighbor[OCT_W] = &a; a.neighbor[OCT_E] = &b;
 	b.neighbor[OCT_E] = &tail; tail.neighbor[OCT_W] = &b;
@@ -412,8 +455,8 @@ test_close_gap_shifts_downstream_component(void)
 static void
 test_close_gap_noop_if_not_connected(void)
 {
-	Client a = { 1, {0, 0, 100, 100}, {0} };
-	Client b = { 2, {300, 0, 100, 100}, {0} };
+	Client a = { 1, {0, 0, 100, 100}, {0}, 0 };
+	Client b = { 2, {300, 0, 100, 100}, {0}, 0 };
 	/* deliberately not connected */
 
 	printf("Running close_gap_noop_if_not_connected...\n");
@@ -432,9 +475,9 @@ test_swap_middle_of_chain_transfers_third_connection(void)
 	 * B's old spot. B's old spot was adjacent to C, so C's connection should
 	 * transfer from B to A (not be dropped), since A now physically occupies
 	 * that spot. */
-	Client A = { 1, {0,   0, 100, 100}, {0} };
-	Client B = { 2, {200, 0, 100, 100}, {0} };
-	Client C = { 3, {400, 0, 100, 100}, {0} };
+	Client A = { 1, {0,   0, 100, 100}, {0}, 0 };
+	Client B = { 2, {200, 0, 100, 100}, {0}, 0 };
+	Client C = { 3, {400, 0, 100, 100}, {0}, 0 };
 
 	A.neighbor[OCT_E] = &B; B.neighbor[OCT_W] = &A;
 	B.neighbor[OCT_E] = &C; C.neighbor[OCT_W] = &B;
@@ -456,8 +499,8 @@ test_swap_middle_of_chain_transfers_third_connection(void)
 static void
 test_swap_updates_direct_connection_between_swapped_pair(void)
 {
-	Client A = { 1, {0,   0, 100, 100}, {0} };
-	Client B = { 2, {200, 0, 100, 100}, {0} };
+	Client A = { 1, {0,   0, 100, 100}, {0}, 0 };
+	Client B = { 2, {200, 0, 100, 100}, {0}, 0 };
 	A.neighbor[OCT_E] = &B; B.neighbor[OCT_W] = &A;
 
 	printf("Running swap_updates_direct_connection_between_swapped_pair...\n");
@@ -478,11 +521,11 @@ test_swap_preserves_off_axis_neighbors(void)
 	 * W. C moves to W's old spot; C's N/S links must transfer to W (which
 	 * is now standing where C used to be), not stay stale pointing at
 	 * windows that are no longer actually N/S of C's new position. */
-	Client C = { 1, {200, 200, 100, 100}, {0} };
-	Client W = { 2, {0,   200, 100, 100}, {0} };
-	Client E = { 3, {400, 200, 100, 100}, {0} };
-	Client N = { 4, {200, 0,   100, 100}, {0} };
-	Client S = { 5, {200, 400, 100, 100}, {0} };
+	Client C = { 1, {200, 200, 100, 100}, {0}, 0 };
+	Client W = { 2, {0,   200, 100, 100}, {0}, 0 };
+	Client E = { 3, {400, 200, 100, 100}, {0}, 0 };
+	Client N = { 4, {200, 0,   100, 100}, {0}, 0 };
+	Client S = { 5, {200, 400, 100, 100}, {0}, 0 };
 
 	C.neighbor[OCT_W] = &W; W.neighbor[OCT_E] = &C;
 	C.neighbor[OCT_E] = &E; E.neighbor[OCT_W] = &C;
@@ -510,7 +553,7 @@ test_swap_preserves_off_axis_neighbors(void)
 static void
 test_connect_pick_noop_if_nothing_pending(void)
 {
-	Client A = { 1, {0, 0, 100, 100}, {0} };
+	Client A = { 1, {0, 0, 100, 100}, {0}, 0 };
 	Client *pending = NULL;
 
 	printf("Running connect_pick_noop_if_nothing_pending...\n");
@@ -524,7 +567,7 @@ test_connect_pick_noop_if_nothing_pending(void)
 static void
 test_connect_pick_noop_if_target_is_source(void)
 {
-	Client A = { 1, {0, 0, 100, 100}, {0} };
+	Client A = { 1, {0, 0, 100, 100}, {0}, 0 };
 	Client *pending = &A;
 
 	printf("Running connect_pick_noop_if_target_is_source...\n");
@@ -537,8 +580,8 @@ test_connect_pick_noop_if_target_is_source(void)
 static void
 test_connect_pick_completes_and_clears_pending(void)
 {
-	Client A = { 1, {0,   0, 100, 100}, {0} };
-	Client B = { 2, {300, 0, 100, 100}, {0} };
+	Client A = { 1, {0,   0, 100, 100}, {0}, 0 };
+	Client B = { 2, {300, 0, 100, 100}, {0}, 0 };
 	Client *pending = &A;
 
 	printf("Running connect_pick_completes_and_clears_pending...\n");
@@ -557,6 +600,7 @@ main(void)
 	test_connect_noop_if_slot_occupied();
 	test_connect_no_double_link_when_already_connected();
 	test_sever_clears_both_sides();
+	test_sever_cross_monitor_cuts_only_foreign_edges();
 	test_close_gap_shifts_downstream_component();
 	test_close_gap_noop_if_not_connected();
 	test_swap_middle_of_chain_transfers_third_connection();
