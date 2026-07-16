@@ -23,6 +23,12 @@
  *     "brightness" is {"value":<raw>,"max":<raw>} for the backlight device
  *     (see backlight.c), or null if none was found (e.g. a desktop with no
  *     built-in panel) — see "set-brightness" below for changing it.
+ *     "clients" is every mapped, non-panel toplevel:
+ *     [{"id":<n>,"appid":"...","title":"...","focused":bool,
+ *     "minimized":bool},...] — the taskbar feed for a shell that cannot
+ *     speak foreign-toplevel-management (the kitty-hosted bar TUI reads
+ *     this; QML shells should keep using the protocol). See "focus" below
+ *     for acting on an entry.
  *   - Client -> server: plain text commands, one per line:
  *       pan <dx> <dy>     move the camera (world units)
  *       zoom <factor>     multiply zoom (e.g. 1.1 / 0.9)
@@ -32,6 +38,11 @@
  *                         (reflected back as "ontop" under "focused")
   *       sever <a> <b>     cut the connection between clients <a> and <b>
  *                         (see "connections" below)
+ *       focus <id>        focus the client with this stable id (from
+ *                         "clients"), unminimizing it and centering the
+ *                         camera on it — the taskbar-click action on an
+ *                         infinite canvas, where "focus" alone could land
+ *                         on a window nowhere near the current view.
  *       dockprep <appid> <x> <y> <w> <h>
  *                         arm a one-shot "dock this app_id straight into this
  *                         rect the moment it maps" request (see
@@ -107,7 +118,8 @@
 /* Bumped from 4096 to fit the "outputs" array (each output's full mode
  * list) alongside everything else already in the state broadcast — see
  * ipc_build_state()'s outputs loop. */
-#define IPC_BUF_SIZE    16384 /* raised from 8192: two monitors' full mode lists overflowed outputs[] */
+#define IPC_BUF_SIZE    24576 /* raised again from 16384: the "clients" taskbar
+                               * array (up to 4096B) joined the state line */
 
 struct ipc_client {
 	int fd;
@@ -164,6 +176,9 @@ ipc_build_state(char *buf, size_t len)
 	char title[512];
 	char appid[256];
 	char conns[2048];
+	char clientsbuf[4096];
+	size_t clients_len = 0;
+	int clients_first = 1;
 	char pendbuf[160];
 	char dockhoverbuf[288];
 	char outputs[4096];
@@ -236,6 +251,35 @@ ipc_build_state(char *buf, size_t len)
 		}
 	}
 conns_full:
+
+	/* Taskbar feed: every mapped, non-panel toplevel. Same truncation
+	 * discipline as the connections loop above — a partial entry must be
+	 * erased or the final %s emits broken JSON. Panels (ispanel) are shell
+	 * chrome and never taskbar entries, matching their exclusion from
+	 * foreign-toplevel. */
+	clientsbuf[0] = '\0';
+	wl_list_for_each(c, &clients, link) {
+		char cappid[256], ctitle[256];
+		int n;
+		if (!c->mon || !client_surface(c)->mapped || c->ispanel)
+			continue;
+		ipc_json_escape(client_get_appid(c), cappid, sizeof(cappid));
+		ipc_json_escape(client_get_title(c), ctitle, sizeof(ctitle));
+		n = snprintf(clientsbuf + clients_len, sizeof(clientsbuf) - clients_len,
+			"%s{\"id\":%u,\"appid\":\"%s\",\"title\":\"%s\","
+			"\"focused\":%s,\"minimized\":%s}",
+			clients_first ? "" : ",",
+			c->id, cappid, ctitle,
+			c == f ? "true" : "false",
+			c->minimized ? "true" : "false");
+		if (n < 0 || (size_t)n >= sizeof(clientsbuf) - clients_len) {
+			clientsbuf[clients_len] = '\0';
+			goto clients_full;
+		}
+		clients_len += (size_t)n;
+		clients_first = 0;
+	}
+clients_full:
 
 	/* Live line for a menu-armed pending connect (Super+L, see
 	 * connect_pick_arm() / connection_graph.c): the source window's screen
@@ -367,8 +411,9 @@ conns_full:
 		"\"exit_pending\":%s,"
 		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
-		"\"fullscreen\":%s,\"ontop\":%s,\"overlap\":%s},"
+		"\"fullscreen\":%s,\"ontop\":%s,\"overlap\":%s,\"yellow\":%.3f},"
 		"\"connections\":[%s],"
+		"\"clients\":[%s],"
 		"\"pending_connect\":%s,"
 		"\"dock_hover\":%s,"
 		"\"outputs\":[%s],"
@@ -389,7 +434,8 @@ conns_full:
 		(f && f->isfullscreen) ? "true" : "false",
 		(f && f->isontop) ? "true" : "false",
 		(f && f->allow_overlap) ? "true" : "false",
-		conns, pendbuf, dockhoverbuf, outputs, brightnessbuf);
+		f ? f->paper_yellow : 0.0f,
+		conns, clientsbuf, pendbuf, dockhoverbuf, outputs, brightnessbuf);
 	if ((written < 0 || (size_t)written >= len) && len >= 2) {
 		/* Truncation cut off the trailing '\n'; restore the frame
 		 * terminator so one oversized state costs the reader one bad
@@ -497,6 +543,29 @@ ipc_exec_command(char *line)
 		uint32_t id_a = sa ? (uint32_t)strtoul(sa, NULL, 10) : 0;
 		uint32_t id_b = sb ? (uint32_t)strtoul(sb, NULL, 10) : 0;
 		sever_connection(id_a, id_b);
+	} else if (strcmp(cmd, "focus") == 0) {
+		/* Taskbar click: focus by stable id (see "clients" above).
+		 * Unminimize first — focusing a hidden client is a no-op the user
+		 * reads as a dead button — and center the camera, since on an
+		 * infinite canvas the window may be nowhere near the current view. */
+		char *sid = strtok_r(NULL, " \t\r", &save);
+		uint32_t id = sid ? (uint32_t)strtoul(sid, NULL, 10) : 0;
+		Client *c = NULL, *it;
+		wl_list_for_each(it, &clients, link) {
+			if (it->id == id && it->mon && client_surface(it)->mapped
+					&& !it->ispanel) {
+				c = it;
+				break;
+			}
+		}
+		if (c) {
+			if (c->minimized)
+				setminimized(c, 0);
+			focusclient(c, 1);
+			viewport_center_on(c);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: focus: no client with id %u", id);
+		}
 	} else if (strcmp(cmd, "dockprep") == 0) {
 		char *appid = strtok_r(NULL, " \t\r", &save);
 		char *sx = strtok_r(NULL, " \t\r", &save);

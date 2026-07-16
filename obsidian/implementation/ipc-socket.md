@@ -15,5 +15,16 @@
 
 - The state broadcast includes `"overview":true|false` — mirrors [[overview-mode]]'s `overview_is_active()`. Added so the shell can show the connection-graph lines whenever overview is open, not just while Super is held (the two conditions used to be conflated; see the [[ledger]]).
 
+- **Taskbar feed (2026-07-16, for the [[app-launcher|TUI-bar]] direction)**: the
+  state broadcast includes `"clients":[{"id","appid","title","focused","minimized"},...]`
+  — every mapped, non-`ispanel` toplevel, by stable `Client.id`. Exists because a
+  terminal-hosted bar (the planned kitty/Textual bar) cannot speak
+  [[foreign-toplevel]]; QML shells should keep using the protocol. Same
+  truncation discipline as `connections` (partial entry erased on overflow;
+  `IPC_BUF_SIZE` bumped to 24576 for it). Paired command: `focus <id>` —
+  unminimizes, focuses, and `viewport_center_on()`s the client (a taskbar click
+  on an infinite canvas must also bring the window into view).
+- The state broadcast also carries `focused.yellow` (papyrus knob, see [[shaders]]).
+
 - The [[quickshell-shell]] uses the socket (via its `KalinViewport` service) to mirror the camera and drive it.
 - The socket complements [[foreign-toplevel]], which carries the window list; together they are the shell-integration channel.
