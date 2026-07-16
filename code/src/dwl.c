@@ -1030,9 +1030,10 @@ buttonpress(struct wl_listener *listener, void *data)
 		}
 
 		/* If you released any buttons, we exit interactive move/resize/pan mode. */
-		/* TODO: should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
 			int was_move = (cursor_mode == CurMove || cursor_mode == CurMoveSolo);
+			/* Fallback shape, for when no surface (or a client that never
+			 * sets a cursor) ends up under the pointer below. */
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
 			if (grabc) {
@@ -1047,6 +1048,15 @@ buttonpress(struct wl_listener *listener, void *data)
 					persistence_save();
 			}
 			grabc = NULL;
+			/* setcursor()/setcursorshape() dropped client requests for the
+			 * whole grab, so the surface under the cursor still believes its
+			 * preferred shape is set. A bare re-enter is a wlroots no-op
+			 * while the focused surface is unchanged, so force a leave
+			 * first: the enter from motionnotify() then makes the client
+			 * re-request its cursor, instead of the "default" fallback
+			 * above staying pinned until the next surface crossing. */
+			wlr_seat_pointer_notify_clear_focus(seat);
+			motionnotify(0, NULL, 0, 0, 0, 0);
 			return;
 		}
 		cursor_mode = CurNormal;
@@ -3677,15 +3687,16 @@ run(char *startup_cmd)
 
 	status_mark_dirty();
 
-	/* At this point the outputs are initialized, choose initial selmon based on
-	 * cursor position, and set default cursor image */
+	/* At this point the outputs are initialized: place the cursor in the
+	 * centre of the layout (warp_closest clamps into the nearest output if
+	 * the midpoint falls in a dead gap between monitors), pick selmon from
+	 * where it landed, and set the default image. The inherited hack warped
+	 * the cursor to its own backend position — a move that
+	 * wlr_output_cursor_move() discards as a no-op — so the image just
+	 * appeared wherever the hardware had it until the first real motion. */
+	wlr_cursor_warp_closest(cursor, NULL,
+			sgeom.x + sgeom.width / 2.0, sgeom.y + sgeom.height / 2.0);
 	selmon = xytomon(cursor->x, cursor->y);
-
-	/* TODO hack to get cursor to display in its initial location (100, 100)
-	 * instead of (0, 0) and then jumping. Still may not be fully
-	 * initialized, as the image/coordinates are not transformed for the
-	 * monitor when displayed here */
-	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
 	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
 	/* Run the Wayland event loop. This does not return until you exit the
@@ -4675,12 +4686,19 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* FIXME: figure out why the cursor image is at 0,0 after turning all
-	 * the monitors on.
-	 * Move the cursor image where it used to be. It does not generate a
-	 * wl_pointer.motion event for the clients, it's only the image what it's
-	 * at the wrong position after all. */
-	wlr_cursor_move(cursor, NULL, 0, 0);
+	/* Re-anchor the drawn cursor after output changes: a DPMS wake modeset
+	 * resets the backend's cursor plane to 0,0 while cursor->x/y stay
+	 * correct. The old wlr_cursor_move(cursor, NULL, 0, 0) never repaired
+	 * this because wlr_output_cursor_move() early-returns when its cached
+	 * position is unchanged, so nothing reached the hardware. Bounce through
+	 * the layout origin and back so the second warp is a real move that
+	 * re-commits the plane at the true position; like the old call, none of
+	 * this sends motion events to clients. */
+	{
+		double cursor_x = cursor->x, cursor_y = cursor->y;
+		wlr_cursor_warp_closest(cursor, NULL, 0, 0);
+		wlr_cursor_warp_closest(cursor, NULL, cursor_x, cursor_y);
+	}
 
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
 }

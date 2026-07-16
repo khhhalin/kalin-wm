@@ -16,7 +16,8 @@
   - impl-note: none expected (bug fixes, no behavior-model change) — update
     [[roadmap]]'s known-bugs list is the *keeper's* job at fold-back.
   - `obsidian/agents/cursor-bugs/` (report zone)
-- Status: running (dispatched 2026-07-17, after [[multicam-phase2]] merged and
-  released `dwl.c`).
-- Branch: (worker reports back)
+- Status: for-review (all three bugs fixed; see
+  `obsidian/agents/cursor-bugs/report.md` for root causes and live-verify
+  steps).
+- Branch: `worktree-agent-a4c6522b0d5af72cc`
 - Why: [[roadmap]] "Known minor bugs"; [[stability]]/daily-drive polish.
