@@ -49,12 +49,13 @@
   off-screen indicators, overview polish. Full breakdown + touch list in the note.
 
 - Verify the [[nixos-session]] end-to-end after `nixos-rebuild switch`: quickshell bar auto-starts, `Super+T`/`Super+P`/`Super+O` work, and the taskbar lists running apps.
-- **[[tui-bar]] — the bottom bar as a kitty-hosted Textual TUI** (started
-  2026-07-16): bar.py + BarHost + `clients`/`focus` IPC all working in nested
-  sessions behind `KALIN_TUI_BAR=1`; live shell keeps the QML BottomBar until
-  panel-toggle parity. Open: P4 packaging (kitty + textual-image, rebuild
-  gate), panel toggling from the bar, tray/MPRIS/calendar replacements,
-  cutover + BottomBar deletion. Full checklist in the note.
+- **[[tui-bar]] — the bottom bar as a kitty-hosted Textual TUI**: **cutover
+  shipped 2026-07-17** (packaged, panel toggling live, QML bar deleted,
+  hardware-click verified). Remaining follow-ups in the note: tray/MPRIS/
+  calendar/peek/context-menu replacements, hover-grace, polish. The gate also
+  found + fixed an IPC server bug that silently dropped one-shot senders'
+  commands (see the note), and filed the synthetic-pointer button drop under
+  known bugs below.
 - **[[protocols]] — implement missing popular Wayland protocols**, starting
   with `xdg-toplevel-icon-v1` (confirmed missing: our own log warns
   `compositor does not implement the xdg-toplevel-icon protocol` every
@@ -135,6 +136,14 @@ implementation note. Trimmed from full narrative 2026-07-15.
 
 ## Known minor bugs
 
+- **Synthetic/absolute pointer BUTTON events are dropped** (found 2026-07-17
+  while gating the [[tui-bar]]): motion/hover works but presses never reach
+  `buttonpress()` from (a) `zwlr_virtual_pointer` clients (`wlrctl pointer
+  click`) and (b) the test VM's QMP absolute pointing devices (QEMU HID
+  Tablet / vmmouse) — `dwl.c` has zero tablet-tool handling (the one "tablet"
+  mention is a comment) and `virtualpointer()` only attaches the device.
+  Real relative mice/touchpads are unaffected. Blocks all host-driven click
+  automation (vmctl click, wlrctl) — fixing this unlocks clickable VM gates.
 - All three 2026-07-09 cursor bugs (shape not restored after grabs, DPMS-wake
   image at (0,0), hacky startup warp) **fixed 2026-07-17** (fleet task
   `cursor-bugs` — root causes in `obsidian/agents/cursor-bugs/report.md`).

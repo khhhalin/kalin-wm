@@ -1,9 +1,13 @@
 # TUI bar (kalin-bar-tui bar)
 
 - **The bottom bar as a real terminal** — the endgame of the 2026-07-16 bar
-  restyle session (typeset-statusline direction, B's bold type). Working
-  end-to-end in nested sessions as of 2026-07-17; **not yet live** — the real
-  shell keeps the QML BottomBar until panel-toggle parity (see cutover below).
+  restyle session (typeset-statusline direction, B's bold type).
+  **LIVE since 2026-07-17: the cutover shipped** — `BarConfig.useTuiBar`
+  defaults true, the QML bar surface is deleted (quickshell commit
+  `d984fb6`; `KALIN_TUI_BAR=0` now leaves the strip unreserved, it does NOT
+  restore a QML bar). Hardware click test passed live (taskbar focus +
+  panel toggles by hand); the floating-panels bug it surfaced was an IPC
+  server bug, fixed (see below).
 - **Architecture** (three pieces):
   - `tools/bar-tuis/kalin_tuis/bar.py` — a Textual app in the existing
     [[bar-tuis]] suite. Taskbar from the [[ipc-socket]] `clients` broadcast
@@ -36,18 +40,32 @@
 - **Debug note:** redirecting the bar's stderr blackholes the whole UI —
   Textual renders through that stream in this setup; capture only while
   hunting a crash, never in the standing command.
-- **Cutover checklist (open):**
-  - P4 packaging: kitty + textual-image (+psutil) env + `kalin-bar-kitty`
-    wrapper in home-config/desktop.nix; rebuild gate needs explicit approval.
-  - Panel toggling from the bar (click a group → dockprep/dock the existing
-    kalin_tuis panel foots; hover-grace later).
-  - Losses at cutover to plan for: system tray (StatusNotifier pixmaps —
-    drawable over TGP, work), MPRIS widget, calendar drawer, window peek,
-    taskbar context menu.
-  - Polish: focused-taskbar tint too subtle; battery meter's last cell
-    rounds down at 100%.
-  - Then: flip `useTuiBar` default, delete BottomBar + bar widgets (no dead
-    code), re-sync this note + [[quickshell-shell]].
-- Verified in nested sessions: strip reservation, dockprep/dock placement,
-  respawn self-heal (killed kitty, BarHost brought it back), real icons,
-  live meters/clock, env-flag opt-in against the real config dir.
+- **Cutover done (2026-07-17).** P4 packaged (`kalin-bar-kitty`, kitty NOT in
+  systemPackages — bar-canvas only; barTuiEnv += textual-image; the flake
+  input needed `nix flake lock --update-input kalin-wm` + re-switch, the
+  first switch shipped a stale 10:18 snapshot without bar.py). Panel toggling
+  ships: clicking a group dockpreps+spawns/re-docks its kalin_tuis panel
+  (appids match the old DockedPanel convention; one panel at a time;
+  KALIN_BAR_OUTPUT from BarHost names the output). QML bar deleted.
+- **Bugs the gate caught (all fixed):**
+  - BarHost's reservation surface ate every click (Top-layer over the docked
+    kitty) → empty input `mask`.
+  - Dock rect trusted boot-stale `screen.width` (VM: bar stuck at 640) →
+    use the anchored window's own width + re-dock on change.
+  - BarHost could spawn before the QML screen populated (empty appid) →
+    screen-ready poll before first spawn.
+  - **The compositor IPC server dropped one-shot senders' commands** (HUP
+    race + greeting-EPIPE remove-before-drain) — the bar's dockprep never
+    registered, so every panel mapped floating. Fixed in ipc.c
+    (drain-and-execute on every disconnect path); this had silently affected
+    kalin-dock CLI-style senders since the IPC existed.
+- **Follow-ups (v1 losses + polish):** system tray (StatusNotifier pixmaps —
+  drawable over TGP), MPRIS group, calendar (clock click → a calendar TUI
+  panel), window peek, taskbar context menu + pins, hover-grace panel
+  auto-close (dock_hover is still broadcast), bar "stretched" report from
+  the nested test (likely nested-window scaling — re-check on live), general
+  polish pass. Also: synthetic-pointer button drop (roadmap known-bugs)
+  blocks click automation in VM/nested gates.
+- Verified: nested (strip, dockprep, respawn self-heal, icons, meters,
+  clock), VM (real DRM boot, bar up), live (hardware clicks: taskbar focus +
+  panel toggles).
