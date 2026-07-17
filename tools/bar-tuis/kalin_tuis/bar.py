@@ -173,6 +173,9 @@ class PanelGroup(Static):
             f"[{bracket}]⟨[/] [{LABEL}]{glyph}[/] {inner}[{bracket}]⟩[/]" + SEP)
 
     def on_click(self) -> None:
+        if os.environ.get("KALIN_BAR_DEBUG"):
+            with open("/tmp/bar-click.log", "a") as fh:
+                fh.write(f"panel group click: {self.key}\n")
         self.app.toggle_panel(self.key)  # type: ignore[attr-defined]
 
 
