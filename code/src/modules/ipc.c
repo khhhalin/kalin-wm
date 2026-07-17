@@ -454,6 +454,8 @@ clients_full:
  * line" warnings and docked panels stuck open on a stale dock_hover). On a
  * short write, lead the next send with '\n' so the reader loses exactly one
  * record and resyncs. */
+static ssize_t ipc_client_drain(struct ipc_client *cl);
+
 static void
 ipc_client_send(struct ipc_client *cl, const char *msg)
 {
@@ -467,8 +469,17 @@ ipc_client_send(struct ipc_client *cl, const char *msg)
 	}
 	n = write(cl->fd, msg, len);
 	if (n < 0) {
-		if (errno != EAGAIN && errno != EINTR)
+		if (errno != EAGAIN && errno != EINTR) {
+			/* A fire-and-forget sender (kalin-dock, the bar TUI's panel
+			 * toggles) may have already close()d: this write fails EPIPE,
+			 * but its command still sits readable in the socket (half-close
+			 * keeps data queued past the FIN). Removing without draining
+			 * silently dropped the command — the accept-time greeting hit
+			 * this on every fast one-shot client. Found live: the TUI bar's
+			 * dockprep never registered and its panels mapped floating. */
+			ipc_client_drain(cl);
 			ipc_client_remove(cl);
+		}
 		return;
 	}
 	if ((size_t)n < len)
@@ -659,30 +670,43 @@ ipc_exec_command(char *line)
 	}
 }
 
+/* Read and execute every command line the peer has queued. Returns the last
+ * read() result: 0 = orderly EOF, -1 = would-block or error (the fd is
+ * O_NONBLOCK, so this never stalls a live connection). Shared by the readable
+ * handler and every disconnect path — a one-shot sender's command must be
+ * executed even when its close() is noticed before (or instead of) its data. */
+static ssize_t
+ipc_client_drain(struct ipc_client *cl)
+{
+	char buf[IPC_BUF_SIZE];
+	ssize_t n;
+
+	for (;;) {
+		char *save = NULL, *line;
+		n = read(cl->fd, buf, sizeof(buf) - 1);
+		if (n <= 0)
+			return n;
+		buf[n] = '\0';
+		for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
+			ipc_exec_command(line);
+	}
+}
+
 static int
 ipc_client_readable(int fd, uint32_t mask, void *data)
 {
 	struct ipc_client *cl = data;
-	char buf[IPC_BUF_SIZE];
-	char *save = NULL;
-	char *line;
 	ssize_t n;
+	(void)fd;
 
-	if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
+	/* Drain BEFORE honoring a hangup: a fire-and-forget sender's HANGUP and
+	 * READABLE arrive in the same wakeup, and removing the client without
+	 * reading silently discarded its command (see ipc_client_send()). */
+	n = ipc_client_drain(cl);
+
+	if ((mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) || n == 0
+			|| (n < 0 && errno != EAGAIN && errno != EINTR))
 		ipc_client_remove(cl);
-		return 0;
-	}
-
-	n = read(fd, buf, sizeof(buf) - 1);
-	if (n <= 0) {
-		if (n == 0 || (errno != EAGAIN && errno != EINTR))
-			ipc_client_remove(cl);
-		return 0;
-	}
-	buf[n] = '\0';
-
-	for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
-		ipc_exec_command(line);
 	return 0;
 }
 
