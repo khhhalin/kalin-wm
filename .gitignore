@@ -25,3 +25,4 @@ tools/vault-review/state*.json
 # fleet worker worktrees (transient, isolated checkouts)
 .claude/worktrees/
 tests/test_window_shader_math
+.fleet-deck/
