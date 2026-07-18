@@ -22,3 +22,5 @@ Plus your assigned implementation note(s) and your report zone below. If the tas
 **Verify to a green baseline before AND after** using the worktree-safe checks listed in the vault's fleet-policy note. Report results honestly, including failures.
 
 **When done, write `obsidian/agents/{{task_id}}/report.md`** (what changed and why; files touched; implementation notes updated; verification results; branch name), set your task note's status to for-review, commit, and stop. Do not merge, do not push, do not touch main.
+
+**Signal protocol:** fleet-deck watches your output for markers and notifies the human — do not assume anyone is reading this session live. On its own line print exactly `[FD:done: <short summary>]` after your report is committed, `[FD:blocked: <why>]` if you cannot proceed, `[FD:ask: <question>]` when you need a human decision. One line, under 100 characters.
