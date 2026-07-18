@@ -304,6 +304,10 @@ void overview_select(Client *c);
 int overview_is_active(void);
 /* Defined in the separately-compiled toplevel_export TU. */
 void toplevel_export_init(struct wl_display *display);
+/* Defined in the separately-compiled toplevel_icon TU. */
+void toplevel_icon_init(struct wl_display *display);
+/* Defined in the separately-compiled system_bell TU. */
+void system_bell_init(struct wl_display *display);
 /* Defined in the separately-compiled wallpaper TU. */
 void wallpaper_configure(int w, int h);
 void wallpaper_update(void);
@@ -4100,6 +4104,8 @@ setup(void)
 	wlr_screencopy_manager_v1_create(dpy);
 	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
 	toplevel_export_init(dpy);
+	toplevel_icon_init(dpy);
+	system_bell_init(dpy);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_ext_data_control_manager_v1_create(dpy, 1);
 	wlr_primary_selection_v1_device_manager_create(dpy);
