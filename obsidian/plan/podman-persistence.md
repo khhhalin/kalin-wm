@@ -133,17 +133,31 @@ On replay the new compositor sees a fresh `xdg_toplevel` and must drop it at its
   and rely on each app's own state restore (browser tab restore, tmux for
   terminals), which is today's [[persistent-desktop]] Level 2.
 
-## Open decisions (before any build)
+## Decisions (2026-07-18) — shelved, but the approach is settled
 
-- Force-redraw vs retain buffers (leaning force-redraw).
-- Reuse appid+title+instance vs a new durable-token protocol (leaning protocol,
-  for determinism).
-- One proxy per app vs one multiplexing proxy (leaning per-app, matches
-  containers).
-- Which apps go in podman at all, and how the Wayland socket + `/dev/dri` +
-  XDG runtime get passed into each container.
-- Whether this is worth building versus staying at [[persistent-desktop]]
-  Level 2 — this note deliberately does **not** commit to building it.
+**Overall: on the shelf.** Not being built now; [[persistent-desktop]] Level 2
+(respawn-fresh + tmux content) stays the shipping model. Revisit when other
+v1.0 work clears. The sub-decisions below are pre-settled so that *if* this is
+picked up later it starts from a fixed shape, not a blank page:
+
+- **Buffer strategy: force-redraw, not retain.** On reconnect the proxy
+  synthesizes the `configure` + `frame` callback and lets the app repaint from
+  scratch — near-zero per-frame overhead, no GPU→CPU buffer copies. Accepted
+  cost: a possible one-frame blank on restore. (Retain-buffers is explicitly
+  *not* the plan — it taxes the Ivy Bridge iGPU every frame.)
+- **Re-association: a durable-token protocol, not appid+instance reuse.** A new
+  Wayland protocol module (`code/src/modules/protocols/`) where the proxy tags
+  each surface with a stable token the compositor keys placement on directly —
+  deterministic, sidesteps the instance-ordering races
+  [[persistence|persistence.c]] documents.
+- **Scope: a curated app set, not everything.** Only a few apps worth persisting
+  go in podman + proxy (e.g. browser, editor); everything else stays on today's
+  respawn-fresh path. This is a **mixed model** and it narrows the
+  socket + `/dev/dri` + XDG-runtime passthrough problem to a handful of
+  containers. Proxy count follows naturally (one proxy per persisted app).
+
+Still genuinely open (only matters once building starts): the exact passthrough
+recipe per container, and the precise app list.
 
 See also: [[persistent-desktop]] · [[persistence]] · [[protocols]] ·
 [[connection-graph]] · [[dev-restart]]

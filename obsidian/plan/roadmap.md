@@ -148,8 +148,10 @@ implementation note. Trimmed from full narrative 2026-07-15.
   app's protocol state to the new compositor), apps in podman containers,
   re-association via a durable-token protocol. Reopens the Level 3 that
   [[persistent-desktop]] had rejected; CRIU/checkpoint ruled out (no Intel GPU
-  plugin on this box). **Investigation only — not committed to build.** Full
-  design + open decisions in [[podman-persistence]].
+  plugin on this box). **Shelved (2026-07-18) but the approach is settled** —
+  force-redraw (no buffer retention), durable-token re-association protocol, and
+  a curated app set (mixed with respawn-fresh). Level 2 stays the shipping model;
+  revisit when v1.0 work clears. Full design in [[podman-persistence]].
 - **Auto-pan when dragging a window past the viewport edge** (driftwm-inspired) —
   would extend `motionnotify()`'s `CurMove` branch. Investigated, not yet
   implemented. Its sibling half (gesture pan + momentum coast + pinch zoom, and
