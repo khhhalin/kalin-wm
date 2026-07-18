@@ -180,6 +180,17 @@ implementation note. Trimmed from full narrative 2026-07-15.
 
 ## Known minor bugs
 
+- **[[screenshot-ui]] crashes when the cursor hovers its info panel** (found
+  2026-07-18). `xytonode()` (`dwl.c`) NULL-derefs
+  `wlr_scene_surface_try_from_buffer()->surface` on the panel's plain
+  (non-surface) pixel buffer, every pointer motion. Fix: NULL-check in
+  `xytonode()` (mandatory, fixes the whole non-surface-buffer class) + give the
+  info/frozen buffers the existing `point_accepts_input`-returns-false pattern
+  (`paper_node_rejects_input()`). Plus the requested UX: **fade the info panel
+  as the cursor approaches** (`wlr_scene_buffer_set_opacity()` by distance, low
+  alpha floor ~0.15 so the readout stays legible) — note the fade does *not*
+  fix the crash. Details + scope in [[screenshot-ui]]. Touches `dwl.c` →
+  sequences after the active proto-toplevel-icon worker.
 - **Synthetic/absolute pointer BUTTON events are dropped** (found 2026-07-17
   while gating the [[tui-bar]]): motion/hover works but presses never reach
   `buttonpress()` from (a) `zwlr_virtual_pointer` clients (`wlrctl pointer
