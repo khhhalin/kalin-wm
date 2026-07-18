@@ -21,6 +21,24 @@ static int overview_active;
 static Monitor *overview_mon; /* whose camera the overview hijacked */
 static float saved_x, saved_y, saved_zoom;
 
+/* Monitors are freed by cleanupmon() (dwl.c) with no hook into this module,
+ * so overview_mon can outlive its Monitor if an output vanishes while the
+ * overview is open — re-validate membership in `mons` before dereferencing
+ * (the stale pointer is only ever compared). */
+static int
+overview_mon_alive(void)
+{
+	Monitor *m;
+
+	if (!overview_mon)
+		return 0;
+	wl_list_for_each(m, &mons, link) {
+		if (m == overview_mon)
+			return 1;
+	}
+	return 0;
+}
+
 int
 overview_is_active(void)
 {
@@ -30,7 +48,7 @@ overview_is_active(void)
 void
 overview_exit(void)
 {
-	Monitor *m = overview_mon;
+	Monitor *m = overview_mon_alive() ? overview_mon : NULL;
 
 	if (!overview_active)
 		return;
@@ -64,8 +82,16 @@ toggle_overview(const Arg *arg)
 	(void)arg;
 
 	if (overview_active) {
+		/* Super+O on the monitor whose camera the overview holds: plain
+		 * toggle-close. On any *other* monitor, the press means "overview
+		 * here" (the monitor under the cursor owns all camera input — see
+		 * obsidian/implementation/multi-camera.md): restore the old
+		 * monitor's camera and fall through to open on selmon. */
+		if (!selmon || selmon == overview_mon) {
+			overview_exit();
+			return;
+		}
 		overview_exit();
-		return;
 	}
 
 	if (!selmon)
@@ -105,11 +131,21 @@ overview_select(Client *c)
 
 	if (!overview_active)
 		return;
+
+	/* Only a click on a window the overview monitor itself holds is a
+	 * "jump". A window held by a *different* monitor is already showing
+	 * through that monitor's own (un-hijacked) camera — yanking that
+	 * camera to center it would be surprising, and silently dropping the
+	 * overview state here used to leave the hijacked camera stuck at the
+	 * zoomed-out shot with its saved position lost. Treat it as a
+	 * dismiss-with-restore instead (the focus click already happened in
+	 * buttonpress()). */
+	if (!c || !c->mon || c->mon != overview_mon) {
+		overview_exit();
+		return;
+	}
 	overview_active = 0;
 	overview_mon = NULL;
-
-	if (!c || !c->mon)
-		return;
 	m = c->mon;
 
 	m->cam.target_zoom = 1.0f;

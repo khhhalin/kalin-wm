@@ -159,8 +159,12 @@ wallpaper_update(void)
 
 	tile_size = wallpaper.tile_size;
 	/* One shared wallpaper tree can only follow one camera; track the cursor's
-	 * monitor (multi-camera). Per-monitor wallpaper is deferred polish — see
-	 * obsidian/multi-camera.md. */
+	 * monitor (multi-camera). True per-monitor parallax can't be built from
+	 * rect-tile trees at all — scene trees don't clip, so per-monitor grids
+	 * would spill their sub-tile pan overhang onto neighboring outputs; it
+	 * needs the wallpaper as a texture (per-monitor wlr_scene_buffer sized
+	 * exactly m->m, panned via its source box) — see
+	 * obsidian/implementation/wallpaper.md. */
 	cam_x = selmon ? selmon->cam.x : 0.0f;
 	cam_y = selmon ? selmon->cam.y : 0.0f;
 
