@@ -1,7 +1,7 @@
 # Roadmap
 
 - Planned and open work for [[kalin-wm]].
-- Completed work and decisions go in the [[ledger]]; this note is the forward-looking backlog.
+- Chronology lives in git and current as-built truth in the `implementation/` subsystem notes; this note is the forward-looking backlog.
 - It supersedes the old root `ROADMAP.md`.
 
 ## Direction (2026-07-01)
@@ -10,16 +10,16 @@
   original plan here named the (since-removed) [[column-layout]] as the
   primary motion; the actual current model is full free positioning + a
   [[connection-graph]] between spawn-adjacent windows (2D from the start,
-  not column-scrolling-first) — see [[connection-graph]] and the [[ledger]]
-  for when/why that changed.
+  not column-scrolling-first) — see [[connection-graph]] for when/why that
+  changed.
 - Current priorities, in order:
 1. **[[stability]] / crash-proofing** — the main blocker to daily use.
 2. **[[quickshell-shell]] integration** — taskbar, [[overview-mode]], notifications.
-3. **Keep cutting dwl heritage** — continue simplifying inherited code (XWayland, tiling params, and tags already removed — see [[ledger]]).
+3. **Keep cutting dwl heritage** — continue simplifying inherited code (XWayland, tiling params, and tags already removed — see [[dwl-fork]]).
    - Modularization (splitting `dwl.c` into `code/src/modules/*` TUs) is
      ongoing, not finished: 5169 -> 4171 lines in one 2026-07-09 sweep
      (connection-graph, directional-focus, client-anim, PTY, window-size-
-     history all extracted — see [[ledger]] and [[connection-graph]]), but
+     history all extracted — see [[connection-graph]]), but
      dwl.c had also grown back up from a prior 3884-line low as fast as
      features landed. Next candidates once more accumulates: `main()`/
      `setup()`/the wlroots-object-lifecycle listener handlers are the
@@ -65,8 +65,8 @@
     new module under `code/src/modules/protocols/`, not into `dwl.c`.**
     `dwl.c` keeps only the one-line `wlr_*_create()` registration call in
     `setup()`; the listener setup and logic go in the module. This continues
-    the modularization direction already tracked in the [[ledger]]
-    ("modularization step 1/2") and in [[dwl-fork]] — the goal is to shrink
+    the modularization direction already tracked in [[dwl-fork]]
+    — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
 ## Theming polish (decided 2026-07-18)
@@ -166,7 +166,7 @@ implementation note. Trimmed from full narrative 2026-07-15.
   sanity check, since the re-anchor runs on every `updatemons()`), startup
   placement.
 
-## Already shipped (see [[ledger]])
+## Already shipped (detail in each subsystem's `implementation/` note)
 
 [[infinite-canvas]], [[viewport]] [[pan]]/[[zoom]]/[[follow-mode]]/[[fit-all]],
 [[buffer-scaling]], [[connection-graph]] (superseding [[column-layout]] +
