@@ -7,11 +7,16 @@ window/session that dies with the compositor is a real cost.
 ## The spectrum (why Level 2)
 
 - **Level 3 — live GUI persistence** (GUI *processes* survive a restart) is not
-  practically attainable: a Wayland client is bound to one compositor instance
-  and quits on disconnect. It would need a whole-desktop nested compositor
-  (kills the per-window [[infinite-canvas]] model) or splitting kalin-wm into a
-  persistent server-core + restartable frontend (a from-scratch rewrite).
-  **Rejected.**
+  attainable *for free*: a Wayland client is bound to one compositor instance
+  and quits on disconnect. The whole-desktop nested compositor (kills the
+  per-window [[infinite-canvas]] model) and the persistent server-core split (a
+  from-scratch rewrite) are both **rejected**. **But a third path was opened
+  2026-07-18** — a **per-app stable Wayland proxy** (a waypipe fork that
+  survives compositor death and replays each app's protocol state to the new
+  instance), with apps in podman containers. It is the one mechanism that could
+  reach Level 3 on this Intel box (CRIU/checkpoint is out — no Intel GPU
+  plugin). Design, mechanics, and open decisions in
+  [[podman-persistence]]; **investigation only, not committed to build.**
 - **Level 2 — chosen.** Terminal *content* genuinely persists (its processes
   live in a tmux server, shown through disposable foot viewports); GUI windows
   auto-relaunch where they were and restore their own state.
