@@ -4,3 +4,30 @@
 - The focused window displays a visible ring whose thickness is set by `focusringpx` in [[compile-time-config]].
 
 - The focus ring is the feedback channel for [[directional-focus]] and ordinary focus changes — it shows where focus landed on the [[infinite-canvas]].
+
+## Color (decided 2026-07-18)
+
+- The ring color is `focuscolor` in [[compile-time-config]] (`code/config/config.def.h` + `config.h`).
+- **Canon: warm amber `COLOR(0xf0a030ff)`** — the shell's signature accent
+  (quickshell `Theme.qml` accent / bar `theme.py` primary, the same amber used
+  for selection and borders). This replaces the inherited dwl teal-blue
+  `0x005577ff`, which was never re-themed and clashed with the warm palette.
+- `bordercolor` (unfocused, grey `0x444444ff`) and `urgentcolor` (red) are
+  unchanged — only the focused ring was off-palette.
+- The four ring rects are built per-client in `dwl.c` (`c->focus_ring[i]`,
+  `wlr_scene_rect_create(..., focuscolor)`); a color change is config-only.
+
+## Layering vs docked chrome (issue noted 2026-07-18)
+
+- The ring rects are children of the client's `c->scene` subtree and draw
+  *outside* the window bounds (positioned at `-ring`), so they inherit the
+  client's scene layer.
+- The [[tui-bar]] is a docked client pinned to `LyrFloatTop` (`setdocked()`).
+  "Ontop" windows also live in `LyrFloatTop`, and focusing one raises it above
+  its siblings — **including the bar** — so a focused ontop window's ring paints
+  over the bar. Normal `LyrFloat` windows sit correctly below the bar already.
+- Intended fix (in `dwl.c`, scene-layer path): keep docked chrome above ontop
+  windows — either re-assert the docked bar as topmost within `LyrFloatTop` on
+  every raise, or move docked panels to a dedicated layer above it. Deferred:
+  `dwl.c` is the single hot file and is currently owned by an active worker
+  ([[fleet-workflow]] partition rule), so this sequences after that branch.

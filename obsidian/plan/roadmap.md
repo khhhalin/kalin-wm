@@ -69,6 +69,19 @@
     ("modularization step 1/2") and in [[dwl-fork]] — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
+## Theming polish (decided 2026-07-18)
+
+- **[[focus-ring]] color → warm amber** `COLOR(0xf0a030ff)`, replacing the
+  inherited dwl teal-blue `0x005577ff` that was never re-themed. Config-only
+  (`config.def.h` + `config.h` `focuscolor`); uncontended. As-built target in
+  [[focus-ring]].
+- **Docked bar must render above focus rings.** A focused "ontop" window raises
+  above the docked [[tui-bar]] in `LyrFloatTop`, and its ring (drawn outside the
+  window bounds) paints over the bar. Structural `dwl.c` scene-layer fix — pin
+  docked chrome above ontop windows. Sequences after the current `dwl.c`-owning
+  worker branch (single-hot-file rule, [[fleet-workflow]]). Diagnosis in
+  [[focus-ring]].
+
 ## Planned — [[shaders]] (designed 2026-07-15; Phase 0 infra + paper-mode core in tree, gated off)
 
 - GPU fragment shaders at two levels: **per-window** (shadow, rounded corners,
