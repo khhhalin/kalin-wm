@@ -21,6 +21,42 @@ window/session that dies with the compositor is a real cost.
   live in a tmux server, shown through disposable foot viewports); GUI windows
   auto-relaunch where they were and restore their own state.
 
+## Simplification decided (2026-07-18) — untangle the two tmux jobs
+
+The current setup conflates **two unrelated jobs**, which is why it feels heavy:
+(1) a universal `kalin-apps` tmux *supervisor* wrapping every `spawn()`, making
+tmux a hard launch dependency and forcing the double-nested `unset TMUX` hack;
+(2) per-terminal tmux *content persistence* (`kalin-term`). Decision: separate
+them and shrink both.
+
+- **Kill the universal supervisor — `spawn()` execs argv directly**
+  (the long-planned "spawn-direct", now decided). The compositor's own env
+  already carries `$WAYLAND_DISPLAY`/`$KALIN_IPC_SOCKET`, so a direct `execvp`
+  reaches this compositor without tmux. **tmux stops being a dependency for
+  launching anything.** Two things that rode on the wrapper must move off it:
+  - **Launcher toggle** (`ACT_TOGGLE_LAUNCHER`) currently tracks the launcher by
+    tmux window name (`kalin-apps:launcher`); it needs a non-tmux tracking
+    mechanism (e.g. a tracked pid/appid, like the pre-2026-07-12 path did).
+  - **Respawn** (`persistence_respawn_saved()`) currently goes through
+    `tmux new-window -t kalin-apps`; it forks+execs directly with the *new*
+    compositor's env instead.
+- **Terminals: ephemeral by default, persistence opt-in.**
+  `Super+T` → bare `foot` (scratch: no tmux, dies with its window).
+  `Super+Ctrl+T` → `foot -e kalin-term` (the persistent per-terminal tmux
+  session, kept for when you actually want scrollback/processes to survive).
+  The `kalin-tmux.service` + `kalin-term` wrappers **stay**, but now serve only
+  the opt-in path, not every terminal.
+- **Persistence: a curated appid allowlist, not everything.** Only a named few
+  apps (e.g. browser, editor) are **auto-respawned** on restart;
+  **terminals are never respawned**. Non-allowlisted apps keep the *passive*
+  layout restore ([[persistence]] re-places them by appid+instance whenever they
+  happen to re-map), they're just not relaunched for you. This replaces
+  session-resurrection's current "respawn every saved app" behavior — the thing
+  cluttering restores today. The allowlist is config-driven; exact list TBD.
+- Consistent with the shelved [[podman-persistence]] direction (curated set,
+  mixed with respawn-fresh) — this is the Level-2 version of the same "only a
+  few apps deserve persistence" principle.
+
 ## What already exists
 
 - `spawn()` (`dwl.c`) launches every app as `tmux new-window -t kalin-apps --
@@ -45,23 +81,23 @@ window/session that dies with the compositor is a real cost.
   `Super+Ctrl+t` → `kalin-term-pick`, `Super+grave` scratchpad →
   `... -e kalin-term scratch`. Bar TUIs / clip-picker stay ephemeral.
 
-## Phase 2 — auto-relaunch SHIPPED 2026-07-17; spawn-direct still planned
+## Phase 2 — auto-relaunch SHIPPED 2026-07-17; now being narrowed + spawn-direct promoted
 
-- **spawn-direct:** a spawn variant that execs argv directly (no `kalin-apps`
-  tmux wrapper) + a new bind action; point terminals at it to drop the redundant
-  supervisor layer (removes the nesting that `unset TMUX` currently works
-  around). Also fold the `Super+t`/`Super+Ctrl+t`/scratchpad binds into
-  `default_binds.h` for the embedded default.
-- **Auto-relaunch (Level 2 for GUI) — SHIPPED 2026-07-17** (fleet task
-  `session-resurrection`): at map, the client's real PID via
-  `wl_client_get_credentials()` + `/proc/<pid>/cmdline` captures its relaunch
-  command; stored flat in `SavedClientState.cmd` ([[persistence]]); at startup
-  `persistence_respawn_saved()` (called from `run()` after the kalin-apps tmux
-  bootstrap) replays each saved app once (deduped, capped at 32, ascending
-  saved-instance order), letting `persistence_register_client()` re-place it.
-  Foot-server cmdlines are substituted with `foot -e kalin-term` — but this
-  attaches a *fresh* kalin-term session, the old session name isn't
-  recoverable compositor-side. Live end-to-end restart still unverified.
+- **spawn-direct — now the decided direction** (see "Simplification decided"
+  above), no longer just an option: `spawn()` execs argv directly, the universal
+  `kalin-apps` wrapper is removed, and the `Super+T` (scratch) / `Super+Ctrl+T`
+  (persistent) / scratchpad binds fold into `default_binds.h`.
+- **Auto-relaunch (Level 2 for GUI) — SHIPPED 2026-07-17, being narrowed to a
+  curated allowlist** (fleet task `session-resurrection`): at map, the client's
+  real PID via `wl_client_get_credentials()` + `/proc/<pid>/cmdline` captures its
+  relaunch command; stored flat in `SavedClientState.cmd` ([[persistence]]); at
+  startup `persistence_respawn_saved()` (called from `run()`) replays each saved
+  app once (deduped, capped at 32, ascending saved-instance order), letting
+  `persistence_register_client()` re-place it. **Change decided 2026-07-18:**
+  gate respawn by a config appid allowlist and stop respawning terminals (they
+  become scratch by default) — the current unconditional replay is what clutters
+  restores. The foot-server→`foot -e kalin-term` substitution becomes moot once
+  terminals aren't respawned. Live end-to-end restart still unverified.
 - Startup replay under kalinwm `-s` — subsumed by the above (replay is
   unconditional at startup, not `-s`-gated).
 

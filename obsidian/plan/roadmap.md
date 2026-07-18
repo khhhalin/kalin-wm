@@ -69,6 +69,26 @@
     — the goal is to shrink
     the monolith, not grow it every time we add a protocol.
 
+## Simplify the tmux setup (decided 2026-07-18, ASAP)
+
+- Untangle the two jobs tmux does today (universal `kalin-apps` supervisor vs
+  per-terminal content persistence) and shrink both. Full decision in
+  [[persistent-desktop]]:
+  - **spawn-direct**: `spawn()` execs argv directly, remove the universal
+    `kalin-apps` tmux wrapper — tmux is no longer a launch dependency. Move the
+    launcher toggle off tmux-window-name tracking and respawn off `tmux
+    new-window`.
+  - **Terminals ephemeral by default**: `Super+T` → bare `foot`; `Super+Ctrl+T`
+    → persistent `kalin-term` (opt-in). `kalin-tmux.service`/`kalin-term` stay,
+    serving only the opt-in path.
+  - **Persistence = curated appid allowlist**: only a named few apps
+    auto-respawn; terminals never respawn; non-allowlisted apps keep passive
+    layout restore only.
+- Touches `code/src/dwl.c` (`spawn()`, launcher toggle), `persistence.c`
+  (respawn gating), config (allowlist + binds), and the `default_binds.h`
+  fold-in. **Sequences after the active `dwl.c`-owning worker**
+  (proto-toplevel-icon) per the single-hot-file rule ([[fleet-workflow]]).
+
 ## Theming polish (decided 2026-07-18)
 
 - **[[focus-ring]] color → warm amber** `COLOR(0xf0a030ff)` — **shipped

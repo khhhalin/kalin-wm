@@ -1,6 +1,11 @@
 # Spawn
 
 - Spawn launches an external program from a [[keybindings|keybind]].
+- **NOTE (decided 2026-07-18, not yet built):** the universal `kalin-apps` tmux
+  wrapper described below is slated for removal — `spawn()` will `execvp` argv
+  directly (tmux stops being a launch dependency). See the "Simplification
+  decided" section of [[persistent-desktop]]. The description below is still the
+  current as-built until that lands (sequences after the active dwl.c worker).
 - **Every spawn becomes a tmux window** (2026-07-12): instead of `execvp`ing
   the command directly, kalin-wm forks and re-execs `tmux new-window -t
   kalin-apps -n <name> -- <cmd> <args...>` — the command runs as a window in
