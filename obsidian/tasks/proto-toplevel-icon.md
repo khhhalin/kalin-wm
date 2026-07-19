@@ -1,5 +1,5 @@
 ---
-status: for-review
+status: merged
 engine: claude
 objective: Implement xdg-toplevel-icon-v1 (+ xdg-system-bell-v1) as new modules under code/src/modules/protocols/; dwl.c gets only one-line setup() registration.
 scope:

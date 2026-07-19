@@ -44,9 +44,17 @@
   — drag hand-off reassigns `c->mon` mid-drag, the existing `move-monitor` bind
   now teleports to the target camera's center (no new `ACT_*`), and cross-camera
   connection edges are severed on hand-off (`sever_cross_monitor_edges()`).
-  Dual-output GPU check still pending. Remaining: **Phase 3** IPC/shell
-  per-output keying of the `viewports` array; **Phase 4** per-monitor wallpaper,
-  off-screen indicators, overview polish. Full breakdown + touch list in the note.
+  Dual-output GPU check still pending. **Phase 4 landed 2026-07-19** — off-screen
+  indicators are now per-monitor (each monitor's own held windows against its own
+  camera, clamped to `m->m`, zoom-scaled footprint) and the overview's per-camera
+  save/restore, move-between-monitors, and cross-monitor click paths are fixed.
+  Per-monitor *wallpaper* is the one deferred piece: true per-output parallax is
+  impossible with the current unclipped rect-tile trees and needs a
+  texture/`wlr_scene_buffer` redesign plus keeper-level `kalin.h`/`dwl.c` cleanup
+  of the `Wallpaper` global — seam documented in [[wallpaper]]. Remaining:
+  **Phase 3** IPC/shell per-output keying of the `viewports` array (quickshell
+  repo, keeper-side); the per-monitor wallpaper redesign. Full breakdown + touch
+  list in the note.
 
 - Verify the [[nixos-session]] end-to-end after `nixos-rebuild switch`: quickshell bar auto-starts, `Super+T`/`Super+P`/`Super+O` work, and the taskbar lists running apps.
 - **[[tui-bar]] — the bottom bar as a kitty-hosted Textual TUI**: **cutover
@@ -56,11 +64,13 @@
   found + fixed an IPC server bug that silently dropped one-shot senders'
   commands (see the note), and filed the synthetic-pointer button drop under
   known bugs below.
-- **[[protocols]] — implement missing popular Wayland protocols**, starting
-  with `xdg-toplevel-icon-v1` (confirmed missing: our own log warns
-  `compositor does not implement the xdg-toplevel-icon protocol` every
-  session). See [[protocols]] for the full missing/implemented breakdown and
-  priority order.
+- **[[protocols]] — implement missing popular Wayland protocols.**
+  `xdg-toplevel-icon-v1` + `xdg-system-bell-v1` — **shipped 2026-07-19**
+  (proto-toplevel-icon), the two log-warning protocols now advertised as
+  modules under `code/src/modules/protocols/`. Icon state is write-only for
+  now; wiring icons into `foreign_toplevel.c` / the [[quickshell-shell]]
+  taskbar is the follow-up. Remaining confirmed-missing: text-input-v3 +
+  input-method-v2. See [[protocols]] for the full breakdown and priority order.
   - **Rule for this work (and any future protocol addition): write it as a
     new module under `code/src/modules/protocols/`, not into `dwl.c`.**
     `dwl.c` keeps only the one-line `wlr_*_create()` registration call in
@@ -86,8 +96,9 @@
     layout restore only.
 - Touches `code/src/dwl.c` (`spawn()`, launcher toggle), `persistence.c`
   (respawn gating), config (allowlist + binds), and the `default_binds.h`
-  fold-in. **Sequences after the active `dwl.c`-owning worker**
-  (proto-toplevel-icon) per the single-hot-file rule ([[fleet-workflow]]).
+  fold-in. **The `dwl.c`-owning worker it had to sequence after
+  (proto-toplevel-icon) merged 2026-07-19**, so this is now unblocked per the
+  single-hot-file rule ([[fleet-workflow]]).
 
 ## Theming polish (decided 2026-07-18)
 
