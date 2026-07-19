@@ -29,7 +29,13 @@ Decoration: `xdg-decoration-v1`, `org_kde_kwin_server_decoration` (legacy).
 
 Shell integration: `wlr-foreign-toplevel-management-v1` (see
 [[foreign-toplevel]] — this is how the [[quickshell-shell]] gets its window
-list), `xdg-activation-v1`.
+list), `xdg-activation-v1`, `xdg-toplevel-icon-v1`
+(`code/src/modules/protocols/toplevel_icon.c` — wlroots wrapper; the module
+holds its own toplevel→icon map with proper ref-counting, ready for the
+follow-up task that hands icons to the [[quickshell-shell]] taskbar; nothing
+reads the map yet), `xdg-system-bell-v1`
+(`code/src/modules/protocols/system_bell.c` — global advertised, ring logged
+at debug; no audible/visual bell wired).
 
 Capture: `wlr-screencopy-v1`, `export-dmabuf-v1` (`code/src/modules/capture.c`),
 `hyprland-toplevel-export-v1` (`code/src/modules/protocols/toplevel_export.c` —
@@ -43,23 +49,15 @@ for anything else — confirmed working on both the test VM and real hardware).
 
 ## Missing — confirmed by our own logs
 
-These three are not guesses — they're warnings `kalinwm`'s own log
-(`/tmp/kalinwm.log`) prints every session, because a client asked for them and
-got told no:
+These are warnings `kalinwm`'s own log (`/tmp/kalinwm.log`) prints every
+session, because a client asked for them and got told no. Two of the original
+three (`xdg-toplevel-icon-v1`, `xdg-system-bell-v1`) shipped 2026-07-18 and
+moved to "Already implemented" above; remaining:
 
-1. **`xdg-toplevel-icon-v1`** (`wlr_xdg_toplevel_icon_v1_create`) — lets a
-   client set its own taskbar/alt-tab icon instead of the compositor guessing
-   from `.desktop` lookup. **Start here** — this is the one flagged for us to
-   fix first. Directly useful for the [[quickshell-shell]] taskbar/overview,
-   which currently has no compositor-provided icon source.
-2. **text-input-v3 + input-method-v2** (`wlr_text_input_v3.h` +
+1. **text-input-v3 + input-method-v2** (`wlr_text_input_v3.h` +
    `wlr_input_method_v2.h`) — IME plumbing. Log: *"text input interface not
    implemented by compositor; IME will be disabled."* Needed for any
    composed-input method (accents/dead-keys count, not just CJK).
-3. **`xdg-system-bell-v1`** (`wlr_xdg_system_bell_v1_create`) — lets a client
-   ring the system bell (terminal `\a`, etc.) through the compositor instead of
-   yelling into the void. Seen in the same log family during earlier viewport
-   testing this cycle.
 
 ## Missing — popular, not yet confirmed by a warning, worth doing
 
