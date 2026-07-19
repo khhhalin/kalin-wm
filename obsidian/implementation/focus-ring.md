@@ -17,6 +17,28 @@
 - The four ring rects are built per-client in `dwl.c` (`c->focus_ring[i]`,
   `wlr_scene_rect_create(..., focuscolor)`); a color change is config-only.
 
+## Chrome windows never show a ring (gap found 2026-07-18)
+
+- **Decision: an `ispanel` (chrome) window must never draw a focus ring** — a
+  UI terminal / docked bar-TUI should have *no outline ever*, matching its
+  existing exclusion from camera-follow / fit-all / overview / connection-graph
+  / directional-focus / taskbar (all already keyed on `ispanel`, see
+  `kalin.h`). The `ispanel` tag *is* the "special window kind" this needs; the
+  ring was the one missing piece.
+- **The gap:** `focusclient()` (`dwl.c`) enables the ring on any focused client
+  with no `ispanel` guard:
+  ```c
+  if (!exclusive_focus && !seat->drag) {
+      client_set_border_color(c, focuscolor);
+      client_set_focus_ring(c, 1);   // fires for chrome too
+  }
+  ```
+  The border is invisible on a panel (`docked` forces `bw=0`), but the ring is a
+  *separate* set of rects drawn outside the window — so a focused panel shows an
+  outline anyway. Fix: guard the `client_set_focus_ring(c, 1)` (and the
+  now-moot border-color set) on `!c->ispanel`. One-line, in `dwl.c` — sequences
+  after the active proto-toplevel-icon worker.
+
 ## Layering vs docked chrome (issue noted 2026-07-18)
 
 - The ring rects are children of the client's `c->scene` subtree and draw

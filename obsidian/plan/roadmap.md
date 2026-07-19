@@ -113,6 +113,13 @@
   docked chrome above ontop windows. Sequences after the current `dwl.c`-owning
   worker branch (single-hot-file rule, [[fleet-workflow]]). Diagnosis in
   [[focus-ring]].
+- **Chrome windows never draw a focus ring** (decided 2026-07-18). `ispanel`
+  windows (docked bar-TUIs / UI terminals) already skip
+  camera/layout/graph/taskbar; the one gap is `focusclient()` enabling the ring
+  with no `ispanel` guard, so a focused panel shows an outline. Add
+  `!c->ispanel` guard → chrome has no outline ever. One-line `dwl.c` fix;
+  sequences after the active proto-toplevel-icon worker. Detail in
+  [[focus-ring]].
 
 ## Planned — [[shaders]] (designed 2026-07-15; Phase 0 infra + paper-mode core in tree, gated off)
 
@@ -167,7 +174,15 @@ implementation note. Trimmed from full narrative 2026-07-15.
 - Rounded corners — a composite-time per-window pass of [[shaders]].
 - Minimap (corner overview of all windows + viewport rectangle).
 - Bookmarks (named [[viewport]] positions to jump to).
-- Magnetic snapping (windows snap to each other / to a grid).
+- **Fluid snapping grid** (flagged 2026-07-18) — windows snap to each other /
+  to a grid, but the bar is **fluid and smooth**, not a hard quantize: the hard
+  part is the *feel* (snap thresholds, hysteresis so it doesn't jitter at
+  boundaries, easing into the snap, releasing cleanly). Explicitly
+  **research-gated** — needs a design/research pass on the interaction model
+  before any code (candidate for a `research/` note + a [[gestures]]-style
+  spring-glide reuse, since that easing machinery already exists). Not scoped
+  until that research lands. (Supersedes the old one-line "magnetic snapping"
+  nice-to-have.)
 - Anchor-mode visual distinction (different border for an [[anchored-window]]).
 - [[crop-mode]] on-screen banner; cursor-state feedback during pan/move/resize.
 
