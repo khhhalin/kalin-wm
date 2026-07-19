@@ -327,6 +327,7 @@ void screenshotui_cancel(const Arg *arg);
 void screenshotui_confirm(bool write_to_disk);
 void screenshotui_toggle_pointer(void);
 void screenshotui_draw(void);
+void screenshotui_hover(void);
 
 /* Defined in the separately-compiled session_lock TU. */
 void destroylocksurface(struct wl_listener *listener, void *data);
@@ -2617,6 +2618,13 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		return;
 	}
 
+	/* Screenshot UI: fade the info panel as the cursor approaches, even
+	 * while just hovering (not dragging) — screenshotui_draw() above only
+	 * runs mid-drag, so this is the only per-motion hook while idle. Falls
+	 * through (no return) so normal pointer-focus handling below still runs. */
+	if (screenshot_ui.active)
+		screenshotui_hover();
+
 	/* If there's no client surface under the cursor, set the cursor image to a
 	 * default. This is what makes the cursor image appear when you move it
 	 * off of a client or over its border. */
@@ -4790,9 +4798,16 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
 			continue;
 
-		if (node->type == WLR_SCENE_NODE_BUFFER)
-			surface = wlr_scene_surface_try_from_buffer(
-					wlr_scene_buffer_from_node(node))->surface;
+		if (node->type == WLR_SCENE_NODE_BUFFER) {
+			/* Plain pixel buffers (e.g. screenshot UI's info readout, paper
+			 * mode's reinjected overlay) aren't Wayland surfaces, so
+			 * try_from_buffer() returns NULL here — must check before
+			 * dereferencing ->surface. */
+			struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(
+					wlr_scene_buffer_from_node(node));
+			if (ss)
+				surface = ss->surface;
+		}
 		/* Walk the tree to find a node that knows the client */
 		for (pnode = node; pnode && !c; pnode = &pnode->parent->node)
 			c = pnode->data;

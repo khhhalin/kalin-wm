@@ -559,6 +559,10 @@ typedef struct {
     struct wlr_buffer *info_buf;
     struct wlr_scene_buffer *info_node;
     char info_text[160];
+    /* Info panel's layout-space bounding box, cached so the fade-on-approach
+     * hover hook can test cursor distance against it without re-deriving the
+     * geometry every motion tick. */
+    int info_x, info_y, info_w, info_h;
 } ScreenshotEditor;
 
 /* Everything below is the runtime interface (globals + prototypes) that the
@@ -904,6 +908,7 @@ void screenshotui_cancel(const Arg *arg);
 void screenshotui_confirm(bool write_to_disk);
 void screenshotui_toggle_pointer(void);
 void screenshotui_draw(void);
+void screenshotui_hover(void);
 
 /* Spring-glide animation: layout sets a client's target world geometry and the
  * compositor tick slides it there (defined in dwl.c). */

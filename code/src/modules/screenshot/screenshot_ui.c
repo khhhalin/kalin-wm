@@ -47,6 +47,13 @@
 #define INFO_PAD     10
 #define INFO_MARGIN  60  /* gap above the monitor's bottom edge (clears the bar) */
 
+/* Fade-on-approach: opacity ramps from 1.0 down to INFO_FADE_FLOOR as the
+ * cursor closes within INFO_FADE_RADIUS px of the panel's bounding box.
+ * Floored well above 0 (not fully transparent) so the live W X H AT (x,y)
+ * readout stays legible while dragging right next to it. */
+#define INFO_FADE_RADIUS 220.0
+#define INFO_FADE_FLOOR  0.15
+
 /* ── owned-pixels wlr_buffer ─────────────────────────────────────────────────
  * Minimal wlr_buffer wrapping a malloc'd XRGB8888 array; the buffer owns the
  * pixels and frees them on destroy, so scene/renderer lifetime (a texture
@@ -214,6 +221,18 @@ info_draw_text(uint32_t *canvas, int canvas_w, int canvas_h, int x, int y,
 
 /* ── UI ──────────────────────────────────────────────────────────────────── */
 
+/* The info readout and frozen-frame are plain pixel buffers, not Wayland
+ * surfaces — xytonode() (dwl.c) NULL-checks wlr_scene_surface_try_from_buffer()
+ * now, so this is belt-and-suspenders, not the crash fix itself (same
+ * precedent as paper mode's paper_node_rejects_input() in dwl.c). Rejecting
+ * the hit here also means these decorative buffers never steal focus/clicks
+ * from whatever they're drawn over. */
+static bool
+screenshotui_node_rejects_input(struct wlr_scene_buffer *buffer, double *sx, double *sy)
+{
+	return false;
+}
+
 static void
 screenshotui_info_destroy(void)
 {
@@ -243,8 +262,12 @@ screenshotui_info_update(int x, int y, int w, int h)
 
 	snprintf(line, sizeof(line), "%d X %d   AT (%d,%d)",
 			w, h, x - (int)m->m.x, y - (int)m->m.y);
-	if (strcmp(line, screenshot_ui.info_text) == 0 && screenshot_ui.info_node)
+	if (strcmp(line, screenshot_ui.info_text) == 0 && screenshot_ui.info_node) {
+		/* Geometry/text unchanged, but the cursor may have moved closer to
+		 * or farther from the (unmoved) panel — still worth a fade update. */
+		screenshotui_hover();
 		return;
+	}
 	snprintf(screenshot_ui.info_text, sizeof(screenshot_ui.info_text), "%s", line);
 
 	len_line = (int)strlen(line);
@@ -284,9 +307,16 @@ screenshotui_info_update(int x, int y, int w, int h)
 		wlr_log(WLR_ERROR, "screenshot UI: info scene_buffer_create failed");
 		return;
 	}
+	screenshot_ui.info_node->point_accepts_input = screenshotui_node_rejects_input;
 	ix = (int)m->m.x + ((int)m->m.width - box_w) / 2;
 	iy = (int)m->m.y + (int)m->m.height - box_h - INFO_MARGIN;
 	wlr_scene_node_set_position(&screenshot_ui.info_node->node, ix, iy);
+
+	screenshot_ui.info_x = ix;
+	screenshot_ui.info_y = iy;
+	screenshot_ui.info_w = box_w;
+	screenshot_ui.info_h = box_h;
+	screenshotui_hover();
 }
 
 static void
@@ -316,6 +346,7 @@ screenshotui_freeze(Monitor *m)
 		wlr_log(WLR_ERROR, "screenshot UI: freeze scene_buffer_create failed");
 		return;
 	}
+	screenshot_ui.frozen_node->point_accepts_input = screenshotui_node_rejects_input;
 	wlr_scene_node_set_position(&screenshot_ui.frozen_node->node,
 			(int)m->m.x, (int)m->m.y);
 	/* Native (possibly HiDPI) pixels displayed at the monitor's logical size. */
@@ -489,4 +520,36 @@ screenshotui_draw(void)
 	wlr_scene_node_set_position(&screenshot_ui.border[3]->node, x + w - SCREENSHOT_BORDER_WIDTH, y);
 
 	screenshotui_info_update(x, y, w, h);
+}
+
+/* Fade the info panel by cursor distance to its bounding box (nearest-point
+ * distance, so being anywhere over the box counts as distance 0). Called on
+ * every pointer motion while the UI is active (dwl.c's motionnotify()) plus
+ * whenever the panel's own geometry/text is (re)computed, so the opacity
+ * stays current whether the cursor or the panel moved. */
+void
+screenshotui_hover(void)
+{
+	double dx, dy, dist, alpha;
+
+	if (!screenshot_ui.active || !screenshot_ui.info_node)
+		return;
+
+	dx = 0;
+	if (cursor->x < screenshot_ui.info_x)
+		dx = screenshot_ui.info_x - cursor->x;
+	else if (cursor->x > screenshot_ui.info_x + screenshot_ui.info_w)
+		dx = cursor->x - (screenshot_ui.info_x + screenshot_ui.info_w);
+
+	dy = 0;
+	if (cursor->y < screenshot_ui.info_y)
+		dy = screenshot_ui.info_y - cursor->y;
+	else if (cursor->y > screenshot_ui.info_y + screenshot_ui.info_h)
+		dy = cursor->y - (screenshot_ui.info_y + screenshot_ui.info_h);
+
+	dist = sqrt(dx * dx + dy * dy);
+	alpha = dist >= INFO_FADE_RADIUS ? 1.0
+		: INFO_FADE_FLOOR + (1.0 - INFO_FADE_FLOOR) * (dist / INFO_FADE_RADIUS);
+
+	wlr_scene_buffer_set_opacity(screenshot_ui.info_node, (float)alpha);
 }
