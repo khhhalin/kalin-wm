@@ -14,38 +14,40 @@ The first implementation piped the PNG bytes directly into `wl-copy`'s stdin fro
 
 Fix: never let the compositor write clipboard bytes itself. `capture_export_selection()` always lands the PNG on disk first (the real save path if `to_disk`, otherwise a temp file under `$XDG_RUNTIME_DIR`), then `capture_copy_to_clipboard()` does a non-blocking `fork()+exec("sh", "-c", "wl-copy --type image/png < \"$1\"; rm -f \"$1\"")` — no bytes ever pass through the compositor process itself, so the event loop is never blocked.
 
-## Hover crash + fade-on-approach (found/decided 2026-07-18, fix not yet built)
+## Hover crash + fade-on-approach (found 2026-07-18, fixed 2026-07-19)
 
-- **Bug: hovering the info panel crashes the compositor.** `xytonode()`
-  (`code/src/dwl.c`) treats every `WLR_SCENE_NODE_BUFFER` under the cursor as a
-  Wayland surface — `wlr_scene_surface_try_from_buffer(...)->surface` — but the
-  info readout is a **plain pixel buffer**, so `try_from_buffer()` returns NULL
-  and `->surface` segfaults. `motionnotify()` runs `xytonode()` on every pointer
-  motion while the UI is active, so the cursor touching the bottom-center panel
-  crashes instantly. The dim/border are `wlr_scene_rect`s (type RECT) and are
-  safe; only the info buffer (and the whole-monitor frozen-frame buffer, when it
-  is the topmost hit) triggers it.
-- **Fix (two complementary parts, both already precedented in tree):**
-  1. **Mandatory** — NULL-check the result of `wlr_scene_surface_try_from_buffer()`
-     in `xytonode()`. This is a whole *class* of bug (any non-surface overlay
-     buffer would crash); the one-line guard is the [[stability]]/defensive-C
-     rule.
-  2. **Tidy** — give the info + frozen-frame `wlr_scene_buffer`s the
-     `point_accepts_input` callback that returns false, exactly like paper
-     mode's `paper_node_rejects_input()` (`dwl.c`), so `wlr_scene_node_at()`
-     skips these decorative buffers instead of hitting them. An oversight when
-     the info panel was added.
-- **Enhancement: fade the info panel as the cursor approaches** (the requested
-  UX). Drive `wlr_scene_buffer_set_opacity()` on the info node by cursor
-  distance so the readout gets out of the way when selecting near the
-  bottom-center. **This does NOT fix the crash** — opacity is unrelated to
-  hit-testing; a faded-but-present buffer still crashes `xytonode()`, so part 1
-  above is required independently. Needs a per-motion hook: today
-  `screenshotui_draw()` is called only while *dragging* (`dwl.c` motionnotify),
-  so a hover path must call the opacity update on every motion while the UI is
-  active. Tradeoff: fading to fully transparent hides the live `W X H AT (x,y)`
-  readout right when dragging near it — prefer a **low alpha floor (~0.15)** to
-  keep it legible while un-obstructing.
-- Scope note: parts 1 + the hover hook touch `code/src/dwl.c` (the single hot
-  file, currently owned by the proto-toplevel-icon worker — sequences after it);
-  part 2 + the opacity math live in `screenshot_ui.c`.
+- **Bug (fixed): hovering the info panel crashed the compositor.** `xytonode()`
+  (`code/src/dwl.c`) treated every `WLR_SCENE_NODE_BUFFER` under the cursor as
+  a Wayland surface — `wlr_scene_surface_try_from_buffer(...)->surface` — but
+  the info readout is a **plain pixel buffer**, so `try_from_buffer()` returned
+  NULL and `->surface` segfaulted. `motionnotify()` runs `xytonode()` on every
+  pointer motion while the UI is active, so the cursor touching the
+  bottom-center panel crashed instantly. The dim/border are `wlr_scene_rect`s
+  (type RECT) and were never affected; only the info buffer (and the
+  whole-monitor frozen-frame buffer, when it was the topmost hit) triggered it.
+- **Fix, two complementary parts (both shipped):**
+  1. **The actual fix** — `xytonode()` now NULL-checks the result of
+     `wlr_scene_surface_try_from_buffer()` before dereferencing `->surface`.
+     Guards a whole *class* of bug (any non-surface overlay buffer), per the
+     [[stability]]/defensive-C rule.
+  2. **Belt-and-suspenders** — the info and frozen-frame `wlr_scene_buffer`s
+     now get a `point_accepts_input` callback
+     (`screenshotui_node_rejects_input()` in `screenshot_ui.c`) that returns
+     false, exactly like paper mode's `paper_node_rejects_input()` (`dwl.c`),
+     so `wlr_scene_node_at()` skips these decorative buffers instead of
+     hitting them — they also no longer steal focus/clicks from whatever's
+     drawn behind them.
+- **Shipped: fade the info panel as the cursor approaches.**
+  `screenshotui_hover()` (`screenshot_ui.c`) drives
+  `wlr_scene_buffer_set_opacity()` on the info node by nearest-point distance
+  from the cursor to the panel's cached bounding box
+  (`ScreenshotEditor.info_{x,y,w,h}`, `code/include/kalin.h`): opacity ramps
+  1.0 → `INFO_FADE_FLOOR` (0.15) as distance closes from `INFO_FADE_RADIUS`
+  (220px) to 0, keeping the readout legible rather than hiding it. Called from
+  three places so it stays current: after (re)creating the info node in
+  `screenshotui_info_update()`, on the early-return path there when text is
+  unchanged but the cursor may have moved, and from `dwl.c`'s `motionnotify()`
+  on every motion tick while the UI is active but not dragging (the
+  drag-time path already runs through `screenshotui_info_update()` via
+  `screenshotui_draw()`). Opacity is unrelated to hit-testing — it does not
+  substitute for fix part 1 above.
