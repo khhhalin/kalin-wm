@@ -1,5 +1,5 @@
 ---
-status: for-review
+status: merged
 engine: claude
 objective: Fix the compositor crash when the cursor hovers the screenshot-ui info panel (NULL-guard in xytonode + input-reject callbacks), and add fade-on-approach for the info panel.
 scope:

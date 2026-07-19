@@ -206,17 +206,17 @@ implementation note. Trimmed from full narrative 2026-07-15.
 
 ## Known minor bugs
 
-- **[[screenshot-ui]] crashes when the cursor hovers its info panel** (found
-  2026-07-18). `xytonode()` (`dwl.c`) NULL-derefs
-  `wlr_scene_surface_try_from_buffer()->surface` on the panel's plain
-  (non-surface) pixel buffer, every pointer motion. Fix: NULL-check in
-  `xytonode()` (mandatory, fixes the whole non-surface-buffer class) + give the
-  info/frozen buffers the existing `point_accepts_input`-returns-false pattern
-  (`paper_node_rejects_input()`). Plus the requested UX: **fade the info panel
-  as the cursor approaches** (`wlr_scene_buffer_set_opacity()` by distance, low
-  alpha floor ~0.15 so the readout stays legible) — note the fade does *not*
-  fix the crash. Details + scope in [[screenshot-ui]]. Touches `dwl.c` →
-  sequences after the active proto-toplevel-icon worker.
+- ~~**[[screenshot-ui]] crashes when the cursor hovers its info panel**~~
+  (found 2026-07-18, **fixed/merged 2026-07-19** via screenshot-crash-fade).
+  `xytonode()` (`dwl.c`) now NULL-checks `wlr_scene_surface_try_from_buffer()`
+  before dereferencing `->surface` (fixes the whole non-surface-buffer class),
+  and the info/frozen buffers get the `point_accepts_input`-returns-false
+  pattern (`paper_node_rejects_input()` precedent). The requested UX shipped
+  too: the info panel **fades as the cursor approaches**
+  (`wlr_scene_buffer_set_opacity()` by nearest-point distance, `INFO_FADE_RADIUS`
+  220px, `INFO_FADE_FLOOR` 0.15 so the readout stays legible) — the fade does
+  *not* substitute for the crash fix. Details in [[screenshot-ui]]. Live/VM
+  hover repro is keeper-only and was not run at the merge gate.
 - **Synthetic/absolute pointer BUTTON events are dropped** (found 2026-07-17
   while gating the [[tui-bar]]): motion/hover works but presses never reach
   `buttonpress()` from (a) `zwlr_virtual_pointer` clients (`wlrctl pointer
