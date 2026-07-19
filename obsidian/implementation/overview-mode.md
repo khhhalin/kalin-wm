@@ -21,6 +21,19 @@
   to exactly where it was before `Super+O` — a plain dismiss, distinct from clicking.
   Bare `Escape` is a no-op when the overview isn't open (mirrors the same
   active-mode-only bare-key pattern [[crop-mode]]'s `r`-to-reset uses).
+- Per-monitor ([[multi-camera]], Phase 4 polish 2026-07-18): the overview
+  hijacks and restores exactly *one* monitor's camera (the one under the
+  cursor when it opened — a parked second monitor stays parked). `Super+O`
+  while the overview is open on a *different* monitor moves it: the old
+  monitor's camera is restored and the overview opens on the monitor under
+  the cursor (which owns all camera input). Clicking a window held by a
+  *different* monitor dismisses with restore instead of jumping — that window
+  is already showing through its own un-hijacked camera (previously this
+  dropped the overview state without restoring, leaving the hijacked camera
+  stuck at the fit-all shot). If the overview monitor is destroyed while
+  open, the saved state is discarded safely (`overview_mon` is re-validated
+  against `mons` before any restore — dwl.c frees monitors with no hook into
+  this module).
 - All normal keybinds keep working while it's open (matches niri) — nothing is gated
   behind an "overview mode" state beyond the exit hooks above. This includes
   `Super+BTN_LEFT`/`Super+BTN_RIGHT` (move/resize): `buttonpress()` (`dwl.c`) skips
