@@ -26,3 +26,9 @@ tools/vault-review/state*.json
 .claude/worktrees/
 tests/test_window_shader_math
 .fleet-deck/
+
+# Obsidian per-user setup (hotkeys, appearance, UI state) — vault content stays tracked
+obsidian/.obsidian/hotkeys.json
+obsidian/.obsidian/appearance.json
+obsidian/.obsidian/workspace.json
+obsidian/.obsidian/snippets/
