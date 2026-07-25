@@ -914,6 +914,8 @@ buttonpress(struct wl_listener *listener, void *data)
 	uint32_t mods;
 	Client *c;
 
+	wlr_log(WLR_ERROR, "DBG buttonpress btn=%u state=%d dev=%s", event->button,
+			event->state, event->pointer->base.name ? event->pointer->base.name : "?");
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
 	switch (event->state) {
@@ -1069,6 +1071,9 @@ buttonpress(struct wl_listener *listener, void *data)
 	}
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
+	wlr_log(WLR_ERROR, "DBG notify_button btn=%u state=%d cur=%.0f,%.0f focused_surface=%p",
+			event->button, event->state, cursor->x, cursor->y,
+			(void *)seat->pointer_state.focused_surface);
 	wlr_seat_pointer_notify_button(seat,
 			event->time_msec, event->button, event->state);
 }
@@ -2164,6 +2169,23 @@ killclient(const Arg *arg)
 		client_send_close(sel);
 }
 
+/* Round a world coordinate to the placement grid (config placement_grid; 0
+ * disables). Applied to automatic placements only — spawn positions and
+ * restored persisted positions — never to a drag, so hand-placed windows keep
+ * exactly where the user dropped them while everything the compositor decides
+ * lands on one pitch. Without this, cursor-centred spawns and years-old saved
+ * coordinates gave every window a different arbitrary offset. */
+static int
+snap_grid(int v)
+{
+	int g = placement_grid;
+	if (g <= 1)
+		return v;
+	/* Floor-division rounding so negative world coordinates snap the same way
+	 * as positive ones (C division truncates toward zero). */
+	return (int)(floorf((float)v / (float)g + 0.5f) * (float)g);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -2288,10 +2310,16 @@ mapnotify(struct wl_listener *listener, void *data)
 		} else if (c->mon) {
 			has_saved_geom = persistence_register_client(c);
 			if (has_saved_geom) {
-				/* persistence_register_client() already applied + resized. */
+				/* persistence_register_client() already applied + resized —
+				 * re-snap, since saved coordinates predate the grid (or were
+				 * hand-dragged) and would otherwise reintroduce the drift the
+				 * grid exists to remove. */
+				c->geom.x = snap_grid(c->geom.x);
+				c->geom.y = snap_grid(c->geom.y);
+				resize(c, c->geom, 0);
 			} else if (p) {
-				c->geom.x = p->geom.x + p->geom.width + SPAWN_GAP;
-				c->geom.y = p->geom.y;
+				c->geom.x = snap_grid(p->geom.x + p->geom.width + SPAWN_GAP);
+				c->geom.y = snap_grid(p->geom.y);
 				resize(c, c->geom, 0);
 
 				/* p already has an East neighbor (e.g. focused window is the
@@ -2324,12 +2352,12 @@ mapnotify(struct wl_listener *listener, void *data)
 				 * monitor's own geometric middle happens to be. Only when
 				 * the cursor is actually on this client's monitor, matching
 				 * the (p && p->mon == c->mon) same-monitor guard above. */
-				c->geom.x = (int)SCREEN_TO_WORLD_X(c->mon, cursor->x) - c->geom.width / 2;
-				c->geom.y = (int)SCREEN_TO_WORLD_Y(c->mon, cursor->y) - c->geom.height / 2;
+				c->geom.x = snap_grid((int)SCREEN_TO_WORLD_X(c->mon, cursor->x) - c->geom.width / 2);
+				c->geom.y = snap_grid((int)SCREEN_TO_WORLD_Y(c->mon, cursor->y) - c->geom.height / 2);
 				resize(c, c->geom, 0);
 			} else {
-				c->geom.x = c->mon->w.x + c->mon->w.width / 2 - c->geom.width / 2;
-				c->geom.y = c->mon->w.y + c->mon->w.height / 2 - c->geom.height / 2;
+				c->geom.x = snap_grid(c->mon->w.x + c->mon->w.width / 2 - c->geom.width / 2);
+				c->geom.y = snap_grid(c->mon->w.y + c->mon->w.height / 2 - c->geom.height / 2);
 				resize(c, c->geom, 0);
 			}
 		}
@@ -4762,6 +4790,7 @@ virtualpointer(struct wl_listener *listener, void *data)
 	struct wlr_virtual_pointer_v1_new_pointer_event *event = data;
 	struct wlr_input_device *device = &event->new_pointer->pointer.base;
 
+	wlr_log(WLR_ERROR, "DBG virtualpointer attach dev=%s", device->name ? device->name : "?");
 	wlr_cursor_attach_input_device(cursor, device);
 	if (event->suggested_output)
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);

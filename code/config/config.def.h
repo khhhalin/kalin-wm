@@ -12,6 +12,12 @@ static const float rootcolor[]             = COLOR(0x222222ff);
 static const float bordercolor[]           = COLOR(0x444444ff);
 static const float focuscolor[]            = COLOR(0xf0a030ff);
 static const float urgentcolor[]           = COLOR(0xff0000ff);
+/* Placement grid: every automatic window placement (spawn position and the
+ * restored position of a persisted window) snaps to this pitch, so gaps between
+ * windows are always multiples of one value instead of wherever the cursor or
+ * an old saved coordinate happened to fall. 0 disables snapping. */
+static const int placement_grid = 20;
+
 static const int offscreen_indicator_enabled = 1;
 static const int offscreen_indicator_size    = 10;
 static const int offscreen_indicator_margin  = 8;

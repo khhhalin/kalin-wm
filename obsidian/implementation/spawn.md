@@ -58,3 +58,18 @@
 - A window with a real xdg-shell parent (a dialog / transient-for) inherits
   the parent's monitor and connects to that real parent instead of the
   focus-snapshot — a more natural choice for a genuine dialog.
+
+## Placement grid (2026-07-25)
+
+- Every **automatic** placement snaps to `placement_grid` (config, default 20 —
+  the same pitch as `SPAWN_GAP`): the parent+gap spawn position, the
+  cursor-centred fallback, the monitor-centre fallback, and the position
+  restored from [[persistence]]. Drags are never snapped, so a hand-dropped
+  window stays exactly where it was dropped.
+- Why: windows drifted to arbitrary offsets. Two causes compounded —
+  cursor-centred spawns land wherever the mouse happens to be, and a persisted
+  position (which takes priority over the tidy parent+gap rule) preserved every
+  past arbitrary coordinate forever. Snapping both ends normalises the canvas
+  without giving up free positioning.
+- `snap_grid()` in `dwl.c` rounds via `floorf(v/g + 0.5)` rather than integer
+  division, so negative world coordinates round the same way as positive ones.
