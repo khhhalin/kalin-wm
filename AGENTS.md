@@ -133,6 +133,25 @@ After logging in via `ly` with **kalin-wm** selected (or booting the test VM), c
 
 If any item fails, check the VM logs (`/tmp/kalin-vm/*.log`) or, on the host, `journalctl --user -u kalin-wm` and Quickshell logs.
 
+## Getting a new build actually running (ly caches sessions)
+
+`nixos-rebuild switch` does **not** change what the login screen launches.
+`ly` enumerates `/etc/wayland-sessions/` once, when the display-manager service
+starts (boot), and keeps launching that generation's `kalin-wm-session` wrapper
+— which hard-codes a store path. Logging out and back in therefore still starts
+the **old** compositor binary; this hid an 8-day-old build (pre-amber-rice,
+pre-paper-knob) behind an up-to-date system for a week (found 2026-07-25).
+
+To actually run a new build:
+
+- `sudo systemctl restart display-manager` (ends the session → greeter → log in), or
+- reboot, or
+- for dev iteration, don't involve ly at all: `kalinwm` from a VT runs
+  `build/kalin-wm` directly (see obsidian/implementation/dev-restart.md).
+
+Check which one is live: compare
+`pgrep -af bin/kalin-wm` against `grep Exec /etc/wayland-sessions/kalin-wm.desktop`.
+
 ## Shell aliases
 
 If you use the home-managed Zsh config, these aliases are defined in `~/.zshrc` and are available in any new terminal:
