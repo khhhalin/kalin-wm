@@ -135,7 +135,7 @@ If any item fails, check the VM logs (`/tmp/kalin-vm/*.log`) or, on the host, `j
 
 ## Shell aliases
 
-If you use the home-managed Zsh config, these aliases are defined in `~/home-config/desktop.nix` and are available after the next NixOS rebuild + new terminal:
+If you use the home-managed Zsh config, these aliases are defined in `~/.zshrc` and are available in any new terminal:
 
 - `kalin-code`, `kalin-shell`, `kalin-vm`, `kalin-home` — cd into the main repos.
 - `kalin-build`, `kalin-test` — build and unit-test kalin-wm.
