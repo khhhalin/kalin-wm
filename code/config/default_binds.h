@@ -37,6 +37,8 @@ static const char DEFAULT_BINDS[] =
 "bind Super+l       -> link-pick\n"
 "bind Super+n       -> toggle-minimized\n"
 "bind Super+i       -> toggle-paper\n"
+"bind Super+a       -> spawn kalin-claude\n"
+"bind Super+h       -> spawn kalin-hx\n"
 "bind Super+y       -> paper-yellow 0.1\n"
 "bind Super+Shift+y -> paper-yellow -0.1\n"
 "bind Super+grave   -> toggle-scratchpad foot --app-id=kalin-scratchpad\n"

@@ -63,15 +63,23 @@ Monitors:
 - `Super+comma` / `Super+period` — focus monitor left / right
 - `Super+Shift+less` / `Super+Shift+greater` — send focused window to monitor left / right ([[multi-camera]] Phase 2, `tagmon()`): teleports it to the center of what that monitor's camera currently shows and severs cross-camera [[connection-graph]] edges; camera-bypassed docked/fullscreen/maximized windows just switch holder without the teleport
 
-Launching ([[spawn]]):
-- `Super+T` — terminal (`foot`)
+Launching ([[spawn]]): the app commands are the kalin-tools wrapper family
+(`~/environment/kalin-tools` — one persistent tmux session per app, viewed
+through a dedicated foot window; raise-or-spawn via the IPC clients feed).
+- `Super+T` — terminal-browser tab (`kalin-term-tab`: new tab in the shared
+  "terminals" session + raise the viewer; vault drift fixed 2026-07-25 — this
+  stopped being plain `foot` when the tab model landed)
+- `Super+Ctrl+T` — tab picker (`kalin-term-pick`, fuzzel over tabs)
+- `Super+Space` — bare `foot` (no tmux)
+- `Super+A` — Claude window (`kalin-claude`: "deck" session, claude-tui picker; added 2026-07-25)
+- `Super+H` — editor window (`kalin-hx`: "helix" session, single hx instance)
 - `Super+P` — launcher (`foot --app-id=kalin-launcher -e kalin-launch`; see [[app-launcher]])
 - `Super+O` — toggle [[overview-mode]] (native compositor zoom-out, not shell-rendered)
 - `tap Super` — toggle launcher (same `kalin-launch`; tracked via the `kalin-apps` tmux window "launcher", killed to toggle off)
 - `hold Super` — [[window-menu]]
 - `Super+Print` — screenshot (whole focused monitor, immediate)
 - `Super+Shift+S` — niri-style interactive screenshot UI (see [[screenshot-ui]]): opens with the whole monitor pre-selected, drag to draw a custom region, Escape cancels, Space/Enter confirms (disk + clipboard), Ctrl+C confirms clipboard-only, P toggles pointer visibility
-- `Super+V` — clipboard history: `foot -e kalin-clip-picker`, an fzf TUI over `cliphist` (the picker script itself lives in `home-config/desktop.nix`, not this repo — kalin-wm only owns the keybind)
+- `Super+V` — clipboard history: `foot -e kalin-clip-picker`, an fzf TUI over `cliphist` (the picker script lives in `~/environment/kalin-tools`, nix only wraps it — kalin-wm only owns the keybind)
 
 Session:
 - `Super+Escape` — quit the compositor
