@@ -13,7 +13,11 @@
   `foot --app-id=kalin-launcher -e kalin-launch`. `tap Super`'s
   `toggle-launcher` tracks it as the `kalin-apps` tmux window "launcher" (see
   [[spawn]]), killed to toggle off — works for any GUI command, foot included.
-- **Script:** `tools/launcher/kalin-launch` (working-tree file, editable without
+- **Script:** moved to `~/environment/kalin-tools/bin/kalin-launch`
+  (2026-07-25, the wrapper-family extraction — kalin-tools has its own repo/
+  README; a compat symlink at `tools/launcher/kalin-launch` covers the
+  already-packaged wrapper until the next rebuild). Still a working-tree
+  file, editable without
   a rebuild — same precedent as the `kalinwm` dev launcher). The `desktop.nix`
   `kalinLaunch` wrapper only PATH-pins fzf/foot/tmux/util-linux/python3 and execs
   the working-tree path (so it is NOT pinned/reproducible — acceptable for a
