@@ -59,7 +59,7 @@ METER_GLYPHS = "▁▂▃▄▅▆▇█"
 
 # Panel geometry — keep in sync with BarConfig.qml's tuiPanelWidth/Height
 # (sized for 80x24 terminal cells; btop refuses smaller) and barHeight.
-PANEL_W, PANEL_H, BAR_H = 700, 480, 44
+PANEL_W, PANEL_H, BAR_H = 700, 480, 22
 
 BAR_OUTPUT = os.environ.get("KALIN_BAR_OUTPUT", "")
 
@@ -139,12 +139,12 @@ def ipc_send(cmd: str) -> None:
 # (kalin-<seg>-panel-<output>) so panel instances spawned before the cutover
 # keep being reused after it.
 PANEL_DEFS = {
-    "stats":   ("stats",   "stats",     "󰍛"),
+    "stats":   ("stats",   "stats",     ""),
     "battery": ("battery", "battery",   "󰁹"),
     "volume":  ("volume",  "mixer",     "󰕾"),
-    "wifi":    ("wifi",    "wifi",      "󰤨"),
+    "wifi":    ("wifi",    "wifi",      "󰖩"),
     "bt":      ("bt",      "bluetooth", "󰂯"),
-    "disk":    ("disk",    "disk",      "󰋊"),
+    "disk":    ("disk",    "disk",      ""),
     "display": ("display", "display",   "󰍹"),
     "clip":    ("clip",    "clipboard", "󰅌"),
 }
@@ -201,7 +201,7 @@ class TaskbarEntry(Static):
 
     def on_mount(self) -> None:
         # Focus is marked by tinting the entry's ground, not chrome — there
-        # is no room for underlines in a 2-row bar next to a 2-row icon.
+        # is no room for underlines in a single-row bar next to a 1-row icon.
         # #4a3625 (Theme.qml border): surfaceActive was too subtle against
         # the bar ground at this size.
         self.styles.background = "#4a3625" if self.focused_flag else None
@@ -216,10 +216,10 @@ class BarApp(App):
     CSS = """
     Screen { background: #1e1915; }
     #row { height: 100%; align-vertical: middle; }
-    #taskbar { width: auto; height: 100%; }
-    .taskbar-entry { width: 5; height: 100%; padding: 0 1; }
-    .task-icon { width: 4; height: 2; }
-    .task-glyph { width: 3; height: 1; content-align: center middle; }
+    #taskbar { width: auto; height: 1; }
+    .taskbar-entry { width: 4; height: 1; padding: 0 1; }
+    .task-icon { width: 2; height: 1; }
+    .task-glyph { width: 2; height: 1; content-align: center middle; }
     .cell { width: auto; height: 1; }
     #pad { width: 1fr; height: 1; }
     """
