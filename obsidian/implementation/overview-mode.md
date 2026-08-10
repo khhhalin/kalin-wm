@@ -46,6 +46,16 @@
   whenever overview is open, in addition to their existing "Super held" condition —
   see the `"overview"` field in [[ipc-socket]].
 
+## Known issue — Zen flickers on entry/exit (root-caused 2026-08-10)
+
+- Opening the overview (`viewport_fit_all()` → ~0.2 zoom) and closing it make
+  Zen (heavy, Firefox-derived) flicker. Not an overview-logic bug: on camera
+  *settle* the per-frame zoom-scale machinery re-renders the client at a new DPI
+  (`client_apply_zoom_scale()`), Zen reallocates its whole surface, and the
+  resulting commit storm at the animation boundary is the flicker. Light clients
+  (foot) don't show it. Shared root cause with the screenshot/internals-resize
+  bug — full analysis and the planned fix in [[zoom-scale-overhaul]] / [[buffer-scaling]].
+
 ## Not in this pass (follow-up if wanted)
 
 - Right-drag-to-pan / scroll-to-pan without holding a modifier while open (niri's

@@ -204,6 +204,20 @@ implementation note. Trimmed from full narrative 2026-07-15.
   spring-glide for group-drag / `swap_neighbor_dir()`) already shipped — see
   [[gestures]] and [[connection-graph]]. Edge-drag auto-pan is the one piece left.
 
+## Zoom-scale overhaul — planned (root-caused 2026-08-10)
+
+- **Three related bugs, one root cause** in the per-frame zoom-scale machinery
+  (`client_scale_buffers()` + `client_apply_zoom_frame()` + `client_apply_zoom_scale()`
+  in `dwl.c`): (1) window internals resize (visible in [[screenshot-ui]] captures),
+  (2) Zen flickers in [[overview-mode]] on the settle-time DPI re-render, (3) "camera
+  movement broke" — actually a leftover `KALIN_DEBUG_SCALE` debug patch flooding the
+  log per-subsurface-per-frame during pan/zoom. [[viewport]]'s camera code itself is
+  intact. Full root-cause, why it's fragile, and the proposed rework (cache native
+  geometry, apply scale on commit not per frame, collapse the three systems, gate the
+  settle-time re-render, revert the debug patch first) live in **[[zoom-scale-overhaul]]**.
+- **Investigate + plan only so far** — no code changed; the debug patch is still in the
+  working tree. This is the concrete rework of [[zoom]]'s parked rendering half.
+
 ## Known minor bugs
 
 - ~~**[[screenshot-ui]] crashes when the cursor hovers its info panel**~~
