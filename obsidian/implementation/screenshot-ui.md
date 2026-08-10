@@ -8,6 +8,17 @@
 - Selection coordinates live in the same screen-pixel space as `CropEditor`'s (`cursor->x/y`, matching `Monitor.m`); the export maps that to the native render buffer's physical pixels via `cw / m.width` / `ch / m.height` scale factors, since the render buffer is native (possibly HiDPI-scaled) resolution while cursor coordinates are logical/layout pixels.
 - Disk saves go to `~/Pictures/Screenshots/Screenshot from <timestamp>.png`, matching niri's convention.
 
+## Known issue — window internals look resized in captures (root-caused 2026-08-10)
+
+- When the camera is zoomed, a capture can show a window's *internals* (subsurface
+  panels, popups, CSD) misplaced/resized relative to its frame. Not a screenshot-path
+  bug: the freeze-frame renders a native-DPI shot (`capture_render_native(m, 1.0f)`)
+  at a moment when the live scene still carries zoom-scaled `dst_size` and
+  subsurface offsets from `client_scale_buffers()` — whose in-place offset multiply
+  has no cached native value and drifts. Shared root cause with the Zen
+  [[overview-mode]] flicker. Full analysis + planned fix: [[zoom-scale-overhaul]] /
+  [[buffer-scaling]].
+
 ## The clipboard deadlock (fixed 2026-07-10)
 
 The first implementation piped the PNG bytes directly into `wl-copy`'s stdin from the compositor's own process, blocking on `write()` until the child drained the pipe. That deadlocks: `wl-copy` needs to round-trip over Wayland with *this same compositor* to register the clipboard data-control source, but the single-threaded event loop can't service that handshake while blocked inside `write()` — and a multi-MB PNG vastly exceeds the ~64KB pipe buffer, so it never drains. Reproduced live in the [[test-vm]]: after confirming a capture, the compositor's framebuffer and pointer both stopped updating entirely (verified via QMP screenshot hashes staying identical across pointer-move commands).
