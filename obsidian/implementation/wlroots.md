@@ -6,4 +6,4 @@
 - wlroots provides the [[scene-graph]] used for rendering, the DRM/libinput backends, and the implementations behind most supported Wayland protocols.
 - The [[build-system]] pins a nixpkgs that ships wlroots 0.20.
 
-- kalin-wm implements 15 essential and 18 of 21 recommended Wayland protocols on top of wlroots; the full matrix is in [[research/protocols/protocol-matrix|the protocol matrix]].
+- kalin-wm implements 15 essential and 18 of 21 recommended Wayland protocols on top of wlroots; the full matrix is in [[archive/research/protocols/protocol-matrix|the protocol matrix]].

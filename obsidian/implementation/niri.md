@@ -7,5 +7,5 @@
 - niri is also the user's other daily compositor.
 - niri is the original target of the [[quickshell-shell]] — which is why the shell's legacy widgets still talk to `niri msg` and need porting to kalin-wm.
 
-- Comparator research on niri is in [[research/comparators/niri/README|the niri research notes]] and [[research/comparators/niri-layout|niri-layout]].
-- Another comparator is [[research/comparators/driftwm|driftwm]].
+- Comparator research on niri is in [[archive/research/comparators/niri/README|the niri research notes]] and [[archive/research/comparators/niri-layout|niri-layout]].
+- Another comparator is [[archive/research/comparators/driftwm|driftwm]].

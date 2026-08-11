@@ -10,4 +10,4 @@
 
 - Crop mode was a focus of the [[stability]] audit: it had division-by-zero on zero-size windows, NULL monitor access, double-free on cancel, and use-after-free in its draw path, all since fixed.
 
-- The plan for true pixel clipping is in [[research/active-design/crop-true-clipping-plan|the crop clipping plan]].
+- The plan for true pixel clipping is in [[archive/research/active-design/crop-true-clipping-plan|the crop clipping plan]].

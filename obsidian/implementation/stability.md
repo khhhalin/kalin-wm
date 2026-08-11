@@ -7,7 +7,7 @@
 - A separate [[spawn]] crash was also fixed.
 
 - The project's coding rule is defensive C: every pointer deref NULL-checked, every divisor non-zero, every allocation failure handled.
-- The full findings are in [[research/active-design/stability-audit|the stability audit]]; fixes are summarized in [[research/active-design/fixes-summary|the fixes summary]].
+- The full findings are in [[archive/research/active-design/stability-audit|the stability audit]]; fixes are summarized in [[archive/research/active-design/fixes-summary|the fixes summary]].
 
 ## Compositor crash: toplevel_export CPU-readback buffer overflow (2026-07-08)
 

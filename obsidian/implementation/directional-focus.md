@@ -8,4 +8,4 @@
 
 - Because the search runs in [[world-coordinates]], it behaves correctly no matter how far the [[viewport]] has panned or zoomed.
 
-- The detailed design lives in [[research/active-design/navigation|the navigation note]].
+- The detailed design lives in [[archive/research/active-design/navigation|the navigation note]].

@@ -42,7 +42,7 @@
 - Version 0.8-dev.
 - The MVP is complete; v1.0 is in progress.
 - As-built subsystem detail lives in the `implementation/` notes and chronology in git; open and planned work is in the [[roadmap]].
-- Deep research backing the design lives under [[research/README|research/]].
+- Deep research backing the design lives under [[archive/research/README|research/]].
 
 See also: [[agent-workflow]] · [[build-system]] · [[project-structure]] ·
 [[stability]] · [[keybindings]] · [[test-vm]] · [[nixos-session]]

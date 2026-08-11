@@ -1984,7 +1984,7 @@ modularization audit, down to after). New modules, all under
   to frame everything" shot niri's Overview needs. So "Overview" here is `fit_all`
   promoted to a toggle that saves the camera on entry and restores it on exit (second
   `Super+O`, clicking a window, or a bare `Escape`) — see [[overview-mode]] for the
-  behavior and the now-decided [[research/active-design/overview-mode|research note]]
+  behavior and the now-decided [[archive/research/active-design/overview-mode|research note]]
   (was "deferred," now shipped).
 - Wiring follows this session's modularization rule: `dwl.c` only gained the one bind-
   dispatch case, one `buttonpress()` line (exit-on-click), and a bare-`Escape` intercept
@@ -2497,7 +2497,7 @@ modularization audit, down to after). New modules, all under
 
 - **Docs consolidated into this vault.** All project docs were folded into a flat
   `obsidian/` model at the repo root. The prior research vault moved from
-  `docs/obsidian-vault/research/` to [[research/README|research/]] and is now a
+  `docs/obsidian-vault/research/` to [[archive/research/README|research/]] and is now a
   linked subtree. Operational docs (ROADMAP, AGENTS, CURRENT_SPECS, changelog,
   incidents, READMEs) were distilled into object notes plus this ledger.
 - **kalin-wm wired into the host as a login session** via the [[nixos-session]]

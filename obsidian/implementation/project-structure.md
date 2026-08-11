@@ -14,7 +14,7 @@
 - `docs/` — man page, desktop entry, and changelog (changelog content also folded
   into the [[ledger]]).
 - `obsidian/` — this vault: the text model of the project, with the deep
-  [[research/README|research subtree]].
+  [[archive/research/README|research subtree]].
 - `backups/` — local snapshots, not active code.
 
 - Root holds build entrypoints (`Makefile`, `flake.nix`), `AGENTS.md`, `README.md`, licenses, and changelogs.
