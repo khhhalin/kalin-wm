@@ -3400,6 +3400,58 @@ is_integer_zoom(float zoom)
  * stretched up to fill it (the "crop zooms/stretches" bug). Multiplying scale
  * by the crop fraction (client_set_buffer_scale) makes dest_size match the
  * clipped region's own size instead. */
+/* Recover a subsurface scene node's *native* (unscaled) offset from wlroots
+ * state, so the zoom scaling below reads native -> screen every frame instead
+ * of re-multiplying the value it wrote on the previous frame.
+ *
+ * The old code did `node->x = round(node->x * scale)` every frame. wlr_scene
+ * only resets a subsurface node's position back to native on the subsurface's
+ * own commit, so between commits (static content while the camera zooms) that
+ * multiply compounds — the offset drifts and eventually explodes, which is what
+ * made window internals resize/jitter when zoomed (visible in screenshots, and
+ * as flicker on subsurface-heavy clients like Zen during the overview zoom).
+ *
+ * wlr_scene positions each subsurface as a child *tree* at
+ * `wlr_subsurface.current.x/y`; that tree's own surface is its direct scene
+ * buffer child. Returns 0 (caller falls back to the current, possibly-scaled
+ * value — never worse than before) when the node isn't a resolvable subsurface. */
+static int
+subsurface_native_offset(struct wlr_scene_node *node, int *out_x, int *out_y)
+{
+	struct wlr_surface *surface = NULL;
+	struct wlr_subsurface *sub;
+
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+		struct wlr_scene_surface *ss = sb ? wlr_scene_surface_try_from_buffer(sb) : NULL;
+		surface = ss ? ss->surface : NULL;
+	} else if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *ch;
+		wl_list_for_each(ch, &tree->children, link) {
+			struct wlr_scene_buffer *sb;
+			struct wlr_scene_surface *ss;
+			if (ch->type != WLR_SCENE_NODE_BUFFER)
+				continue;
+			sb = wlr_scene_buffer_from_node(ch);
+			ss = sb ? wlr_scene_surface_try_from_buffer(sb) : NULL;
+			if (ss && ss->surface) {
+				surface = ss->surface;
+				break;
+			}
+		}
+	}
+
+	if (!surface)
+		return 0;
+	sub = wlr_subsurface_try_from_wlr_surface(surface);
+	if (!sub)
+		return 0;
+	*out_x = sub->current.x;
+	*out_y = sub->current.y;
+	return 1;
+}
+
 static void
 client_scale_buffers(struct wlr_scene_node *node, float scale_w, float scale_h, float out_scale)
 {
@@ -3440,10 +3492,23 @@ client_scale_buffers(struct wlr_scene_node *node, float scale_w, float scale_h, 
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &tree->children, link) {
 			/* Scale a subsurface's offset from the primary surface (the
-			 * primary sits at 0,0 so it is unaffected). */
-			if (child->x || child->y) {
-				int nx = (int)lroundf(child->x * scale_w);
-				int ny = (int)lroundf(child->y * scale_h);
+			 * primary sits at 0,0 so it is unaffected). Read the *native*
+			 * offset from wlroots when we can (idempotent — see
+			 * subsurface_native_offset()); otherwise fall back to the current
+			 * node position, which preserves the pre-fix behavior. */
+			int base_x = child->x, base_y = child->y;
+			int native_x, native_y;
+			/* Resolve native *before* the zero-check: a subsurface whose
+			 * scaled offset rounded to 0 on a prior frame must still be
+			 * rescaled from its true native offset when the zoom changes
+			 * back, not treated as unoffset and skipped forever. */
+			if (subsurface_native_offset(child, &native_x, &native_y)) {
+				base_x = native_x;
+				base_y = native_y;
+			}
+			if (base_x || base_y) {
+				int nx = (int)lroundf(base_x * scale_w);
+				int ny = (int)lroundf(base_y * scale_h);
 				if (nx != child->x || ny != child->y)
 					wlr_scene_node_set_position(child, nx, ny);
 			}
