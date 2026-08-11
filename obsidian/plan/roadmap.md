@@ -204,7 +204,7 @@ implementation note. Trimmed from full narrative 2026-07-15.
   spring-glide for group-drag / `swap_neighbor_dir()`) already shipped — see
   [[gestures]] and [[connection-graph]]. Edge-drag auto-pan is the one piece left.
 
-## Zoom-scale overhaul — planned (root-caused 2026-08-10)
+## Zoom-scale overhaul — targeted fixes landed 2026-08-11, rework still planned
 
 - **Three related bugs, one root cause** in the per-frame zoom-scale machinery
   (`client_scale_buffers()` + `client_apply_zoom_frame()` + `client_apply_zoom_scale()`

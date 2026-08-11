@@ -90,3 +90,27 @@ actual render DPI on camera settle.
   overhaul is the concrete rework of its rendering half.
 - Verification must be visual on real hardware (the bugs are per-frame rendering
   artifacts on heavy clients), not just `make test-unit`.
+
+## Status — targeted fixes landed 2026-08-11 (steps 1, 2)
+
+Two of the five design steps shipped as targeted fixes (commits on `main`,
+not pushed), the rest still open:
+
+- **Step 1 — debug patch reverted.** The uncommitted `KALIN_DEBUG_SCALE` hunk was
+  discarded — fixes the "camera movement broke" log-flood (bug 3).
+- **Step 2 — cache/read native geometry.** `client_scale_buffers()` now scales each
+  subsurface offset from the wlroots-native offset (`wlr_subsurface.current.x/y`, via
+  new `subsurface_native_offset()`) instead of re-multiplying the mutated node
+  position, so the per-frame scaling is idempotent. Falls back to the old value when
+  the subsurface can't be resolved (never worse than before). This is the real fix for
+  bug 1 (internals resizing) and the most likely cause of the Zen overview flicker
+  (bug 2) — offset drift across Zen's subsurfaces during the zoom animation.
+- **Bug 2 note:** the settle-time DPI re-render (`client_apply_zoom_scale`) was
+  investigated as a flicker cause and ruled out — at overview zoom the target clamps
+  back to native, and `client_set_scale()` already no-ops on an unchanged scale, so
+  gating it would be dead code. Not done.
+- **Verified:** `make clean all` + `make test-unit` (25/25) green. **NOT verified:**
+  live rendering on real subsurface clients (Zen) — needs a compositor restart or a
+  test-VM visual pass; the unit suite doesn't exercise the render path.
+- **Still open (steps 3-5):** apply scale on commit rather than per frame, collapse the
+  three scale systems into one path, gate/debounce the settle-time re-render.

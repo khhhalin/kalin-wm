@@ -28,4 +28,7 @@
   "camera movement broke" (the last is actually a leftover `KALIN_DEBUG_SCALE` debug
   patch flooding the log per-subsurface-per-frame). Full root-cause + the planned
   rework: **[[zoom-scale-overhaul]]**.
+- **Update 2026-08-11:** the subsurface-offset half now scales from the wlroots-native
+  offset (idempotent) and the debug patch was reverted — targeted fixes for bugs 1 & 3
+  (and likely 2); the per-frame/on-commit rework is still open. See [[zoom-scale-overhaul]].
 
