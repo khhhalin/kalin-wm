@@ -65,6 +65,19 @@ struct shader_paper_params shaders_paper_defaults(void);
 struct wlr_buffer *shaders_window_shade(struct Client *c,
 		const struct shader_paper_params *params);
 
+/* Composite client c's scene subtree (surface + subsurfaces + popups + borders)
+ * into a freshly-allocated XRGB8888 CPU buffer, isolated from z-order — so it
+ * captures a window that is occluded or partly off-screen, not just its visible
+ * part. Size is the subtree's current on-screen size: native at camera zoom 1,
+ * but the buffer nodes carry zoom-scaled dst_size (that's how kalin-wm zooms
+ * content), so a shot taken while zoomed comes out scaled to match (pass an
+ * explicit WxH at the call site if you need a fixed size). On success returns 1
+ * and fills out_data (caller frees) plus out_w, out_h, out_stride. Returns 0 if
+ * the renderer/allocator is unavailable or the window has no committed buffer.
+ * Unlike shaders_window_shade(), needs only the renderer (works on Pixman). */
+int shaders_capture_window(struct Client *c, unsigned char **out_data,
+		int *out_w, int *out_h, size_t *out_stride);
+
 /* Release client c's per-window offscreen resources. Call on unmap/destroy,
  * AFTER detaching the shaded buffer from its scene node (set NULL or destroy
  * the node) so nothing references a buffer this frees. Safe to call for a

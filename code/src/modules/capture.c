@@ -11,6 +11,7 @@
  * Separately-compiled TU: links against dwl.c's externed globals (event_loop,
  * alloc, drw, scene, selmon, output_layout) via kalin.h. */
 #include "kalin.h"
+#include "shaders.h"
 
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
@@ -398,6 +399,85 @@ capture_screenshot(const Arg *arg)
 		wlr_log(WLR_ERROR, "capture: PNG write failed: %s", path);
 
 	free(data);
+}
+
+/* Capture a single client to a PNG, optionally scaled to req_w x req_h (0 = the
+ * window's native size). `path` (absolute) overrides the default KALIN_SHOT_DIR
+ * timestamped name. On success returns 1 and fills out_path / *out_w / *out_h.
+ * The capture renders c's scene subtree in isolation (shaders_capture_window),
+ * so it's zoom- and occlusion-independent and never touches the live window. */
+int
+capture_window(Client *c, int req_w, int req_h, const char *path,
+               char *out_path, size_t out_path_len, int *out_w, int *out_h)
+{
+	unsigned char *native = NULL, *scaled = NULL;
+	const unsigned char *px;
+	int nw, nh, fw, fh, ok = 0;
+	size_t nstride, fstride;
+	const char *dir, *dst;
+	char buf[512];
+
+	if (!shaders_capture_window(c, &native, &nw, &nh, &nstride))
+		return 0;
+
+	if (req_w > 0 && req_h > 0 && (req_w != nw || req_h != nh)) {
+		int x, y;
+		fw = req_w;
+		fh = req_h;
+		fstride = (size_t)fw * 4;
+		if (!(scaled = malloc(fstride * (size_t)fh))) {
+			free(native);
+			return 0;
+		}
+		/* Nearest-neighbour rescale (mirrors toplevel_export.c) — the shot is a
+		 * throwaway, so cheap sampling is fine and keeps text legible. */
+		for (y = 0; y < fh; y++) {
+			int sy = fh == nh ? y : y * nh / fh;
+			uint32_t *drow = (uint32_t *)(scaled + (size_t)y * fstride);
+			const uint32_t *srow = (const uint32_t *)(native + (size_t)sy * nstride);
+			for (x = 0; x < fw; x++)
+				drow[x] = srow[fw == nw ? x : x * nw / fw];
+		}
+		px = scaled;
+	} else {
+		fw = nw;
+		fh = nh;
+		fstride = nstride;
+		px = native;
+	}
+
+	if (path && path[0] == '/') {
+		dst = path;
+	} else {
+		time_t t = time(NULL);
+		struct tm tmv;
+		dir = getenv("KALIN_SHOT_DIR");
+		if (!dir)
+			dir = getenv("HOME");
+		localtime_r(&t, &tmv);
+		snprintf(buf, sizeof(buf), "%s/kalin-win-%04d%02d%02d-%02d%02d%02d.png",
+				dir ? dir : "/tmp",
+				tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+				tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+		dst = buf;
+	}
+
+	if (write_png_xrgb(dst, px, fw, fh, (int)fstride)) {
+		ok = 1;
+		if (out_path && out_path_len)
+			snprintf(out_path, out_path_len, "%s", dst);
+		if (out_w)
+			*out_w = fw;
+		if (out_h)
+			*out_h = fh;
+		wlr_log(WLR_INFO, "capture: wrote window %dx%d %s", fw, fh, dst);
+	} else {
+		wlr_log(WLR_ERROR, "capture: window PNG write failed: %s", dst);
+	}
+
+	free(native);
+	free(scaled);
+	return ok;
 }
 
 void
