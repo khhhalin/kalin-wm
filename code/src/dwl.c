@@ -289,7 +289,6 @@ void viewport_reset(const Arg *arg);
 void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
 void viewport_menu_reveal(Client *c);
-void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
@@ -733,9 +732,10 @@ client_apply_zoom_frame(Client *c)
  * because nothing else reliably re-applies it mid-animation (a client's own
  * surface commits happening to trigger resize() is incidental, not
  * guaranteed, and made most idle windows look stuck/janky during any pan).
- * viewport_tick() calls this per tick instead of arrange(), and still calls
- * the full arrange() once when the camera settles, to catch anything a
- * camera-only refresh doesn't cover (layout, borders, clip, buffer scale). */
+ * viewport_tick() calls this per tick instead of arrange(); at settle,
+ * viewport_step_cam() additionally re-syncs each client (a per-client resize())
+ * to catch the borders/clip/buffer-scale a camera-only refresh doesn't cover —
+ * NOT the full arrange() an older comment here claimed. */
 void
 viewport_camera_tick(Monitor *m)
 {

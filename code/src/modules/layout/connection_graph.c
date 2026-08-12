@@ -18,8 +18,8 @@
 #endif
 
 /* Anchor point on rect (rx,ry,rw,rh)'s boundary closest to the other rect's
- * center — mirrors quickshell's LineGeometry._edgeAnchor()
- * (~/environment/quickshell/modules/services/LineGeometry.qml) so the
+ * center — mirrors the shell's LineGeometry._edgeAnchor()
+ * (~/environment/kalin-shell/modules/services/LineGeometry.qml) so the
  * compositor's click hit-test below lines up with the rendered sparkle line. */
 static void
 edge_anchor(float rx, float ry, float rw, float rh,

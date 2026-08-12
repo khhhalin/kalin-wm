@@ -608,21 +608,6 @@ viewport_toggle_follow_new(const Arg *arg)
 	status_mark_dirty();
 }
 
-/* Animate m's camera back to an explicit (x, y, zoom) — restores the
- * pre-spotlight view. */
-void
-viewport_animate_to(Monitor *m, float x, float y, float zoom)
-{
-	if (!m)
-		return;
-	m->cam.target_x = x;
-	m->cam.target_y = y;
-	m->cam.target_zoom = zoom;
-	m->cam.animating = 1;
-	viewport_kick();
-	status_mark_dirty();
-}
-
 /* Update camera position when following a window - call this on focus change */
 void
 viewport_follow_focus(void)
