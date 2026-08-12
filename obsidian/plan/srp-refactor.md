@@ -24,7 +24,9 @@ some are `#include`d into dwl.c's TU (crop/layout/ui/viewport bits + offscreen_i
 ### Etap 2 — pure moves (build+unit)
 - ~~**tmux-spawn cluster**~~ **DONE 2026-08-12** → `code/src/modules/spawn/tmux_spawn.c` (#include'd into dwl.c, same TU). Also fixed the `static void spawn` decl inconsistency (dwl.c doesn't include kalin.h). dwl.c 4912→4796.
 - ~~**Output/monitor module**~~ **DONE 2026-08-12** → `code/src/modules/output/output.c` (#include'd, same TU): createmon/cleanupmon/closemon/updatemons/requestmonstate + outputmgrapply/ortest/test/powermgrsetmode + ipc_set_output/monitor_find_by_name. rendermon/setmon/focusmon/tagmon stayed (render/focus, not output). dwl.c 4796→4367. VM-smoke passed. (ipc_set_output correctly went here, NOT ipc.c as the audit had said.)
-- dock-prep cluster (owns its own pending-rect state) → module.
+- ~~**dock-prep cluster**~~ **DONE 2026-08-13** → `code/src/modules/dock/dockprep.c` (#include'd, same TU): `dockprep_pending` table + `dockprep_register`/`dockprep_consume`. Byte-identical pure move; both already public (kalin.h) for ipc.c, so dwl.c keeps two forward-decls near `dock_hover_client`. dwl.c 4367→4309. Build clean + test 25/25 (VM-smoke skipped: byte-identical move on the branch output-module already boot+render verified).
+
+**Etap 2 zamknięty.** dwl.c 4969 (start SRP) → 4309 (−660, ~13%), rozbite na `spawn/tmux_spawn.c`, `output/output.c`, `dock/dockprep.c` + usunięty martwy kod. Dalej: Etap 3 (`mapnotify`/`motionnotify`/`buttonpress` decomposition), Etap 4 (zoom-scale 3-5) — świeże sesje.
 
 ### Etap 3 — SRP decomposition (behaviour-sensitive, VM-gated)
 - `mapnotify` (246), `motionnotify` (210), `buttonpress` (163): extract helpers. The input handlers' nested-mode `if` chain (`crop_editor.active` / `screenshot_ui.active` / `super_held` / `cursor_mode`) is the candidate for an explicit `InputMode` dispatch — highest risk, do last.
