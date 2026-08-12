@@ -65,6 +65,16 @@ struct shader_paper_params shaders_paper_defaults(void);
 struct wlr_buffer *shaders_window_shade(struct Client *c,
 		const struct shader_paper_params *params);
 
+/* Composite client c's scene subtree (surface + subsurfaces + popups + borders)
+ * into a freshly-allocated XRGB8888 CPU buffer at the window's NATIVE logical
+ * size — camera-zoom-independent and isolated from z-order, so it works for an
+ * occluded, partly off-screen, or zoomed-out window. On success returns 1 and
+ * fills out_data (caller frees) plus out_w, out_h, out_stride. Returns 0 if the
+ * renderer/allocator is unavailable or the window has no committed buffer.
+ * Unlike shaders_window_shade(), needs only the renderer (works on Pixman). */
+int shaders_capture_window(struct Client *c, unsigned char **out_data,
+		int *out_w, int *out_h, size_t *out_stride);
+
 /* Release client c's per-window offscreen resources. Call on unmap/destroy,
  * AFTER detaching the shaded buffer from its scene node (set NULL or destroy
  * the node) so nothing references a buffer this frees. Safe to call for a

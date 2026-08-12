@@ -778,6 +778,73 @@ shaders_window_shade(struct Client *c, const struct shader_paper_params *params)
 	return shaded_buf;
 }
 
+int
+shaders_capture_window(struct Client *c, unsigned char **out_data,
+		int *out_w, int *out_h, size_t *out_stride)
+{
+	struct bounds_ctx b = {0};
+	struct wlr_output *out;
+	struct wlr_swapchain *sc = NULL;
+	struct wlr_buffer *buf = NULL;
+	struct wlr_texture *tex = NULL;
+	unsigned char *data = NULL;
+	size_t stride;
+	int w, h, ok = 0;
+
+	/* Only needs the renderer + allocator, NOT paper_available: composite_subtree()
+	 * uses a plain wlr_renderer pass (renderer-agnostic), so a single-window shot
+	 * works even where the paper.frag GLES program didn't compile (e.g. Pixman). */
+	if (!drw || !alloc)
+		return 0;
+	if (!c || !c->scene || !c->mon || !c->mon->wlr_output)
+		return 0;
+	out = c->mon->wlr_output;
+
+	/* Native subtree bounds — local, camera-independent (see bounds_iter). */
+	wlr_scene_node_for_each_buffer(&c->scene->node, bounds_iter, &b);
+	if (!b.any || !ws_dim_valid(b.x1 - b.x0, b.y1 - b.y0))
+		return 0;
+	w = ws_clamp_dim(b.x1 - b.x0);
+	h = ws_clamp_dim(b.y1 - b.y0);
+
+	/* Throwaway swapchain so a capture never disturbs paper-mode's cached
+	 * per-client swapchains (win_ensure/win_get). */
+	if (!(sc = make_swapchain(out, w, h)))
+		return 0;
+	if (!(buf = wlr_swapchain_acquire(sc)))
+		goto out;
+	if (!composite_subtree(c, buf, b.x0, b.y0, w, h))
+		goto out;
+
+	stride = (size_t)w * 4;
+	data = malloc(stride * (size_t)h);
+	tex = wlr_texture_from_buffer(drw, buf);
+	if (tex && data) {
+		struct wlr_texture_read_pixels_options opts = {
+			.data = data,
+			.format = DRM_FORMAT_XRGB8888,
+			.stride = (uint32_t)stride,
+		};
+		ok = wlr_texture_read_pixels(tex, &opts);
+	}
+	if (ok) {
+		*out_data = data;
+		*out_w = w;
+		*out_h = h;
+		*out_stride = stride;
+		data = NULL; /* handed to caller */
+	}
+out:
+	if (tex)
+		wlr_texture_destroy(tex);
+	free(data);
+	if (buf)
+		wlr_buffer_unlock(buf);
+	if (sc)
+		wlr_swapchain_destroy(sc);
+	return ok;
+}
+
 void
 shaders_window_release(struct Client *c)
 {

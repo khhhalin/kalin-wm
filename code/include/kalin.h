@@ -898,6 +898,12 @@ void capture_export_pixels(const unsigned char *data, int cw, int ch, size_t str
 int capture_render_native(Monitor *m, float supersample, unsigned char **out_data,
                            int *out_w, int *out_h, size_t *out_stride);
 
+/* Capture a single client to a PNG (the `screenshot-window` IPC command), at its
+ * native size or scaled to req_w x req_h. Zoom/occlusion-independent. Returns 1
+ * and fills out_path/out_w/out_h on success. */
+int capture_window(Client *c, int req_w, int req_h, const char *path,
+                   char *out_path, size_t out_path_len, int *out_w, int *out_h);
+
 /* Crop mode (crop_mode TU) */
 void cropbegin(const Arg *arg);
 void cropcancel(const Arg *arg);

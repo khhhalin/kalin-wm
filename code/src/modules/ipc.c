@@ -100,6 +100,16 @@
  *                         see backlight.c for why this goes through
  *                         logind's SetBrightness D-Bus method rather than a
  *                         direct sysfs write.
+ *       screenshot-window <id:N|app-id:X> [WxH] [path]
+ *                         capture ONE window to a PNG (capture_window()).
+ *                         Renders the client's scene subtree in isolation, so it
+ *                         works even if the window is occluded, off-screen, or
+ *                         zoomed out; optional WxH scales the shot only (the live
+ *                         window is untouched); path defaults to $KALIN_SHOT_DIR.
+ *                         Unlike every other command this REPLIES, one JSON line:
+ *                         {"type":"screenshot-window","ok":true,"path":..,
+ *                         "width":W,"height":H}. `id` (from "clients") is unique;
+ *                         app-id matches the first client with that app-id.
  *
  * The socket path is exported via $KALIN_IPC_SOCKET. Separately-compiled TU:
  * links against dwl.c's externed globals/functions (event_loop, selmon,
@@ -502,7 +512,7 @@ ipc_broadcast_state(void)
 }
 
 static void
-ipc_exec_command(char *line)
+ipc_exec_command(struct ipc_client *cl, char *line)
 {
 	char *save = NULL;
 	char *cmd = strtok_r(line, " \t\r", &save);
@@ -642,6 +652,45 @@ ipc_exec_command(char *line)
 		/* Immediate whole-monitor capture (same as the Super+Print bind);
 		 * lands in $KALIN_SHOT_DIR (or $HOME). */
 		capture_screenshot(NULL);
+	} else if (strcmp(cmd, "screenshot-window") == 0) {
+		/* Capture ONE window to a PNG: `screenshot-window <id:N|app-id:X>
+		 * [WxH] [path]`. Renders the client's scene subtree in isolation, so
+		 * it works even if the window is occluded, off-screen, or zoomed out;
+		 * optional WxH scales the shot only. Replies one JSON line so an
+		 * agent gets the path + real dimensions without racing the FS. `id`
+		 * is canonical (unique, from the "clients" feed); app-id hits the
+		 * first match. */
+		char *sel = strtok_r(NULL, " \t\r", &save);
+		char *a2 = strtok_r(NULL, " \t\r", &save);
+		char *a3 = strtok_r(NULL, " \t\r", &save);
+		Client *c = NULL;
+		int rw = 0, rh = 0, ow = 0, oh = 0;
+		const char *path = NULL;
+		char rpath[512], reply[640];
+
+		if (sel && strncmp(sel, "id:", 3) == 0) {
+			uint32_t id = (uint32_t)strtoul(sel + 3, NULL, 10);
+			Client *it;
+			wl_list_for_each(it, &clients, link)
+				if (it->id == id) { c = it; break; }
+		} else if (sel && strncmp(sel, "app-id:", 7) == 0) {
+			c = client_find_by_appid(sel + 7);
+		}
+		/* a2 is WxH or a path; a3 (if present) is the path after a WxH. */
+		if (a2) {
+			if (sscanf(a2, "%dx%d", &rw, &rh) == 2)
+				path = a3;
+			else { rw = rh = 0; path = a2; }
+		}
+		if (c && capture_window(c, rw, rh, path, rpath, sizeof(rpath), &ow, &oh))
+			snprintf(reply, sizeof(reply),
+					"{\"type\":\"screenshot-window\",\"ok\":true,\"path\":\"%s\",\"width\":%d,\"height\":%d}\n",
+					rpath, ow, oh);
+		else
+			snprintf(reply, sizeof(reply),
+					"{\"type\":\"screenshot-window\",\"ok\":false,\"selector\":\"%s\"}\n",
+					sel ? sel : "");
+		ipc_client_send(cl, reply);
 	} else if (strcmp(cmd, "set-brightness") == 0) {
 		char *sv = strtok_r(NULL, " \t\r", &save);
 		if (sv) {
@@ -688,7 +737,7 @@ ipc_client_drain(struct ipc_client *cl)
 			return n;
 		buf[n] = '\0';
 		for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
-			ipc_exec_command(line);
+			ipc_exec_command(cl, line);
 	}
 }
 
