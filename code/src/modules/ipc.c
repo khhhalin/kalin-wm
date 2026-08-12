@@ -708,12 +708,6 @@ ipc_exec_command(struct ipc_client *cl, char *line)
 		else
 			wlr_log(WLR_DEBUG, "ipc: minimize: missing client or args ('%s')",
 					appid ? appid : "(none)");
-	} else if (strcmp(cmd, "spotlight") == 0) {
-		/* Deliberately a no-op: the hold-Super menu no longer zooms the camera
-		 * (it snapped to wrong positions). Kept so a not-yet-rebuilt shell that
-		 * still sends "spotlight 1/0" can't re-trigger the buggy zoom. Ensure any
-		 * previously-applied dim is cleared. */
-		spotlight_exit();
 	} else {
 		wlr_log(WLR_DEBUG, "ipc: unknown command '%s'", cmd);
 	}

@@ -13,6 +13,7 @@
  * modules call too (connection_graph.c's swap_neighbor_dir(),
  * modules/viewport code) — declared in kalin.h. */
 #include "kalin.h"
+#include "client_inline.h"
 #include "config.h"
 
 static struct timespec client_anim_last;
@@ -98,7 +99,7 @@ clients_anim_step(void)
 				 * already (see client_apply_zoom_frame()'s matching bypass)
 				 * — applying the world->screen camera transform on top of
 				 * that here would double-transform them. */
-				if (c->isfullscreen || c->ismaximized || c->docked)
+				if (client_is_camera_bypassed(c))
 					wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 				else
 					wlr_scene_node_set_position(&c->scene->node,

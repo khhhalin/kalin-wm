@@ -152,7 +152,7 @@ indicator_set_update(IndicatorSet *set)
 		 * client_apply_zoom_frame()) are glued to a screen-space rect on
 		 * their monitor — like panels below, never meaningfully
 		 * "off-screen". */
-		if (c->isfullscreen || c->ismaximized || c->docked)
+		if (client_is_camera_bypassed(c))
 			continue;
 		/* Panels (c->ispanel) are always on-screen by construction (a fixed
 		 * dock rect) — never meaningfully "off-screen", so skip them rather

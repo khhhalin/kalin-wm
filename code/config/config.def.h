@@ -29,10 +29,6 @@ static const float offscreen_indicator_color[] = COLOR(0xffffffff);
 static const float anim_stiffness = 250.0f;
 static const float anim_damping    = 26.0f;
 
-/* Hold-Super spotlight: opacity applied to non-focused windows while the
- * radial menu is up (the focused window stays at 1.0). */
-static const float spotlight_dim = 0.35f;
-
 /* Crisp zoom: cap on the render scale (output_scale * zoom) the compositor asks
  * clients to render at when zoomed in. Higher = crisper deep zoom, more GPU. */
 static const float zoom_render_max = 3.0f;

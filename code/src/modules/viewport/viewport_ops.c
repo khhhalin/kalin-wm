@@ -608,40 +608,6 @@ viewport_toggle_follow_new(const Arg *arg)
 	status_mark_dirty();
 }
 
-/* Fit + center the holder's camera on a single window (zoom in to fill, with
- * margin). Used by the hold-Super spotlight to focus the active window. */
-void
-viewport_focus_window(Client *c)
-{
-	Monitor *m;
-	float bw_, bh_, zx, zy, z, cx, cy;
-
-	if (!c || !c->mon)
-		return;
-	m = c->mon;
-	if (m->w.width <= 0 || m->w.height <= 0)
-		return;
-
-	bw_ = c->geom.width  < 1.0f ? 1.0f : (float)c->geom.width;
-	bh_ = c->geom.height < 1.0f ? 1.0f : (float)c->geom.height;
-	zx = (float)m->w.width / bw_;
-	zy = (float)m->w.height / bh_;
-	z = (zx < zy ? zx : zy) * 0.55f;  /* margin: window ~55% of the viewport */
-	if (z < 0.1f) z = 0.1f;
-	if (z > 2.0f) z = 2.0f;           /* spotlight may zoom IN, unlike fit-all */
-
-	cx = c->geom.x + c->geom.width / 2.0f;
-	cy = c->geom.y + c->geom.height / 2.0f;
-	m->cam.target_zoom = z;
-	/* Bias the window left of centre (~40% of the width) so the Android-style
-	 * side menu has room to fan out on its right. */
-	m->cam.target_x = cx - (float)m->w.width * 0.40f / z;
-	m->cam.target_y = cy - (float)m->w.height / (2.0f * z);
-	m->cam.animating = 1;
-	viewport_kick();
-	status_mark_dirty();
-}
-
 /* Animate m's camera back to an explicit (x, y, zoom) — restores the
  * pre-spotlight view. */
 void

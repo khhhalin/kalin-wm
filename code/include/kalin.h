@@ -846,7 +846,6 @@ void viewport_center_on(Client *c);
 void viewport_center_on_x(Client *c);
 void viewport_center_on_y(Client *c);
 void viewport_menu_reveal(Client *c);
-void viewport_focus_window(Client *c);
 void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
@@ -868,10 +867,6 @@ int overview_is_active(void);
  * protocol is required. */
 void toplevel_export_init(struct wl_display *display);
 
-/* Hold-Super spotlight: focus the active window and recede the rest (defined in
- * dwl.c, driven by the shell via the "spotlight" IPC command). */
-void spotlight_enter(void);
-void spotlight_exit(void);
 
 /* High-res screenshot (capture TU) */
 void capture_screenshot(const Arg *arg);
@@ -932,9 +927,6 @@ void client_apply_zoom_scale(void);
 
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);
-
-/* Wallpaper (kalin-wm specific) */
-void wallpaper_init(void);
 
 /* Crop functionality (kalin-wm specific) */
 void cropbegin(const Arg *arg);
