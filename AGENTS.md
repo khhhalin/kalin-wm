@@ -1,6 +1,6 @@
 # Agent Start Here — kalin-wm
 
-kalin-wm is a personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). It replaces fixed workspaces with an infinite 2D canvas navigated by a viewport camera, adds Niri-style column tiling, and is paired with the Quickshell-based companion shell in `~/environment/quickshell` for the bar, overview, and notifications.
+kalin-wm is a personal Wayland compositor forked from [dwl](https://codeberg.org/dwl/dwl). It replaces fixed workspaces with an infinite 2D canvas navigated by a viewport camera. Windows are **freely positioned** on that canvas — placed on spawn (to the right of their parent, on the cursor, or centered) and linked into a spawn "connection graph" for directional focus and component dragging. There is **no column/tiling layout**: `arrange()` only manages visibility and z-order, not a tiled layout (the old column-layout/anchored-window split was removed). Dialog/transient/modal/fixed-size windows float as screen-space overlays (see `client_is_float_type()` + `c->isfloating`). It is paired with a companion shell (bar/overview/notifications).
 
 This file is the entry point for coding agents. Deeper design context lives in the `obsidian/` vault; consult it only when you need it.
 
@@ -81,6 +81,29 @@ Expected output ends with `PASS: Quickshell configuration loaded` and `PASS: Com
 ## Validate with the test VM (preferred)
 
 The safest way to test a real DRM-backed session without touching the host is the QEMU/KVM VM in `~/environment/test-vm`.
+
+### Agentic testing: drive it with `vmctl` (do this, not the manual boot below)
+
+`scripts/vmctl.py` drives the VM entirely from the host — hypervisor-level input (QMP) + VNC framebuffer capture — so an agent can boot, act, and screenshot with no guest cooperation. **This is the standard automated-testing path; prefer it over the manual boot.**
+
+```bash
+cd /home/kalin/environment/test-vm
+nix flake update kalin-wm && nix build .#vm      # only when compositor code changed
+python3 scripts/vmctl.py up                       # boot headless, wait for the session
+python3 scripts/vmctl.py shot out.png             # capture a PNG you can Read
+python3 scripts/vmctl.py key meta_l t             # a chord, e.g. Super+T (foot)
+python3 scripts/vmctl.py click 600 380            # click a window to focus it (coords are 1280x800)
+python3 scripts/vmctl.py type "echo hi"           # type into the focused window
+python3 scripts/vmctl.py down                      # power off
+```
+
+Gotchas an agent WILL hit (all learned the hard way):
+- **Leftover VMs hold the qcow2 write lock** → the next `up` fails with `Failed to get "write" lock`, and the stale QEMU's process name is dot-prefixed (`.qemu-system-x8`), so an *exact*-name `pkill`/kill misses it. Match a `*qemu*` substring or kill by PID; `vmctl down` between runs avoids this.
+- **`type` drops characters on long strings** — keep typed commands short, or split them.
+- **GUI apps for float/dialog testing:** the VM has no Xwayland, so a browser needs `MOZ_ENABLE_WAYLAND=1`; GTK apps need `GDK_BACKEND=wayland` (and the virgl GPU has no Vulkan — GTK4 apps may need `GSK_RENDERER=cairo`, or just use Firefox's own dialogs). Firefox's profile lives on the persistent qcow2 — after unclean kills it corrupts and crashes on start; `rm test-vm/kalin-test.qcow2` for a fresh disk.
+- A verified example: launch Firefox, `Ctrl+O` (a transient file-chooser → floats), zoom the canvas out (`Super+Ctrl+minus`) and confirm the dialog stays 1:1 while the canvas shrinks.
+
+### Manual boot (fallback, e.g. for a graphical window)
 
 ```bash
 cd /home/kalin/environment/test-vm
