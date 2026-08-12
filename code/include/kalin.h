@@ -846,7 +846,6 @@ void viewport_center_on(Client *c);
 void viewport_center_on_x(Client *c);
 void viewport_center_on_y(Client *c);
 void viewport_menu_reveal(Client *c);
-void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
 void viewport_follow_focus(void);
