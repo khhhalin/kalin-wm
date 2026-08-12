@@ -114,3 +114,61 @@ not pushed), the rest still open:
   test-VM visual pass; the unit suite doesn't exercise the render path.
 - **Still open (steps 3-5):** apply scale on commit rather than per frame, collapse the
   three scale systems into one path, gate/debounce the settle-time re-render.
+
+## Bug 4 — Zen outline stale after overview settle (reported 2026-08-12, root-cause partial)
+
+- **Symptom (user):** after an overview zoom out/in, a Zen window's border/focus-ring is
+  drawn at the wrong geometry and stays wrong *at rest* until the window is manually resized.
+  The "outline" is the focus ring (`c->focus_ring[i]`) + border, both sized in
+  `client_apply_zoom_frame()` (`dwl.c:657`) from `c->geom * MON_ZOOM_SAFE`.
+- **Confirmed invariant violation:** `dwl.c:737` documents that `viewport_tick()` "calls the
+  full `arrange()` once when the camera settles, to catch anything a camera-only refresh doesn't
+  cover (layout, borders, clip, buffer scale)." It does **not** — `viewport_tick()`
+  (`viewport_ops.c:140`) never calls `arrange()`; at settle `viewport_step_cam()`
+  (`viewport_ops.c:113-121`) calls only `viewport_camera_tick(m)` + `client_apply_zoom_scale()`.
+  Two comments now contradict each other (`dwl.c:737` "arrange at settle" vs `viewport_ops.c:115`
+  "Not arrange()") — the path was changed and the documented refresh was dropped.
+- **The skip:** `viewport_camera_tick()` re-applies `client_apply_zoom_frame()` but **skips any
+  client with `c->animating`** (`dwl.c:755`). A client still spring-gliding when the camera
+  settles gets no border re-apply from the settle tick; it relies on the glide-finish
+  `resize()` (`client_anim.c:89`) instead.
+- **Not fully reproduced by inspection:** in the common orders the *last* writer (glide-finish
+  `resize()` or the settle `camera_tick`) still lands the final zoom, so the border ends correct
+  — I could not construct the exact persistent-failure sequence statically. The Zen-specific part
+  (CSD shadow: border sized from window-geometry `c->geom` while content is sized from the full
+  `surface.current`; fractional-scale; async realloc that commits *after* settle) is the piece
+  that can't be reasoned about without a live Zen client. **Blocker:** the test-VM runs `foot`,
+  not Zen, so it cannot confirm this class. A nested kalin-wm running real Zen, or a hardware
+  check, is required to verify any fix. No code changed for this yet (branch `zoom-scale-rework`,
+  baseline build + 25/25 green).
+- **REPRODUCED + independently confirmed 2026-08-12 (VM, Firefox).** Firefox is Zen's engine and is
+  already in the test-VM. Built an automated repro in `test-vm/vm.nix` (`reproDriver`): launches
+  Firefox (needs `MOZ_ENABLE_WAYLAND=1` — the VM has no Xwayland), then over the compositor IPC
+  socket screenshots a baseline at 1x, zooms out to 0.35 and back (`zoom`/`zoom-reset` = the overview
+  cycle), and screenshots again; shots land in `/mnt/host`. Result: **shot A (baseline 1x) has a
+  clean amber ring on all four edges; shot C (after the cycle, back at 1x) has the ring's BOTTOM edge
+  offset upward — a black gap band and white content overhanging past the ring.** A Sonnet assessor
+  confirmed independently: the frame-decoration rect and the surface rect disagree (border too short
+  vs content), not merely a moved window. So `c->geom`/frame height is stale/shorter than the actual
+  content after settle — a commit-vs-configure / clip-not-reapplied mismatch from the overview scale
+  round-trip. **Repeatable pass/fail for any fix: re-run the harness, C must match A.** Fix continues
+  on branch `zoom-scale-rework`.
+- **FIX (branch `zoom-scale-rework`, commit d36e9b4):** at camera settle,
+  `viewport_step_cam()` now forces a full per-client resync (`resize(c, c->geom, 0)` with
+  `c->crop.clip_cached = false`) instead of only `viewport_camera_tick()` — so the CSD-shadow clip
+  is re-issued at the final zoom even though its computed value is unchanged and wlr_scene reset it
+  on the client's post-settle commit. This is the `arrange()`-at-settle the rendermon() comment
+  already documents. Builds clean, `make test-unit` 25/25.
+- **Verification (VM, sonnet assessor): FIX HOLDS.** Same repro harness, rebuilt with the fix
+  (test-vm kalin-wm input temporarily repointed at the worktree, then restored). Post-overview shot C
+  now shows the amber ring hugging the content on every captured edge — no black gap, no overhang —
+  where the broken build had an obvious detached band. **Caveat:** the one attempt to force Firefox
+  fully on-screen so the exact *bottom* edge was captured had Firefox crash (flaky in the 2-core VM),
+  so the bottom edge wasn't captured in a clean fixed shot; the fix mechanism is edge-agnostic and no
+  misalignment appears anywhere, but final ground-truth is a real-hardware Zen check.
+- **Repro harness recipe (for reuse):** in `test-vm/vm.nix`, a `reproDriver` (python over the
+  `KALIN_IPC_SOCKET`): launch `firefox` with `MOZ_ENABLE_WAYLAND=1` (no Xwayland in the VM), then
+  `screenshot` / `zoom 0.35` / `zoom-reset` / `screenshot`, shots to `KALIN_SHOT_DIR=/mnt/host`. Do
+  NOT redirect the driver to the qslog virtio port (single-writer, qs owns it) — inherit the
+  compositor stdout. The harness edits were reverted to keep test-vm clean; re-apply from git history
+  or this recipe to regression-test.
