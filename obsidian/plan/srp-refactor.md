@@ -22,7 +22,7 @@ some are `#include`d into dwl.c's TU (crop/layout/ui/viewport bits + offscreen_i
 ## Remaining (fresh sessions, low-risk-first)
 
 ### Etap 2 — pure moves (build+unit)
-- **tmux-spawn cluster** → own `#include`d module (`modules/spawn/`): `spawn` / `spawn_named` / `tmux_kill_window` are genuinely self-contained (fork/exec/tmux only, zero compositor state). Caveats: non-contiguous (dwl.c ~383 + ~4316), interleaved with `togglescratchpad` (NOT extractable — touches client state), and a `static`-vs-non-static detail on `spawn` to reconcile.
+- ~~**tmux-spawn cluster**~~ **DONE 2026-08-12** → `code/src/modules/spawn/tmux_spawn.c` (#include'd into dwl.c, same TU). Also fixed the `static void spawn` decl inconsistency (dwl.c doesn't include kalin.h). dwl.c 4912→4796.
 - **Output/monitor module** (`modules/output/`): move `createmon`/`updatemons`/`outputmgrapplyortest`/`ipc_set_output`/`monitor_find_by_name` together. NOTE: the audit said "`ipc_set_output` → ipc.c" — that's **wrong boundary**; it mutates the compositor (`output_layout`, `updatemons`, `wlr_output_commit`) and belongs with output mgmt, not the IPC dispatcher. `ipc.c` keeps only the command parse and calls into the module.
 - dock-prep cluster (owns its own pending-rect state) → module.
 
