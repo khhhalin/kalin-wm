@@ -23,7 +23,7 @@ some are `#include`d into dwl.c's TU (crop/layout/ui/viewport bits + offscreen_i
 
 ### Etap 2 — pure moves (build+unit)
 - ~~**tmux-spawn cluster**~~ **DONE 2026-08-12** → `code/src/modules/spawn/tmux_spawn.c` (#include'd into dwl.c, same TU). Also fixed the `static void spawn` decl inconsistency (dwl.c doesn't include kalin.h). dwl.c 4912→4796.
-- **Output/monitor module** (`modules/output/`): move `createmon`/`updatemons`/`outputmgrapplyortest`/`ipc_set_output`/`monitor_find_by_name` together. NOTE: the audit said "`ipc_set_output` → ipc.c" — that's **wrong boundary**; it mutates the compositor (`output_layout`, `updatemons`, `wlr_output_commit`) and belongs with output mgmt, not the IPC dispatcher. `ipc.c` keeps only the command parse and calls into the module.
+- ~~**Output/monitor module**~~ **DONE 2026-08-12** → `code/src/modules/output/output.c` (#include'd, same TU): createmon/cleanupmon/closemon/updatemons/requestmonstate + outputmgrapply/ortest/test/powermgrsetmode + ipc_set_output/monitor_find_by_name. rendermon/setmon/focusmon/tagmon stayed (render/focus, not output). dwl.c 4796→4367. VM-smoke passed. (ipc_set_output correctly went here, NOT ipc.c as the audit had said.)
 - dock-prep cluster (owns its own pending-rect state) → module.
 
 ### Etap 3 — SRP decomposition (behaviour-sensitive, VM-gated)
