@@ -320,6 +320,12 @@ struct Client {
                                   * border/bar/decorations, unlike isfullscreen. */
     struct wlr_box premax;      /* Geometry before maximizing, for restore */
     int minimized;              /* Hidden from scene/tiling, process stays alive */
+    int isfloating;             /* Dialog/transient/modal/fixed-size window that
+                                  * floats as a screen-space overlay above the
+                                  * canvas windows (set from client_is_float_type()
+                                  * at map): exempt from the world/camera transform
+                                  * like `docked`, so it stays put on top instead of
+                                  * panning/zooming with the infinite canvas. */
     int docked;                 /* Pinned into a shell-panel-owned screen rect
                                   * (see setdocked()): borderless, exempt from
                                   * the world/camera transform like fullscreen,

@@ -682,7 +682,7 @@ client_apply_zoom_frame(Client *c)
 	 * a shell panel handed the compositor over IPC, and it must stay glued to
 	 * that panel's on-screen position regardless of the canvas being panned
 	 * or zoomed underneath it. */
-	if (c->isfullscreen || c->ismaximized || c->docked) {
+	if (c->isfullscreen || c->ismaximized || c->docked || c->isfloating) {
 		view_x = c->geom.x;
 		view_y = c->geom.y;
 		zf = 1.0f;
@@ -2276,14 +2276,33 @@ mapnotify(struct wl_listener *listener, void *data)
 	wl_list_insert(&clients, &c->link);
 	wl_list_insert(&fstack, &c->flink);
 
-	/* Set initial monitor and connection-graph parent: a client with a real
-	 * xdg-shell parent (dialog/transient-for) inherits its monitor and, for
-	 * the spawn-connection graph, connects to that real parent (a more
-	 * natural choice for a genuine dialog than "whichever window happened
-	 * to be focused") — native geometry stands, no cascade/placement logic.
-	 * Everything else applies rules, then figures out a position. */
-	if ((p = client_get_parent(c))) {
-		setmon(c, p->mon);
+	/* Float-type windows — a real xdg-shell parent (dialog/transient-for) OR a
+	 * fixed-size/modal toplevel (client_is_float_type()) — become screen-space
+	 * floating overlays: centered on the parent's on-screen rect (or the
+	 * monitor), raised and focused, and exempt from the camera transform (via
+	 * c->isfloating, see client_apply_zoom_frame()) so they stay put on top of
+	 * the free-positioned canvas windows instead of panning/zooming with it —
+	 * the "popup floats, the rest stay put" behavior. They skip rules, cascade,
+	 * and the spawn-connection graph. Everything else applies rules and picks a
+	 * canvas position. */
+	if ((p = client_get_parent(c)) || client_is_float_type(c)) {
+		Monitor *fm = p ? p->mon
+				: (cursor ? xytomon(cursor->x, cursor->y) : selmon);
+		setmon(c, fm ? fm : selmon);
+		c->isfloating = 1;
+		if (c->mon) {
+			int dw = c->geom.width, dh = c->geom.height;
+			if (p) {
+				c->geom.x = (int)WORLD_TO_SCREEN_X(p->mon,
+						p->geom.x + p->geom.width / 2) - dw / 2;
+				c->geom.y = (int)WORLD_TO_SCREEN_Y(p->mon,
+						p->geom.y + p->geom.height / 2) - dh / 2;
+			} else {
+				c->geom.x = c->mon->w.x + (c->mon->w.width - dw) / 2;
+				c->geom.y = c->mon->w.y + (c->mon->w.height - dh) / 2;
+			}
+			resize(c, c->geom, 0);
+		}
 	} else {
 		struct wlr_box dockprep_rect = {0};
 		int dockprep_matched;
@@ -2387,7 +2406,9 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * fixed spot regardless of camera position, so "panning to show where
 	 * it landed" is meaningless for them and previously made the camera
 	 * visibly fly to each docked panel's first-ever spawn. */
-	if (c->mon && c->mon->cam.follow_new_windows && !c->ispanel)
+	/* A floating overlay is screen-space and already on top where the user is
+	 * looking — panning the camera to it is meaningless (like a panel). */
+	if (c->mon && c->mon->cam.follow_new_windows && !c->ispanel && !c->isfloating)
 		viewport_center_on(c);
 	ftl_create(c);
 	/* The scene node was created disabled (line ~2405, "enabled later by a
@@ -2399,6 +2420,12 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * until some unrelated event happens to dirty this monitor. */
 	if (c->mon)
 		arrange_mark_dirty(c->mon);
+	/* Modal/dialog overlays (a sudo prompt, a file picker) must grab focus so
+	 * the user can act on them immediately — unlike ordinary spawned windows,
+	 * which deliberately don't steal focus (see spawn_parent_candidate). The
+	 * lift raises it to the top of its layer, above the canvas windows. */
+	if (c->isfloating && c->mon)
+		focusclient(c, 1);
 	status_mark_dirty();
 
 unset_fullscreen:
@@ -3533,7 +3560,7 @@ client_set_buffer_scale(Client *c, float scale)
 		return;
 	/* Fullscreen (and maximized — same reasoning) content is never subject
 	 * to camera zoom — see the matching bypass in client_apply_zoom_frame(). */
-	if (c->isfullscreen || c->ismaximized || c->docked)
+	if (c->isfullscreen || c->ismaximized || c->docked || c->isfloating)
 		scale = 1.0f;
 	if (scale <= 0.0f)
 		scale = 1.0f;
