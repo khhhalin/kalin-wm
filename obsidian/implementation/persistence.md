@@ -1,14 +1,15 @@
 # Persistence
 
 - Persistence saves and restores window position, size, the
-  [[connection-graph]], and (since 2026-07-17) each client's launch command
-  across restarts, so the [[infinite-canvas]], its connections, and the apps
-  themselves survive a session ending — see "Session resurrection" below.
-  Own translation unit, `code/src/persistence.c` /
+  [[connection-graph]], each client's launch command (since 2026-07-17), and
+  each monitor's camera pan+zoom (since 2026-08-13) across restarts, so the
+  [[infinite-canvas]], its connections, the apps themselves, and the exact
+  view survive a session ending — see "Session resurrection" and "Camera
+  persistence" below. Own translation unit, `code/src/persistence.c` /
   `code/include/persistence.h`.
 - State file: `~/.local/share/kalin-wm/canvas_state.json`, hand-rolled flat
   JSON (own writer + a small non-nesting-safe parser — objects inside the
-  top-level `clients`/`connections` arrays must stay flat, no nested
+  top-level `clients`/`connections`/`cameras` arrays must stay flat, no nested
   objects/arrays, or the parser's `{`/`}` scan breaks).
 
 ## Identity: appid + title is not unique
@@ -121,6 +122,37 @@
   (after the client leaves the `clients` list), which is outside
   persistence.c.
 
+## Camera persistence (2026-08-13)
+
+- Each monitor's camera (pan `x`/`y` + `zoom`, settled values not the
+  animation target) is saved keyed by **output name** — a whole-monitor
+  property, so it's a top-level `"cameras"` array of `{output, x, y, zoom}`,
+  not a per-client field. `save_cameras()` iterates `mons`;
+  `persistence_camera_for_output(name, &x, &y, &zoom)` looks one up.
+- **Restore point is `createmon()`** (`modules/output/output.c`), right after
+  `m->cam = cam_defaults`: a matching saved camera overwrites both `cam.x/y/zoom`
+  *and* `cam.target_x/y/target_zoom`, so `viewport_tick()` doesn't animate away
+  from the restored spot. No match (or `zoom <= 0`) leaves the defaults — safe.
+  `wlr_output->name` is already populated there (the `monrules` loop keys on it
+  too). Lazy-loads the save file on first lookup, like registration does.
+- **Why it needed a follow-suppression, not just save+load:** the camera isn't
+  persisted for its own sake — the *view* is. But `follow_new_windows`
+  (default on) would auto-pan the camera onto each respawned window as it maps
+  (`viewport_center_on()` in `mapnotify()`), landing the camera on whichever
+  restored window mapped last and undoing the restore. Fix: `mapnotify()` skips
+  the follow-new pan for any client whose geometry was restored from the save
+  (`has_saved_geom`, the return of `persistence_register_client()`). Fresh
+  user-spawned windows still follow. Follow-*focus* needs no such guard — it
+  uses `viewport_ensure_visible()` (pan only if off-screen), and the restored
+  camera by construction already frames the restored windows, so it's a no-op.
+  See [[follow-mode]].
+- **Save freshness:** a camera pan/zoom on its own does **not** trigger a save
+  (`persistence_save()` fires on window/geometry/connection events and on
+  quit, not on camera motion). The camera is captured by whatever save fires
+  next — in practice frequent, and always on a clean quit. Verified end-to-end
+  on a live nested build: pan to (640,360,1.5) → quit → file holds
+  `cameras:[{WL-1,640,360,1.5}]` → reboot → `viewport WL-1 640 360 1.50`.
+
 ## Save format
 
 ```json
@@ -138,6 +170,9 @@
   "connections": [
     {"a_appid": "foot", "a_title": "foot", "a_instance": 0,
      "b_appid": "foot", "b_title": "foot", "b_instance": 1}
+  ],
+  "cameras": [
+    {"output": "LVDS-1", "x": 640.00, "y": 360.00, "zoom": 1.5000}
   ]
 }
 ```

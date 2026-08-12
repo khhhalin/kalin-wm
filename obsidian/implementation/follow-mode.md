@@ -4,7 +4,7 @@
 
 - There are two independent toggles:
 - **Follow focus** (`Super+Z`) — `viewport.follow`. The camera pans to keep the focused window centered.
-- **Follow new windows** (`Super+Shift+Z`) — `viewport.follow_new_windows`. The camera pans to each newly spawned window.
+- **Follow new windows** (`Super+Shift+Z`) — `viewport.follow_new_windows`. The camera pans to each newly spawned window. **Exception:** a window restored from [[persistence]] at startup (its geometry came from the save file) is *not* followed — otherwise the respawned windows would drag the camera off the saved view that `createmon()` just restored. See [[persistence]] "Camera persistence."
 
 - Both follow states are reported over the [[ipc-socket]] so the [[quickshell-shell]] can show whether follow is active.
 

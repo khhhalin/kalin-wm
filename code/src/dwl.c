@@ -2177,7 +2177,13 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * visibly fly to each docked panel's first-ever spawn. */
 	/* A floating overlay is screen-space and already on top where the user is
 	 * looking — panning the camera to it is meaningless (like a panel). */
-	if (c->mon && c->mon->cam.follow_new_windows && !c->ispanel && !c->isfloating)
+	/* A window restored from persistence (has_saved_geom) also mustn't pull
+	 * the camera: createmon() already restored the saved camera to the exact
+	 * view that framed these windows, and centering on each respawned window
+	 * as it maps would undo that and leave the camera on whichever restored
+	 * window happened to map last. */
+	if (c->mon && c->mon->cam.follow_new_windows && !c->ispanel && !c->isfloating
+			&& !has_saved_geom)
 		viewport_center_on(c);
 	ftl_create(c);
 	/* The scene node was created disabled (line ~2405, "enabled later by a

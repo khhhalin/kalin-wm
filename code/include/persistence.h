@@ -118,6 +118,13 @@ void persistence_unregister_client(void *client);
 /* Iterate live clients via callback when saving */
 void persistence_for_each_client(PersistenceClientFn fn, void *data);
 
+/* Look up the saved camera (pan + zoom) for an output by name, so createmon()
+ * can restore a monitor to exactly the view it had at the last save instead of
+ * resetting to origin. Returns 1 and fills the out-params on a match with a
+ * valid (zoom > 0) entry, 0 otherwise (leaving them untouched). Lazy-loads the
+ * save file on first use, like persistence_register_client(). */
+int persistence_camera_for_output(const char *output, float *x, float *y, float *zoom);
+
 /* Free loaded state */
 void persistence_free(CanvasState *state);
 

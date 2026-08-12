@@ -81,6 +81,22 @@ createmon(struct wl_listener *listener, void *data)
 	m->wlr_output = wlr_output;
 	m->cam = cam_defaults; /* fresh independent camera (multi-camera) */
 
+	/* Restore this output's saved camera (pan + zoom) over the defaults, so a
+	 * restart returns to the exact view it had at the last save instead of
+	 * snapping to origin. wlr_output->name is already populated here (the
+	 * monrules loop below keys on it too). The respawned windows below don't
+	 * yank the camera back: mapnotify() skips follow-new for any client whose
+	 * geometry was restored from the same save. Set the animation target too,
+	 * or viewport_tick() would ease straight back off the restored spot. */
+	{
+		float saved_x, saved_y, saved_zoom;
+		if (persistence_camera_for_output(wlr_output->name, &saved_x, &saved_y, &saved_zoom)) {
+			m->cam.x = m->cam.target_x = saved_x;
+			m->cam.y = m->cam.target_y = saved_y;
+			m->cam.zoom = m->cam.target_zoom = saved_zoom;
+		}
+	}
+
 	for (i = 0; i < LENGTH(m->layers); i++)
 		wl_list_init(&m->layers[i]);
 
