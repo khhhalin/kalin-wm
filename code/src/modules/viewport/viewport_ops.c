@@ -116,6 +116,24 @@ viewport_step_cam(Monitor *m)
 		 * positions; the final exact snap only needs the
 		 * camera-dependent refresh. */
 		viewport_camera_tick(m);
+		/* viewport_camera_tick() re-applies only the frame position/border; it
+		 * does NOT re-issue the CSD-shadow clip. wlr_scene resets that clip on a
+		 * client's own commit, and client_apply_crop_clip()'s value-cache then
+		 * declines to re-apply the identical clip — so a heavy client
+		 * (Zen/Firefox) that commits around the settle keeps its content
+		 * overhanging its border until a manual resize (bug 4,
+		 * obsidian/plan/zoom-scale-overhaul.md). Force a full per-client resync
+		 * at the final zoom — the arrange()-at-settle the rendermon() comment
+		 * already promises — invalidating the clip cache so the clip re-issues. */
+		{
+			Client *rc;
+			wl_list_for_each(rc, &clients, link) {
+				if (rc->mon != m || rc->animating || !rc->scene)
+					continue;
+				rc->crop.clip_cached = false;
+				resize(rc, rc->geom, 0);
+			}
+		}
 		/* Camera settled: ask clients to re-render at the final zoom DPI so
 		 * zoomed content is crisp rather than upscaled. */
 		client_apply_zoom_scale();
