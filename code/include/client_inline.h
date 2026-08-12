@@ -151,6 +151,18 @@ client_get_title(Client *c)
 	return c->surface.xdg->toplevel->title ? c->surface.xdg->toplevel->title : "broken";
 }
 
+/* True when a client renders in SCREEN space, exempt from the world->screen
+ * camera (pan/zoom) transform: fullscreen/maximized/docked panels sit at fixed
+ * output-layout coords, and a floating dialog overlay stays put on top. Kept in
+ * one place because several render/anim/indicator paths must agree on it — they
+ * used to diverge (client_anim + offscreen_indicators omitted isfloating, so a
+ * floating window got double-transformed / a spurious offscreen indicator). */
+static inline int
+client_is_camera_bypassed(Client *c)
+{
+	return c->isfullscreen || c->ismaximized || c->docked || c->isfloating;
+}
+
 static inline int
 client_is_float_type(Client *c)
 {

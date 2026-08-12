@@ -289,7 +289,6 @@ void viewport_reset(const Arg *arg);
 void viewport_fit_all(const Arg *arg);
 void viewport_center_on(Client *c);
 void viewport_menu_reveal(Client *c);
-void viewport_focus_window(Client *c);
 void viewport_animate_to(Monitor *m, float x, float y, float zoom);
 void viewport_toggle_follow(const Arg *arg);
 void viewport_toggle_follow_new(const Arg *arg);
@@ -682,7 +681,7 @@ client_apply_zoom_frame(Client *c)
 	 * a shell panel handed the compositor over IPC, and it must stay glued to
 	 * that panel's on-screen position regardless of the canvas being panned
 	 * or zoomed underneath it. */
-	if (c->isfullscreen || c->ismaximized || c->docked || c->isfloating) {
+	if (client_is_camera_bypassed(c)) {
 		view_x = c->geom.x;
 		view_y = c->geom.y;
 		zf = 1.0f;
@@ -2216,8 +2215,6 @@ mapnotify(struct wl_listener *listener, void *data)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
 	c->scene->node.data = c->scene_surface->node.data = c;
 
-	/* DEBUG: createnotify scene_surface created */
-
 	client_get_geometry(c, &c->geom);
 
 	/* Handle unmanaged clients first so we can return prior create borders */
@@ -3260,18 +3257,12 @@ resize(Client *c, struct wlr_box geo, int interact)
 	int cfg_w, cfg_h;
 	int unbounded;
 
-	/* DEBUG: resize start */
-
-	if (!c || !c->mon || !client_surface(c)->mapped || !c->scene || !c->scene_surface) {
-		/* DEBUG: resize early return - null checks failed */
+	if (!c || !c->mon || !client_surface(c)->mapped || !c->scene || !c->scene_surface)
 		return;
-	}
 
 	/* Borders may not be created yet during early setup */
-	if (!c->border[0] || !c->border[1] || !c->border[2] || !c->border[3]) {
-		/* DEBUG: resize early return - missing borders */
+	if (!c->border[0] || !c->border[1] || !c->border[2] || !c->border[3])
 		return;
-	}
 
 	bbox = interact ? &sgeom : &c->mon->w;
 	/* Every window lives in world space and may extend beyond the monitor
@@ -3350,54 +3341,6 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* Scale the displayed buffer to match the zoomed frame. */
 	client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
-}
-
-/* ── Hold-Super spotlight ───────────────────────────────────────────────────
- * While the shell's radial menu is up (it sends "spotlight 1/0" over IPC after
- * its own hold debounce), focus the camera on the active window and dim the
- * rest, then restore the prior view on release. */
-static int spotlight_active;
-static float spotlight_saved_x, spotlight_saved_y, spotlight_saved_zoom;
-static Monitor *spotlight_saved_mon; /* whose camera the spotlight hijacked */
-
-void
-spotlight_enter(void)
-{
-	Client *c, *f;
-
-	if (spotlight_active || !selmon)
-		return;
-	f = focustop(selmon);
-	if (!f || !f->mon)
-		return;
-
-	spotlight_active = 1;
-	spotlight_saved_mon = f->mon;
-	spotlight_saved_x = f->mon->cam.target_x;
-	spotlight_saved_y = f->mon->cam.target_y;
-	spotlight_saved_zoom = f->mon->cam.target_zoom;
-
-	viewport_focus_window(f);
-	wl_list_for_each(c, &clients, link) {
-		if (!VISIBLEON(c, selmon))
-			continue;
-		setopacity(c, c == f ? 1.0f : spotlight_dim);
-	}
-}
-
-void
-spotlight_exit(void)
-{
-	Client *c;
-
-	if (!spotlight_active)
-		return;
-	spotlight_active = 0;
-
-	viewport_animate_to(spotlight_saved_mon, spotlight_saved_x,
-			spotlight_saved_y, spotlight_saved_zoom);
-	wl_list_for_each(c, &clients, link)
-		setopacity(c, 1.0f);
 }
 
 /* Helper to check if a float is close to an integer */
@@ -3555,7 +3498,7 @@ client_set_buffer_scale(Client *c, float scale)
 		return;
 	/* Fullscreen (and maximized — same reasoning) content is never subject
 	 * to camera zoom — see the matching bypass in client_apply_zoom_frame(). */
-	if (c->isfullscreen || c->ismaximized || c->docked || c->isfloating)
+	if (client_is_camera_bypassed(c))
 		scale = 1.0f;
 	if (scale <= 0.0f)
 		scale = 1.0f;
