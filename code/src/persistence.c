@@ -24,6 +24,15 @@ typedef struct LoadedConnNode {
 	struct LoadedConnNode *next;
 } LoadedConnNode;
 
+/* One saved per-output camera (pan + zoom), keyed by output name. Unlike
+ * client geometry this is a whole-monitor property, so it's stored per output
+ * rather than per client — see save_cameras() and persistence_camera_for_output(). */
+typedef struct LoadedCameraNode {
+	char output[64];
+	float x, y, zoom;
+	struct LoadedCameraNode *next;
+} LoadedCameraNode;
+
 /* Every managed client that has called persistence_register_client() this
  * run, so save time can describe it (appid/title/instance) and so later
  * registrations can resolve a saved connection edge against it. */
@@ -53,6 +62,7 @@ typedef struct InstanceCounter {
 
 static LoadedStateNode *loaded_states;
 static LoadedConnNode *loaded_connections;
+static LoadedCameraNode *loaded_cameras;
 static RegisteredClient *registered_clients;
 static InstanceCounter *instance_counters;
 static int persistence_ready;
@@ -129,6 +139,27 @@ loaded_conn_push(void)
 	LoadedConnNode *node = ecalloc(1, sizeof(*node));
 	node->next = loaded_connections;
 	loaded_connections = node;
+	return node;
+}
+
+static void
+loaded_camera_free_all(void)
+{
+	LoadedCameraNode *node, *next;
+
+	for (node = loaded_cameras; node; node = next) {
+		next = node->next;
+		free(node);
+	}
+	loaded_cameras = NULL;
+}
+
+static LoadedCameraNode *
+loaded_camera_push(void)
+{
+	LoadedCameraNode *node = ecalloc(1, sizeof(*node));
+	node->next = loaded_cameras;
+	loaded_cameras = node;
 	return node;
 }
 
@@ -358,6 +389,20 @@ loaded_conn_from_object(const char *obj)
 	conn->b_instance = json_find_int(obj, "b_instance", 0);
 }
 
+static void
+loaded_camera_from_object(const char *obj)
+{
+	LoadedCameraNode *node = loaded_camera_push();
+
+	json_find_string(obj, "output", node->output, sizeof(node->output));
+	node->x = json_find_float(obj, "x", 0.0f);
+	node->y = json_find_float(obj, "y", 0.0f);
+	/* Fallback 1.0, not 0.0: zoom is a divisor in the world<->screen
+	 * transform, so a zero would be a latent divide-by-zero. An entry that
+	 * somehow lacks zoom restores pan-only at 1:1. */
+	node->zoom = json_find_float(obj, "zoom", 1.0f);
+}
+
 /* Matching ']' for the '[' at open_bracket, by depth-counting brackets —
  * safe here because none of our saved objects contain a nested array. */
 static char *
@@ -420,6 +465,7 @@ persistence_load_internal(void)
 
 	loaded_state_free_all();
 	loaded_conn_free_all();
+	loaded_camera_free_all();
 	fp = fopen(persistence_path(), "r");
 	if (!fp)
 		return;
@@ -443,6 +489,7 @@ persistence_load_internal(void)
 
 	parse_json_array(buf, "\"clients\"", loaded_state_from_object);
 	parse_json_array(buf, "\"connections\"", loaded_conn_from_object);
+	parse_json_array(buf, "\"cameras\"", loaded_camera_from_object);
 	free(buf);
 }
 
@@ -734,6 +781,31 @@ persistence_for_each_client(PersistenceClientFn fn, void *data)
 		fn((const SavedClientState *)c, data);
 }
 
+int
+persistence_camera_for_output(const char *output, float *x, float *y, float *zoom)
+{
+	LoadedCameraNode *node;
+
+	if (!output || !output[0] || !x || !y || !zoom)
+		return 0;
+	if (!persistence_ready)
+		persistence_init();
+
+	for (node = loaded_cameras; node; node = node->next) {
+		if (strcmp(node->output, output) != 0)
+			continue;
+		/* Guard the divisor invariant one more time past the parser's
+		 * fallback: a hand-edited or corrupt file could carry zoom <= 0. */
+		if (node->zoom <= 0.0f)
+			return 0;
+		*x = node->x;
+		*y = node->y;
+		*zoom = node->zoom;
+		return 1;
+	}
+	return 0;
+}
+
 struct SaveCtx {
 	FILE *fp;
 	int first;
@@ -842,6 +914,30 @@ save_connections(FILE *fp)
 	fputs("\n  ]\n", fp);
 }
 
+/* Save each monitor's camera (settled pan + zoom, not the animation target),
+ * keyed by output name so createmon() can restore the right one on the next
+ * run. Skips a monitor with no name — it can't be matched back. */
+static void
+save_cameras(FILE *fp)
+{
+	Monitor *m;
+	int first = 1;
+
+	fputs(",\n  \"cameras\":[\n", fp);
+	wl_list_for_each(m, &mons, link) {
+		if (!m->wlr_output || !m->wlr_output->name || !m->wlr_output->name[0])
+			continue;
+		if (!first)
+			fputs(",\n", fp);
+		first = 0;
+		fputs("    {", fp);
+		fputs("\"output\":", fp); json_escape(fp, m->wlr_output->name);
+		fprintf(fp, ",\"x\":%.2f,\"y\":%.2f,\"zoom\":%.4f}",
+			m->cam.x, m->cam.y, m->cam.zoom);
+	}
+	fputs("\n  ]\n", fp);
+}
+
 int
 persistence_save(void)
 {
@@ -860,6 +956,7 @@ persistence_save(void)
 	persistence_for_each_client(save_client_cb, &ctx);
 	fputs("\n  ]", tmp);
 	save_connections(tmp);
+	save_cameras(tmp);
 	fputs("}\n", tmp);
 	if (fflush(tmp) != 0 || fsync(fileno(tmp)) != 0) {
 		fclose(tmp);
@@ -1004,6 +1101,7 @@ persistence_cleanup(void)
 {
 	loaded_state_free_all();
 	loaded_conn_free_all();
+	loaded_camera_free_all();
 	registered_clients_free_all();
 	instance_counters_free_all();
 }
