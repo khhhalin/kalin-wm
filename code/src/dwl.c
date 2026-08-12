@@ -99,69 +99,10 @@ ScreenshotEditor screenshot_ui;
  * the shell any other way. External linkage so ipc.c can read it. */
 Client *dock_hover_client;
 
-/* Pending "this app_id's next map should dock straight into this rect"
- * requests, registered via the "dockprep" IPC command before a shell panel
- * spawns its backing terminal. Consumed (matched + removed) in mapnotify(),
- * which then skips normal placement/connection-graph/camera-follow handling
- * for that client entirely and docks it immediately — so a docked panel's
- * first-ever spawn never flashes at a default floating position and never
- * drags the camera along with it (see the follow_new_windows check in
- * mapnotify()). Fixed-size: one entry per known panel type is plenty, and an
- * unmatched register() just overwrites the oldest slot rather than growing
- * unbounded. */
-#define DOCKPREP_MAX 8
-struct dockprep_entry {
-	char appid[256];
-	struct wlr_box rect;
-	int used;
-};
-static struct dockprep_entry dockprep_pending[DOCKPREP_MAX];
-
-void
-dockprep_register(const char *appid, struct wlr_box rect)
-{
-	int i, slot = 0;
-
-	if (!appid || !*appid)
-		return;
-	for (i = 0; i < DOCKPREP_MAX; i++) {
-		if (dockprep_pending[i].used && strcmp(dockprep_pending[i].appid, appid) == 0) {
-			slot = i;
-			goto set;
-		}
-		if (!dockprep_pending[i].used) {
-			slot = i;
-			goto set;
-		}
-	}
-	/* All slots full and none matched — overwrite slot 0 rather than drop
-	 * the request silently; this shouldn't happen in practice (panel count
-	 * is well under DOCKPREP_MAX), but a stuck stale slot is worse than
-	 * evicting one. */
-set:
-	snprintf(dockprep_pending[slot].appid, sizeof(dockprep_pending[slot].appid), "%s", appid);
-	dockprep_pending[slot].rect = rect;
-	dockprep_pending[slot].used = 1;
-}
-
-/* Matches and consumes (one-shot) a pending dockprep request for `appid`.
- * Returns 1 and fills *out on a match, 0 otherwise. */
-int
-dockprep_consume(const char *appid, struct wlr_box *out)
-{
-	int i;
-
-	if (!appid || !*appid)
-		return 0;
-	for (i = 0; i < DOCKPREP_MAX; i++) {
-		if (dockprep_pending[i].used && strcmp(dockprep_pending[i].appid, appid) == 0) {
-			*out = dockprep_pending[i].rect;
-			dockprep_pending[i].used = 0;
-			return 1;
-		}
-	}
-	return 0;
-}
+/* dockprep table lives in modules/dock/dockprep.c (#included below); these
+ * forward-decls satisfy mapnotify()'s earlier dockprep_consume() call. */
+void dockprep_register(const char *appid, struct wlr_box rect);
+int dockprep_consume(const char *appid, struct wlr_box *out);
 
 /* Camera defaults for a fresh monitor (multi-camera: every Monitor owns its
  * own `cam` Viewport over the shared world — see obsidian/multi-camera.md;
@@ -2728,6 +2669,7 @@ quit(const Arg *arg)
 #include "modules/ui/offscreen_indicators.c"
 #include "modules/spawn/tmux_spawn.c"
 #include "modules/output/output.c"
+#include "modules/dock/dockprep.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
