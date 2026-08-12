@@ -914,8 +914,6 @@ buttonpress(struct wl_listener *listener, void *data)
 	uint32_t mods;
 	Client *c;
 
-	wlr_log(WLR_ERROR, "DBG buttonpress btn=%u state=%d dev=%s", event->button,
-			event->state, event->pointer->base.name ? event->pointer->base.name : "?");
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
 	switch (event->state) {
@@ -1071,9 +1069,6 @@ buttonpress(struct wl_listener *listener, void *data)
 	}
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
-	wlr_log(WLR_ERROR, "DBG notify_button btn=%u state=%d cur=%.0f,%.0f focused_surface=%p",
-			event->button, event->state, cursor->x, cursor->y,
-			(void *)seat->pointer_state.focused_surface);
 	wlr_seat_pointer_notify_button(seat,
 			event->time_msec, event->button, event->state);
 }
@@ -4882,7 +4877,6 @@ virtualpointer(struct wl_listener *listener, void *data)
 	struct wlr_virtual_pointer_v1_new_pointer_event *event = data;
 	struct wlr_input_device *device = &event->new_pointer->pointer.base;
 
-	wlr_log(WLR_ERROR, "DBG virtualpointer attach dev=%s", device->name ? device->name : "?");
 	wlr_cursor_attach_input_device(cursor, device);
 	if (event->suggested_output)
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);

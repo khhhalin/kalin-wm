@@ -231,14 +231,19 @@ implementation note. Trimmed from full narrative 2026-07-15.
   220px, `INFO_FADE_FLOOR` 0.15 so the readout stays legible) — the fade does
   *not* substitute for the crash fix. Details in [[screenshot-ui]]. Live/VM
   hover repro is keeper-only and was not run at the merge gate.
-- **Synthetic/absolute pointer BUTTON events are dropped** (found 2026-07-17
-  while gating the [[tui-bar]]): motion/hover works but presses never reach
-  `buttonpress()` from (a) `zwlr_virtual_pointer` clients (`wlrctl pointer
-  click`) and (b) the test VM's QMP absolute pointing devices (QEMU HID
-  Tablet / vmmouse) — `dwl.c` has zero tablet-tool handling (the one "tablet"
-  mention is a comment) and `virtualpointer()` only attaches the device.
-  Real relative mice/touchpads are unaffected. Blocks all host-driven click
-  automation (vmctl click, wlrctl) — fixing this unlocks clickable VM gates.
+- ~~**Synthetic/absolute pointer BUTTON events are dropped**~~ (found 2026-07-17
+  while gating the [[tui-bar]]) — **RESOLVED, verified 2026-08-12.** Re-tested in
+  the [[test-vm]]: both paths now reach `buttonpress()` (the committed `DBG
+  buttonpress` log fired press+release): (a) QMP absolute via the "VirtualPS/2
+  VMware VMMouse", and (b) `wlrctl pointer click` via `dev=wlr_virtual_pointer_v1`
+  (`virtualpointer()` attaches it and the button routes through `wlr_cursor`).
+  Fixed sometime since the report (a wlroots bump / the input refactors), not by
+  a targeted change — `vmctl click` and wlrctl automation both work. Leftover
+  `DBG buttonpress`/`DBG virtualpointer`/`DBG notify_button` logs (WLR_ERROR spam
+  on every click) removed in the same pass. **Still a real gap (separate):** the
+  new-input dispatch `default:`-ignores `WLR_INPUT_DEVICE_TABLET`/`TOUCH`/`SWITCH`
+  — no tablet-tool (stylus) support at all. Not needed for click automation; left
+  as its own task.
 - All three 2026-07-09 cursor bugs (shape not restored after grabs, DPMS-wake
   image at (0,0), hacky startup warp) **fixed 2026-07-17** (fleet task
   `cursor-bugs` — root causes in `obsidian/agents/cursor-bugs/report.md`).
