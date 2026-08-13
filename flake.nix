@@ -41,7 +41,14 @@
         buildInputs = deps;
 
         buildPhase = ''
-          make
+          # `make clean` first, not bare `make`: the `path:` flake input copies
+          # the whole working tree — including the git-ignored `build/` dir — into
+          # the source, and Nix normalises every mtime to 1970, so a stale
+          # `build/kalin-wm` reads as up-to-date and bare `make` would relink (and
+          # install) that old binary instead of the current sources. Once cost us
+          # a deploy that shipped a pre-refactor build. Clean guarantees a fresh
+          # compile of the actual source every time.
+          make clean all
         '';
 
         installPhase = ''
