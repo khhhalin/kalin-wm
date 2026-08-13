@@ -190,6 +190,12 @@ rail_swap_dir(const Arg *arg)
 
 	/* Keep the focused (moved) window framed, like the old swap did. */
 	viewport_follow_focus();
+
+	/* Persist the new rail order + the two swapped positions right away, so a
+	 * restart restores the reordering (the rail predecessor of each is now
+	 * different — layout Phase 6). Without this a swap is lost on the next
+	 * boot, since no geometry-change save otherwise fires for it. */
+	persistence_save();
 }
 
 /* Discrete rail scroll: focus the rail neighbour in the pressed direction and

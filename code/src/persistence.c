@@ -29,7 +29,9 @@ typedef struct LoadedCameraNode {
 } LoadedCameraNode;
 
 /* Every managed client that has called persistence_register_client() this
- * run, so save time can describe it (appid/title/instance). */
+ * run, so save time can describe it (appid/title/instance) and so a later
+ * registration can resolve a saved rail predecessor / overlay host against it
+ * (layout Phase 6). */
 typedef struct RegisteredClient {
 	char appid[128];
 	char title[128];
@@ -197,6 +199,22 @@ next_instance_for(const char *appid, const char *title)
 	return 0;
 }
 
+/* Find the client registered this run under a given (identity,instance) key —
+ * the reverse of the save side, used to relink a saved rail predecessor /
+ * overlay host once both endpoints have mapped (layout Phase 6). Re-added from
+ * the removed connection-graph reconnect, which needed the same lookup. */
+static RegisteredClient *
+registered_find_by_key(const char *appid, const char *title, int instance)
+{
+	const char *key = identity_key(appid, title);
+	RegisteredClient *r;
+
+	for (r = registered_clients; r; r = r->next)
+		if (r->instance == instance && strcmp(identity_key(r->appid, r->title), key) == 0)
+			return r;
+	return NULL;
+}
+
 static RegisteredClient *
 registered_find_by_client(void *client_ptr)
 {
@@ -335,6 +353,16 @@ loaded_state_from_object(const char *obj)
 	 * restored 0 would render a window fully invisible. */
 	state->opacity = json_find_float(obj, "opacity", 1.0f);
 	json_find_string(obj, "cmd", state->cmd, sizeof(state->cmd));
+	/* Rail order + overlay attachment (layout Phase 6). Empty appid = no edge
+	 * (off-rail window / rail head / non-overlay), matching the save side. */
+	json_find_string(obj, "rail_prev_appid", state->rail_prev_appid, sizeof(state->rail_prev_appid));
+	json_find_string(obj, "rail_prev_title", state->rail_prev_title, sizeof(state->rail_prev_title));
+	state->rail_prev_instance = json_find_int(obj, "rail_prev_instance", 0);
+	json_find_string(obj, "overlay_host_appid", state->overlay_host_appid, sizeof(state->overlay_host_appid));
+	json_find_string(obj, "overlay_host_title", state->overlay_host_title, sizeof(state->overlay_host_title));
+	state->overlay_host_instance = json_find_int(obj, "overlay_host_instance", 0);
+	state->overlay_off_x = json_find_int(obj, "overlay_off_x", 0);
+	state->overlay_off_y = json_find_int(obj, "overlay_off_y", 0);
 }
 
 static void
@@ -680,6 +708,81 @@ persistence_register_client(void *client_ptr)
 		resize(c, c->geom, 0);
 	}
 
+	/* Rail + overlay relink (layout Phase 6), order-independent: an edge names
+	 * a predecessor/host by identity, and either endpoint may map first, so we
+	 * resolve both directions each time a client registers — whichever of the
+	 * pair maps second completes the link. Geometry was already restored above
+	 * (absolute saved positions), so the rail splice is linkage-only:
+	 * rail_insert_after() deliberately doesn't reposition, matching that. */
+	{
+		const char *self_key = identity_key(reg->appid, reg->title);
+		LoadedStateNode *ln;
+
+		/* (a) This client's own saved rail predecessor / overlay host, if that
+		 * partner has already registered this run. */
+		if (state && state->rail_prev_appid[0]) {
+			RegisteredClient *pred = registered_find_by_key(
+				state->rail_prev_appid, state->rail_prev_title, state->rail_prev_instance);
+			/* Splice only if c isn't already on the rail (its predecessor may
+			 * have relinked it in direction (b) above, on an earlier register). */
+			if (pred && pred->client != c
+					&& !c->rail_prev && !c->rail_next && rail_head != c)
+				rail_insert_after((Client *)pred->client, c);
+		}
+		if (state && state->overlay_host_appid[0] && !c->overlay_host) {
+			RegisteredClient *host = registered_find_by_key(
+				state->overlay_host_appid, state->overlay_host_title,
+				state->overlay_host_instance);
+			if (host && host->client != c) {
+				Client *h = host->client;
+				/* Mirror overlay_pin()'s core: off the rail, camera-bypassed,
+				 * tracking the host at the saved offset. Don't re-snap geometry
+				 * here — the child's own saved geom already restored, and the
+				 * host's next move re-runs the follow hook. */
+				rail_remove(c);
+				c->overlay_host = h;
+				c->overlay_off_x = state->overlay_off_x;
+				c->overlay_off_y = state->overlay_off_y;
+				c->isfloating = 1;
+			}
+		}
+
+		/* (b) Any already-registered client that saved *this* client as its
+		 * rail predecessor / overlay host, and hasn't been relinked yet. */
+		for (ln = loaded_states; ln; ln = ln->next) {
+			SavedClientState *ss = &ln->state;
+			RegisteredClient *succ;
+
+			if (ss->rail_prev_appid[0]
+					&& ss->rail_prev_instance == instance
+					&& strcmp(identity_key(ss->rail_prev_appid, ss->rail_prev_title),
+						self_key) == 0) {
+				succ = registered_find_by_key(ss->appid, ss->title, ss->instance);
+				if (succ && succ->client != c) {
+					Client *sc = succ->client;
+					if (!sc->rail_prev && !sc->rail_next && rail_head != sc)
+						rail_insert_after(c, sc);
+				}
+			}
+			if (ss->overlay_host_appid[0]
+					&& ss->overlay_host_instance == instance
+					&& strcmp(identity_key(ss->overlay_host_appid, ss->overlay_host_title),
+						self_key) == 0) {
+				succ = registered_find_by_key(ss->appid, ss->title, ss->instance);
+				if (succ && succ->client != c) {
+					Client *sc = succ->client;
+					if (!sc->overlay_host) {
+						rail_remove(sc);
+						sc->overlay_host = c;
+						sc->overlay_off_x = ss->overlay_off_x;
+						sc->overlay_off_y = ss->overlay_off_y;
+						sc->isfloating = 1;
+					}
+				}
+			}
+		}
+	}
+
 	return applied_geom;
 }
 
@@ -797,6 +900,31 @@ save_client_cb(const SavedClientState *unused, void *data)
 	 * and respawning them again here would double them. */
 	fputs(",\"cmd\":", ctx->fp);
 	json_escape(ctx->fp, (reg && !c->ispanel) ? reg->cmd : "");
+
+	/* Rail predecessor (layout Phase 6): the identity of c->rail_prev, so the
+	 * 1D order relinks on load. Off-rail windows (rail_prev NULL) and the rail
+	 * head write an empty appid — no edge. Keyed by the predecessor's REGISTERED
+	 * snapshot (like everything else in the file), so an unregistered predecessor
+	 * (shouldn't happen for a live rail member) degrades to no edge rather than a
+	 * fresh, inconsistent title query. */
+	{
+		RegisteredClient *rp = c->rail_prev ? registered_find_by_client(c->rail_prev) : NULL;
+		fputs(",\"rail_prev_appid\":", ctx->fp); json_escape(ctx->fp, rp ? rp->appid : "");
+		fputs(",\"rail_prev_title\":", ctx->fp); json_escape(ctx->fp, rp ? rp->title : "");
+		fprintf(ctx->fp, ",\"rail_prev_instance\":%d", rp ? rp->instance : 0);
+	}
+
+	/* Overlay host (layout Phase 6): the identity of c->overlay_host + the
+	 * follow offset, so the child re-pins to the same host on load. A
+	 * non-overlay (overlay_host NULL) writes an empty appid — no attachment. */
+	{
+		RegisteredClient *rh = c->overlay_host ? registered_find_by_client(c->overlay_host) : NULL;
+		fputs(",\"overlay_host_appid\":", ctx->fp); json_escape(ctx->fp, rh ? rh->appid : "");
+		fputs(",\"overlay_host_title\":", ctx->fp); json_escape(ctx->fp, rh ? rh->title : "");
+		fprintf(ctx->fp, ",\"overlay_host_instance\":%d", rh ? rh->instance : 0);
+		fprintf(ctx->fp, ",\"overlay_off_x\":%d,\"overlay_off_y\":%d",
+			c->overlay_off_x, c->overlay_off_y);
+	}
 	fputs("}", ctx->fp);
 }
 

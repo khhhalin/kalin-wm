@@ -106,5 +106,17 @@ never advances) to origin `(900,500)` made the follow hook fire — child ended 
 `(920,520)` = host `(900,500)` + `(20,20)`. The child tracked the host at the fixed
 offset.
 
+**Overlay attachment now persists (layout Phase 6, 2026-08-13).** An overlay
+child saves its host's `(appid,title,instance)` identity + `overlay_off_{x,y}`;
+on load, `persistence_register_client()` re-attaches it order-independently (when
+both child and host have registered this run) by mirroring `overlay_pin()`'s core
+— off the rail, `overlay_host` + offsets set, `isfloating`. `overlay_pin()` now
+triggers a `persistence_save()`. A saved child whose host never maps this run
+stays a free float. Verified in the Phase 6 nested round-trip (a child pinned to
+railC at (25,25) re-pinned to railC at (25,25) after a reboot). Float-under-cursor
+windows carry no extra persistence — they're plain `isfloating` windows and restore
+via the existing geometry save. See [[persistence]] ("Rail order + overlay
+attachment").
+
 See also: [[rail]] · [[layout-rethink]] · [[layout-impl]] · [[ipc-socket]] ·
 [[floating-windows]] · [[crop-mode]] · [[directional-focus]] · [[keybindings]]
