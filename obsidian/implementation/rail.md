@@ -109,10 +109,14 @@ just flips the bit (the effect shows the next time the window grows).
 
 - ~~**Phase 3** — growing a window pushes the rail~~ **DONE 2026-08-13** — see
   "Growing pushes the rail" above (`rail_push_growth()`, `allow_overlap` live).
-- **Phase 4** — float-under-cursor (menu spawns), the one missing primitive
-  (needs a shell→compositor `float-next` hint).
-- **Phase 5** — attached overlay (child→host follow), reusing the freed
-  `Super+L`.
+- ~~**Phase 4** — float-under-cursor (menu spawns)~~ **DONE 2026-08-13** — a
+  menu-spawn floats under the cursor off the rail via the `float-next` hint; see
+  [[float-overlay]]. A rail insert never touches a float (`isfloating`).
+- ~~**Phase 5** — attached overlay (child→host follow)~~ **DONE 2026-08-13** —
+  a child pinned to a host tracks it on every move (`overlay_host` + offset, one
+  `resize()` hook); `overlay_pin()` `rail_remove()`s the child so an overlay is
+  never on the rail. On the freed `Super+L` + the `overlay-pin` IPC. See
+  [[float-overlay]].
 - **Phase 6** — **rail-order persistence.** NOT folded into Phase 2: the rail is
   rebuilt only from live spawns, so a restart currently restores window
   positions/sizes/crop/opacity/camera (unchanged) but **not** rail linkage.

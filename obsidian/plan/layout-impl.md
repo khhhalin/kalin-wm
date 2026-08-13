@@ -1,6 +1,6 @@
 # Layout implementation plan — rail + overlay-attach
 
-**Status: IN PROGRESS. Phase 0 + Phase 1 + Phase 2 + Phase 3 DONE (2026-08-13); Phases 4–6 pending.**
+**Status: IN PROGRESS. Phase 0–5 DONE (2026-08-13); Phase 6 (persistence) pending.**
 Implements the decided model in [[layout-rethink]]. Code-grounded (file:line from a
 planning pass; line numbers drift as phases land). See [[parallel-tracks]].
 
@@ -110,16 +110,31 @@ swap needed.
   verified — rail placed/gap-closed across map+unmap with no asserts (growth
   itself is **unit-tested, not runtime-tested** — no headless input injection /
   IPC resize command to drive a live grow). As-built: [[rail]].
-- **Phase 4 — Float-under-cursor** (menu spawns). **The one genuinely missing primitive:** no
-  compositor signal distinguishes keyboard vs menu spawn (both arrive via the tmux `spawn` path).
-  Needs a shell→compositor pre-spawn hint — recommend a dockprep-style `float-next <appid>` IPC
-  consumed in `mapnotify` (mirrors `dockprep_consume`). Placement reuses the cursor-center branch
-  (`dwl.c:2135`) + a non-obscuring offset rule (to spec).
-- **Phase 5 — Attached overlay** (child→host follow). Add the fields + a "pin to host" entry
-  (IPC + WindowActions action, reuse the freed Super+L). The follow is **one hook at the end of
-  `resize()`**: walk `clients` for `overlay_host == c`, resize each to `host.origin + offset`
-  (guard re-entrancy). Crop+opacity already apply off the child's geom → the Discord-on-Minecraft
-  case works with no crop/opacity code changes. Exclude overlays from rail + directional-focus.
+- **Phase 4 — Float-under-cursor** (menu spawns) — **DONE 2026-08-13** (branch
+  `layout-phase45-float-overlay`). `modules/dock/floatprep.c` (a verbatim
+  dockprep twin) + the `float-next <appid>` IPC arm a one-shot hint consumed in
+  `mapnotify`; on a match the window is marked `isfloating` (off-rail,
+  camera-bypassed) and placed under the cursor with a non-obscuring offset (a
+  corner `FLOAT_CURSOR_MARGIN` clear of the cursor, expanding toward the roomier
+  side). Build clean; `test_float` 5 cases; nested smoke — `float-next foot`
+  mapped off-rail near the cursor, and a rail window spawned afterward spliced
+  past it (proving it left the chain). As-built: [[float-overlay]].
+- **Phase 5 — Attached overlay** (child→host follow) — **DONE 2026-08-13** (same
+  branch). `Client.overlay_host` + `overlay_off_x/y`; one follow hook at the end
+  of `resize()` (walk `clients` for `overlay_host == c`, resize each to
+  `host.origin + offset`, `overlay_following` re-entrancy guard) — covers every
+  host-move source. Entry: `overlay-pin <child-id> <host-id> [dx dy]` IPC +
+  `ACT_OVERLAY_PIN` arm-then-click on the freed **Super+L**. `overlay_pin()`
+  `rail_remove()`s the child; excluded from `cone_search_focus`; children nulled
+  on host close. Crop+opacity apply off the child's geom → the Discord case is
+  free. Build clean; `test_overlay` 6 cases; nested smoke — pin (20,20), host
+  moved to (900,500), child tracked to (920,520). As-built: [[float-overlay]].
+  **Follow-ups (not done):** (1) the user's `~/.config/kalin-wm/binds.conf` has
+  no `overlay-pin` line — the bind-engine **coverage check `die()`s at startup**
+  on a known-but-uncovered action, so **this branch is not deploy-safe** until
+  that file gains `bind Super+l -> overlay-pin` (or `unbind overlay-pin`);
+  editing the live config wasn't authorized here. (2) a shell "Pin" button in
+  the WindowActions menu to drive `overlay-pin`/`float-next` from the UI.
 - **Phase 6 — Persist rail + overlay** (drop `connections`; add rail linkage + overlay host-key +
   offset via the existing appid/title/instance identity keys; rebuild order-independently on load).
 

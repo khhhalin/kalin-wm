@@ -20,6 +20,8 @@ tests/test_connection_graph
 tests/test_growth_overlap
 tests/test_viewport_ops
 tests/test_rail
+tests/test_float
+tests/test_overlay
 __pycache__/
 tools/vault-review/state*.json
 

@@ -86,6 +86,8 @@ typedef enum {
     ACT_TOGGLE_OVERLAP,    /* none: toggle the "grow over neighbors" flag. Dormant
                              * since the connection graph was removed; a rail-based
                              * grow-push re-reads it in layout rethink Phase 3. */
+    ACT_OVERLAY_PIN,       /* none: arm the focused window as an overlay child;
+                             * the next-clicked window becomes its host (Phase 5) */
     ACT_TOGGLE_PAPER,      /* none: toggle paper-mode reading tint on the focused
                              * window (see client_apply_paper(), obsidian/plan/shaders.md) */
     ACT_PAPER_YELLOW,      /* f: ramp the focused window's papyrus knob (0..1) by

@@ -369,6 +369,21 @@ struct Client {
      * rail_head (in dwl.c) anchors the leftmost member. Replaces the removed
      * 8-octant neighbor[] graph — one dimension, one default rail. */
     Client *rail_prev, *rail_next;
+
+    /* Attached overlay: a directed child->host pin + world-space offset (the
+     * "attached overlay" bucket from layout-rethink.md, Phase 5). A child with
+     * overlay_host != NULL tracks that host: child.geom.{x,y} = host.geom.{x,y}
+     * + overlay_off. The follow is one hook at the end of resize() — it covers
+     * every host-move source (drag, rail-swap, gap-close, grow-push, setmon,
+     * restore). Directed only (never the reverse); a host may have several
+     * children; a child is never its own host. Crop and per-window opacity
+     * already apply off the child's own geom/opacity, so once the geom tracks
+     * the host they work with no extra code (the Discord-on-Minecraft case).
+     * An overlay child is off the rail and excluded from directional focus.
+     * NULL'd on the host's close (unmapnotify) so the child becomes a free
+     * float rather than dangling. */
+    Client *overlay_host;
+    int overlay_off_x, overlay_off_y;
 };
 
 /**
@@ -489,6 +504,9 @@ struct SessionLock {
 #define SCREEN_TO_WORLD_X(mon_, sx) (((float)(sx) - (float)((mon_) ? (mon_)->m.x : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.x : 0.0f))
 #define SCREEN_TO_WORLD_Y(mon_, sy) (((float)(sy) - (float)((mon_) ? (mon_)->m.y : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.y : 0.0f))
 #define SPAWN_GAP 20
+/* Margin between the cursor and the nearest corner of a float-under-cursor
+ * (menu-spawned) window, so the clicked point stays visible (layout Phase 4). */
+#define FLOAT_CURSOR_MARGIN 24
 
 /**
  * Wallpaper - stationary tiled background scene state (owned by dwl.c).
@@ -728,8 +746,12 @@ void setmaximized(Client *c, int maximized);
 void setminimized(Client *c, int minimized);
 void setdocked(Client *c, int docked, struct wlr_box rect);
 Client *client_find_by_appid(const char *appid);
+Client *client_find_by_id(uint32_t id);
+int overlay_pin(Client *child, Client *host, int dx, int dy);
 void dockprep_register(const char *appid, struct wlr_box rect);
 int dockprep_consume(const char *appid, struct wlr_box *out);
+void floatprep_register(const char *appid);
+int floatprep_consume(const char *appid);
 Monitor *monitor_find_by_name(const char *name);
 int ipc_set_output(const char *name, int width, int height, float refresh,
         float scale, int x, int y, int enabled);

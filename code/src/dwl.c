@@ -104,6 +104,12 @@ Client *dock_hover_client;
 void dockprep_register(const char *appid, struct wlr_box rect);
 int dockprep_consume(const char *appid, struct wlr_box *out);
 
+/* floatprep table lives in modules/dock/floatprep.c (#included below); these
+ * forward-decls satisfy mapnotify()'s earlier floatprep_consume() call (the
+ * menu-spawn float-under-cursor hint, layout rethink Phase 4). */
+void floatprep_register(const char *appid);
+int floatprep_consume(const char *appid);
+
 /* Camera defaults for a fresh monitor (multi-camera: every Monitor owns its
  * own `cam` Viewport over the shared world — see obsidian/multi-camera.md;
  * initialized in createmon()). */
@@ -291,6 +297,8 @@ static void setontop(Client *c, int ontop);
 void setminimized(Client *c, int minimized);
 void setdocked(Client *c, int docked, struct wlr_box rect);
 Client *client_find_by_appid(const char *appid);
+Client *client_find_by_id(uint32_t id);
+int overlay_pin(Client *child, Client *host, int dx, int dy);
 void resizefocused(const Arg *arg);
 void fitwidth(const Arg *arg);
 void fitheight(const Arg *arg);
@@ -311,6 +319,7 @@ static void togglefullscreen(const Arg *arg);
 void togglemaximized(const Arg *arg);
 void toggleontop(const Arg *arg);
 void toggleoverlap(const Arg *arg);
+static void overlay_pin_arm(const Arg *arg);
 static void togglepaper(const Arg *arg);
 static void paperyellow(const Arg *arg);
 static void client_apply_paper(Client *c);
@@ -380,6 +389,12 @@ static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 static int resize_anchor_x, resize_anchor_y; /* world-space, fixed corner opposite the grab */
+
+/* Attached-overlay follow (layout Phase 5): re-entrancy guard for resize()'s
+ * child-follow walk, and the pending child armed by ACT_OVERLAY_PIN (the
+ * interactive Super+L arm-then-click: the next-clicked window becomes its host). */
+static int overlay_following;
+static Client *pending_overlay_child;
 
 struct wlr_output_layout *output_layout;
 struct wlr_box sgeom;  /* extern; consumed by modules/session_lock.c */
@@ -850,6 +865,19 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		/* Change focus if the button was _pressed_ over a client */
 		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
+		/* Overlay-pin arm-then-click (Phase 5): an armed child (Super+L) pins
+		 * to whatever real window is clicked next, at their current offset.
+		 * Consumed here before the normal focus/grab handling; a click on the
+		 * armed child itself or a panel just cancels the arming. */
+		if (pending_overlay_child) {
+			Client *child = pending_overlay_child;
+			pending_overlay_child = NULL;
+			if (c && c != child && !c->ispanel && !client_is_unmanaged(c)) {
+				overlay_pin(child, c, child->geom.x - c->geom.x,
+						child->geom.y - c->geom.y);
+				return;
+			}
+		}
 		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			focusclient(c, 1);
 			/* Clicking a window while the overview is open both focuses it
@@ -1795,6 +1823,7 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_FIT_HEIGHT: fitheight(arg); break;
 	case ACT_TOGGLE_ONTOP:     toggleontop(arg); break;
 	case ACT_TOGGLE_OVERLAP:   toggleoverlap(arg); break;
+	case ACT_OVERLAY_PIN:      overlay_pin_arm(arg); break;
 	case ACT_TOGGLE_PAPER:     togglepaper(arg); break;
 	case ACT_PAPER_YELLOW:     paperyellow(arg); break;
 	case ACT_TOGGLE_OVERVIEW:   toggle_overview(arg); break;
@@ -2046,9 +2075,11 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		struct wlr_box dockprep_rect = {0};
 		int dockprep_matched;
+		int floatprep_matched;
 
 		applyrules(c);
 		dockprep_matched = dockprep_consume(client_get_appid(c), &dockprep_rect);
+		floatprep_matched = floatprep_consume(client_get_appid(c));
 		p = (spawn_parent_candidate && spawn_parent_candidate->mon == c->mon)
 				? spawn_parent_candidate : NULL;
 
@@ -2056,6 +2087,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * (see its declaration above) — the shell told us in advance this
 		 * app_id is about to be docked into an exact rect, so skip straight
 		 * to setdocked() instead of picking any floating position at all;
+		 * (0b) a pending "float-next" request (Phase 4) — a menu-spawned
+		 * window floats under the cursor, off the rail (see that branch);
 		 * (1) a persisted position from a previous run of this exact app
 		 * instance (persistence_register_client() matches by appid+title+
 		 * spawn-order — two simultaneously open windows of the same app,
@@ -2066,6 +2099,40 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * default (monitor center) for the very first window. */
 		if (c->mon && dockprep_matched) {
 			setdocked(c, 1, dockprep_rect);
+		} else if (c->mon && floatprep_matched) {
+			/* Float-under-cursor (layout Phase 4): the shell armed a
+			 * "float-next <appid>" hint before spawning this window from the
+			 * right-click menu, so it floats near the cursor instead of
+			 * joining the rail. Mark it isfloating (camera-bypassed, exempt
+			 * from rail insertion — rail_prev/rail_next stay NULL) and place
+			 * it non-obscuringly: the corner nearest the cursor sits a small
+			 * margin AWAY from the click, expanding toward whichever side has
+			 * more room, so the point the user clicked stays visible. */
+			int dw = c->geom.width, dh = c->geom.height;
+			int cx = (int)SCREEN_TO_WORLD_X(c->mon, cursor->x);
+			int cy = (int)SCREEN_TO_WORLD_Y(c->mon, cursor->y);
+			/* Monitor extent in world coords (room test for the expand side). */
+			int mx = (int)SCREEN_TO_WORLD_X(c->mon, c->mon->w.x);
+			int my = (int)SCREEN_TO_WORLD_Y(c->mon, c->mon->w.y);
+			int mw = (int)(c->mon->w.width / MON_ZOOM_SAFE(c->mon));
+			int mh = (int)(c->mon->w.height / MON_ZOOM_SAFE(c->mon));
+
+			c->isfloating = 1;
+			/* Expand toward the roomier side of the cursor: if there's more
+			 * room to the right, the window's left edge starts right of the
+			 * cursor (offset by FLOAT_CURSOR_MARGIN so the click isn't
+			 * covered); otherwise its right edge ends left of the cursor. */
+			if ((mx + mw) - cx >= cx - mx)
+				c->geom.x = snap_grid(cx + FLOAT_CURSOR_MARGIN);
+			else
+				c->geom.x = snap_grid(cx - FLOAT_CURSOR_MARGIN - dw);
+			if ((my + mh) - cy >= cy - my)
+				c->geom.y = snap_grid(cy + FLOAT_CURSOR_MARGIN);
+			else
+				c->geom.y = snap_grid(cy - FLOAT_CURSOR_MARGIN - dh);
+			resize(c, c->geom, 0);
+			wlr_log(WLR_DEBUG, "float: placed %u at (%d,%d) near cursor (%d,%d), off-rail",
+				c->id, c->geom.x, c->geom.y, cx, cy);
 		} else if (c->mon) {
 			has_saved_geom = persistence_register_client(c);
 			if (has_saved_geom) {
@@ -2564,6 +2631,7 @@ quit(const Arg *arg)
 #include "modules/spawn/tmux_spawn.c"
 #include "modules/output/output.c"
 #include "modules/dock/dockprep.c"
+#include "modules/dock/floatprep.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
@@ -2830,6 +2898,33 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* Scale the displayed buffer to match the zoomed frame. */
 	client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
+
+	/* Attached-overlay follow (layout Phase 5): every window position flows
+	 * through resize(), so this single hook makes any overlay child track its
+	 * host no matter what moved the host — drag, rail-swap, gap-close,
+	 * grow-push, setmon, persistence restore. Walk clients for any child
+	 * pinned to `c` and reposition it to the host's origin + its fixed offset,
+	 * keeping the child's own size (crop/opacity apply off the child's geom, so
+	 * they follow for free). The recursion guard (overlay_following) is the
+	 * feedback loop's stop: this resize() of the child would otherwise re-enter
+	 * the walk; a child is never its own host, and hosts don't chain, so one
+	 * level of suppression is enough. */
+	if (!overlay_following) {
+		Client *child;
+		overlay_following = 1;
+		wl_list_for_each(child, &clients, link) {
+			if (child->overlay_host != c || child == c)
+				continue;
+			resize(child, (struct wlr_box){
+				.x = c->geom.x + child->overlay_off_x,
+				.y = c->geom.y + child->overlay_off_y,
+				.width = child->geom.width,
+				.height = child->geom.height}, 0);
+			wlr_log(WLR_DEBUG, "overlay: child %u -> (%d,%d) tracking host %u (%d,%d)",
+				child->id, child->geom.x, child->geom.y, c->id, c->geom.x, c->geom.y);
+		}
+		overlay_following = 0;
+	}
 }
 
 /* Helper to check if a float is close to an integer */
@@ -3468,6 +3563,65 @@ client_find_by_appid(const char *appid)
 	return NULL;
 }
 
+/* Find a mapped, non-panel client by its stable Client.id (the identity the IPC
+ * "clients" feed and overlay-pin address windows by). NULL if none. */
+Client *
+client_find_by_id(uint32_t id)
+{
+	Client *c;
+
+	wl_list_for_each(c, &clients, link) {
+		if (c->id == id && c->mon && client_surface(c)->mapped && !c->ispanel)
+			return c;
+	}
+	return NULL;
+}
+
+/* Pin `child` as an attached overlay of `host` at world-space offset (dx,dy):
+ * child.geom = host.geom.origin + (dx,dy), tracked on every host move via the
+ * follow hook in resize() (layout Phase 5, obsidian/implementation/float-overlay.md).
+ * Directed child->host only; refuses a self-pin and a pin that would chain
+ * (host is itself an overlay child) — keeping the "child is never its own host,
+ * hosts don't chain" invariant the resize() re-entrancy guard relies on. The
+ * child leaves the rail (an overlay is off-rail decoration; rail_remove() closes
+ * the gap and nulls its rail pointers) and is snapped to the host immediately.
+ * Returns 1 on success, 0 if refused. */
+int
+overlay_pin(Client *child, Client *host, int dx, int dy)
+{
+	if (!child || !host || child == host)
+		return 0;
+	if (host->overlay_host) /* no chaining: the host must not itself be a child */
+		return 0;
+
+	rail_remove(child); /* off-rail: an overlay tracks a host, not the row */
+	child->overlay_host = host;
+	child->overlay_off_x = dx;
+	child->overlay_off_y = dy;
+	child->isfloating = 1; /* camera-bypassed, like the other free/float bucket */
+
+	/* Snap into place now so it's correct before the host next moves. */
+	resize(child, (struct wlr_box){
+		.x = host->geom.x + dx, .y = host->geom.y + dy,
+		.width = child->geom.width, .height = child->geom.height}, 0);
+	status_mark_dirty();
+	return 1;
+}
+
+/* Super+L (ACT_OVERLAY_PIN): arm the focused window as an overlay child — the
+ * next window clicked becomes its host, pinned at the offset they currently sit
+ * at (buttonpress consumes pending_overlay_child). The interactive companion to
+ * the direct `overlay-pin` IPC command; re-arming just replaces the pending
+ * child. No-op with nothing focused. */
+static void
+overlay_pin_arm(const Arg *arg)
+{
+	Client *c = selmon ? focustop(selmon) : NULL;
+	if (!c || c->ispanel)
+		return;
+	pending_overlay_child = c;
+}
+
 /* Pin a client into a shell-panel-owned screen rect: borderless, exempt from
  * the world/camera transform (see client_apply_zoom_frame()'s matching
  * bypass), geometry driven by whatever `rect` the IPC "dock" command last
@@ -3993,6 +4147,21 @@ unmapnotify(struct wl_listener *listener, void *data)
 		 * (niri-style, rail_remove()). A window that was never on the rail
 		 * (free/float/overlay) leaves its hole untouched, as before. */
 		rail_remove(c);
+
+		/* Attached-overlay teardown (layout Phase 5): if this window was a host,
+		 * null every child's overlay_host so they become free floats rather than
+		 * tracking a destroyed pointer — the same dangling-ref discipline the
+		 * rail uses. (A closing child needs nothing: its own overlay_host ref
+		 * dies with it.) */
+		{
+			Client *child;
+			wl_list_for_each(child, &clients, link)
+				if (child->overlay_host == c)
+					child->overlay_host = NULL;
+		}
+		/* Also drop a pending interactive pin whose armed child is this window. */
+		if (pending_overlay_child == c)
+			pending_overlay_child = NULL;
 
 		persistence_unregister_client(c);
 
