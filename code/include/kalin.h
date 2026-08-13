@@ -281,14 +281,14 @@ struct Client {
     int isontop;                /* "always on top" pin: stays above other
                                   * windows regardless of subsequent focus
                                   * elsewhere. */
-    int allow_overlap;          /* "let this window grow over its neighbors"
-                                  * flag, toggled by Super+Shift+o and broadcast
-                                  * to the shell. Dormant since the connection
-                                  * graph was removed (its only consumer,
-                                  * resolve_growth_overlap(), went with it);
-                                  * a rail-based grow-push re-reads it in the
-                                  * layout rethink's Phase 3 (see
-                                  * obsidian/plan/layout-impl.md). */
+    int allow_overlap;          /* "let this window grow over its rail
+                                  * successors instead of pushing them" flag,
+                                  * toggled by Super+Shift+o and broadcast to
+                                  * the shell. Read by rail_push_growth() (layout
+                                  * Phase 3): when set, a growing rail member's
+                                  * push is skipped, so it overlaps the windows
+                                  * to its right rather than shoving them along
+                                  * the rail. See obsidian/implementation/rail.md. */
     int isurgent;               /* Urgency hint */
     int isfullscreen;           /* Fullscreen state */
     int ismaximized;            /* Maximize-toggle (Super+f): fills mon->w, keeps
@@ -910,6 +910,7 @@ void focus_directional(const Arg *arg);
  * bound actions. See obsidian/implementation/rail.md. */
 void rail_insert_after(Client *p, Client *c);
 void rail_open_gap_after(Client *c);
+void rail_push_growth(Client *grown);
 void rail_remove(Client *c);
 void rail_swap_dir(const Arg *arg);
 void rail_focus_dir(const Arg *arg);

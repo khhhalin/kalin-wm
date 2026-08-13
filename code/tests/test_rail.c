@@ -16,7 +16,9 @@
 
 typedef struct MockClient {
     int id;                 /* stable label so tests can spell out orderings */
+    int x;                  /* world x — exercised by the grow-push math below */
     int width;
+    int allow_overlap;      /* grow-over-successors flag (Phase 3) */
     struct MockClient *rail_prev, *rail_next;
 } Client;
 
@@ -137,6 +139,31 @@ rail_swap(Client *c, int right) /* right: 1 = swap with rail_next, 0 = rail_prev
     else if (rail_head == n) rail_head = c;
 }
 
+/* Mirror of rail.c's grow-push (Phase 3): the real one slides successors via
+ * client_set_target_geom() on their world geom; here it moves the mock's ->x.
+ * Same overlap-based math — push the whole successor chain right by the amount
+ * `grown`'s right edge (plus the gap) overruns its first successor's left. */
+static void
+rail_push_growth(Client *grown)
+{
+    Client *first, *s;
+    int overlap;
+
+    if (!grown || grown->allow_overlap)
+        return;
+    if (!grown->rail_prev && !grown->rail_next && rail_head != grown)
+        return;
+
+    first = grown->rail_next;
+    if (!first)
+        return;
+
+    overlap = (grown->x + grown->width + SPAWN_GAP) - first->x;
+    if (overlap > 0)
+        for (s = grown->rail_next; s; s = s->rail_next)
+            s->x += overlap;
+}
+
 /* ---- helpers ---------------------------------------------------------- */
 
 static Client *
@@ -146,6 +173,19 @@ mk(int id)
     c->id = id;
     c->width = 100;
     return c;
+}
+
+/* Lay the current rail out left-to-right at x=0, each member SPAWN_GAP past the
+ * previous one's right edge — the gap-free row the grow-push then perturbs. */
+static void
+layout_rail(void)
+{
+    Client *c;
+    int x = 0;
+    for (c = rail_head; c; c = c->rail_next) {
+        c->x = x;
+        x += c->width + SPAWN_GAP;
+    }
 }
 
 /* Walk the rail head->tail into a string of ids like "1-2-3"; also verifies
@@ -307,6 +347,110 @@ TEST(swap_at_end_is_noop)
     free(a); free(b);
 }
 
+/* ---- grow-push tests (Phase 3) ---------------------------------------- */
+
+TEST(grow_pushes_single_successor)
+{
+    /* 1-2 gap-free (2 at x=120). Grow 1 by 80 -> its right edge overruns 2 by
+     * 80, so 2 slides right by exactly 80 (200), restoring the gap. */
+    Client *a = mk(1), *b = mk(2);
+    reset();
+    rail_insert_after(a, b);
+    layout_rail();                 /* 1@0(w100), 2@120 */
+    a->width += 80;                /* 1 now 180 wide, right edge 180 */
+    rail_push_growth(a);
+    ASSERT(b->x == 200);           /* 180 + SPAWN_GAP(20) */
+    free(a); free(b);
+}
+
+TEST(grow_pushes_whole_chain_by_overlap)
+{
+    /* 1-2-3 gap-free (2@120, 3@240). Grow 1 by 50 -> overlap 50; both
+     * successors shift right by 50, preserving their mutual spacing. */
+    Client *a = mk(1), *b = mk(2), *c = mk(3);
+    reset();
+    rail_insert_after(a, b);
+    rail_insert_after(b, c);
+    layout_rail();                 /* 1@0, 2@120, 3@240 */
+    a->width += 50;                /* right edge 150; 150+20 - 120 = 50 overlap */
+    rail_push_growth(a);
+    ASSERT(b->x == 170);           /* 120 + 50 */
+    ASSERT(c->x == 290);           /* 240 + 50, spacing preserved */
+    free(a); free(b); free(c);
+}
+
+TEST(grow_middle_pushes_only_later)
+{
+    /* Growing a middle member pushes only its successors, not its predecessor. */
+    Client *a = mk(1), *b = mk(2), *c = mk(3);
+    reset();
+    rail_insert_after(a, b);
+    rail_insert_after(b, c);
+    layout_rail();                 /* 1@0, 2@120, 3@240 */
+    b->width += 60;                /* 2 right edge 280; 280+20 - 240 = 60 overlap */
+    rail_push_growth(b);
+    ASSERT(a->x == 0);             /* predecessor untouched */
+    ASSERT(c->x == 300);           /* 240 + 60 */
+    free(a); free(b); free(c);
+}
+
+TEST(nogrow_with_slack_does_not_push)
+{
+    /* Successor sits with slack (further right than the minimum gap): a growth
+     * that stays within that slack leaves it put, and the push is idempotent. */
+    Client *a = mk(1), *b = mk(2);
+    reset();
+    rail_insert_after(a, b);
+    layout_rail();                 /* 1@0(w100), 2@120 */
+    b->x = 200;                    /* hand-nudged right: 80px of slack */
+    a->width += 40;                /* right edge 140; 140+20 - 200 = -40 (no overlap) */
+    rail_push_growth(a);
+    ASSERT(b->x == 200);           /* still fits, unmoved */
+    rail_push_growth(a);           /* idempotent */
+    ASSERT(b->x == 200);
+    free(a); free(b);
+}
+
+TEST(allow_overlap_suppresses_push)
+{
+    /* Flagged head grows OVER its successor: no shift at all (Phase 3 semantics). */
+    Client *a = mk(1), *b = mk(2);
+    reset();
+    rail_insert_after(a, b);
+    layout_rail();                 /* 1@0, 2@120 */
+    a->allow_overlap = 1;
+    a->width += 200;               /* huge overrun, but push suppressed */
+    rail_push_growth(a);
+    ASSERT(b->x == 120);           /* unmoved — 1 overlaps it */
+    free(a); free(b);
+}
+
+TEST(grow_tail_is_noop)
+{
+    /* Growing the last member has no successors to push. */
+    Client *a = mk(1), *b = mk(2);
+    reset();
+    rail_insert_after(a, b);
+    layout_rail();
+    b->width += 100;
+    rail_push_growth(b);           /* must not crash / touch anything */
+    ASSERT(a->x == 0 && b->x == 120);
+    free(a); free(b);
+}
+
+TEST(grow_offrail_is_noop)
+{
+    /* A window never on the rail: push is a no-op even with a stray width. */
+    Client *a = mk(1), *b = mk(2), *lone = mk(7);
+    reset();
+    rail_insert_after(a, b);
+    layout_rail();
+    lone->x = 500; lone->width = 400;
+    rail_push_growth(lone);        /* off-rail guard */
+    ASSERT(a->x == 0 && b->x == 120);
+    free(a); free(b); free(lone);
+}
+
 int
 main(void)
 {
@@ -321,6 +465,13 @@ main(void)
     RUN_TEST(swap_right_middle);
     RUN_TEST(swap_left_head_moves_head);
     RUN_TEST(swap_at_end_is_noop);
+    RUN_TEST(grow_pushes_single_successor);
+    RUN_TEST(grow_pushes_whole_chain_by_overlap);
+    RUN_TEST(grow_middle_pushes_only_later);
+    RUN_TEST(nogrow_with_slack_does_not_push);
+    RUN_TEST(allow_overlap_suppresses_push);
+    RUN_TEST(grow_tail_is_noop);
+    RUN_TEST(grow_offrail_is_noop);
 
     printf("\n===================================\n");
     printf("Results: %d passed, %d total\n", test_passed, test_total);

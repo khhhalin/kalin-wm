@@ -26,6 +26,8 @@ resizefocused(const Arg *arg)
 
 	/* Keep top-left anchored for keyboard resizing. */
 	resize(c, geo, 0);
+	if (delta[0] > 0)
+		rail_push_growth(c); /* widening pushes rail successors (Phase 3) */
 }
 
 /* Stretch the focused window to the monitor's usable width, growing/
@@ -41,9 +43,9 @@ resizefocused(const Arg *arg)
  * teleported the window to the monitor's fixed home offset in world space
  * regardless of where it currently sat, overlapping whatever else happened
  * to live near that anchor — this is what broke the tiling. Growing in place
- * can overlap whatever it grows into; the push-neighbors-aside step that used
- * to run here left with the connection graph and comes back rail-based in the
- * layout rethink's Phase 3 (see obsidian/plan/layout-impl.md). Also re-centers
+ * would overlap whatever it grows into, so when the window is on the rail its
+ * successors are pushed right by the overlap (rail_push_growth(), Phase 3 —
+ * a no-op off-rail or when allow_overlap is set). Also re-centers
  * the camera on the window along the X axis only (viewport_center_on_x()) —
  * the resize keeps
  * the window's own center fixed in world space, but the camera might not be
@@ -68,6 +70,8 @@ fitwidth(const Arg *arg)
 	geo.width = c->mon->w.width;
 	geo.x -= (geo.width - old_width) / 2;
 	resize(c, geo, 0);
+	if (geo.width > old_width)
+		rail_push_growth(c); /* fitting wider pushes rail successors (Phase 3) */
 	viewport_center_on_x(c);
 	status_mark_dirty();
 	persistence_save();

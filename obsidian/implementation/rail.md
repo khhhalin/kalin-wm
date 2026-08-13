@@ -69,11 +69,46 @@ frame it with an explicit camera jump (`viewport_center_on`). This is the
 (`viewport.pan`, `Super+scroll` / `Super+Shift+arrow`) — both kept, per the
 signed-off "rail scroll = both" sub-decision in [[layout-impl]].
 
+## Growing pushes the rail — `rail_push_growth()` (Phase 3, DONE 2026-08-13)
+
+When a rail member **grows wider**, its `rail_next` successors are pushed right
+so the growth doesn't cover them — the 1D forward-walk heir of the old graph's
+removed `resolve_growth_overlap()`. `rail_push_growth(grown)`:
+
+- Computes the **overlap** of `grown`'s right edge (plus `SPAWN_GAP`) into its
+  *immediate* successor's left edge, then slides the whole successor chain right
+  by that one delta via `rail_shift_successors()` — so the inter-successor
+  spacing the rail already maintains is preserved and only what's covered moves.
+- **Position-based, not delta-based:** correct whether the caller grew
+  top-left-anchored (`resizefocused`) or centered (`fitwidth`), and **idempotent**
+  — once the successors clear, the overlap is ≤ 0 and it's a no-op. That
+  idempotence *is* the feedback-loop guard: `commitnotify()` calls it on every
+  committed buffer, and the successor shift (`client_set_target_geom`, target
+  only, no `resize()`) can't re-trigger a push.
+- No-op for an **off-rail** window, or when there's no successor.
+
+**Hook points** (call only when the client is on the rail and width actually
+increased — the function itself re-checks both, the gate just avoids walking the
+rail on every no-growth commit):
+
+- `commitnotify()` (`dwl.c`) — captures `old_width` before
+  `client_accept_requested_size()`, calls `rail_push_growth(c)` after `resize()`
+  when `c->geom.width > old_width` (a client committed a wider buffer).
+- `fitwidth()` / `resizefocused()` (`resize_actions.c`) — after their `resize()`,
+  when the width grew. `fitheight()` is *not* hooked (height growth doesn't
+  overlap along a horizontal rail).
+
+### `allow_overlap` — now live (Super+Shift+o, `toggle-overlap`)
+
+Re-homed here from its Phase 1 dormancy: a rail window with `allow_overlap` set
+**grows over its successors instead of pushing them** — `rail_push_growth()` is a
+no-op for it. That is the flag's coherent meaning under the rail; `toggleoverlap()`
+just flips the bit (the effect shows the next time the window grows).
+
 ## What's NOT done yet (later phases — [[layout-impl]])
 
-- **Phase 3** — growing a window pushes the rail (re-hook a 1D forward-walk over
-  `rail_next`; `allow_overlap` / `Super+Shift+o` re-homes here as "grow over
-  successors instead of pushing").
+- ~~**Phase 3** — growing a window pushes the rail~~ **DONE 2026-08-13** — see
+  "Growing pushes the rail" above (`rail_push_growth()`, `allow_overlap` live).
 - **Phase 4** — float-under-cursor (menu spawns), the one missing primitive
   (needs a shell→compositor `float-next` hint).
 - **Phase 5** — attached overlay (child→host follow), reusing the freed
