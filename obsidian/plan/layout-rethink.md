@@ -1,9 +1,69 @@
 # Layout rethink — scrolling rail
 
-**Status: PROPOSED / exploratory (2026-08-13), NOT signed off.** Raw vision from a
-working session plus open questions. This would be the **third iteration** of the core
-layout model and is keeper-level — nothing here supersedes [[connection-graph]] until
-Kalin decides. See [[parallel-tracks]].
+**Status: MODEL DECIDED (2026-08-13), implementation not yet planned.** The core model
+(hybrid rail on the free canvas) and its behaviors are signed off; what remains is an
+implementation plan, not a design decision. Third iteration of the core layout model,
+keeper-level — this **supersedes [[connection-graph]]** for tiling once built. See
+[[parallel-tracks]]. Raw vision + reasoning that led here is kept below the decision.
+
+## DECIDED MODEL — hybrid rail on the free canvas
+
+Keep the [[infinite-canvas]] + [[viewport]] camera (kalin-wm's identity vs [[niri]]);
+simplify only *placement*. Four placement buckets — the model is really "where does a
+window go?":
+
+1. **Rail** — keyboard-spawned primaries. New window lands to the right of the current
+   at a baseline y, forming a 1D row; scrolling the rail = panning the camera along it.
+   **One default rail**; the free canvas still allows informal extra rows (pan up/down to
+   another cluster). Loose alignment — windows keep their own sizes, can be nudged off
+   baseline; focus moves the camera to frame, no rigid columns.
+2. **Float** — menu-spawned (right-click). Spawns **under the cursor**, offset so it does
+   not obscure what was clicked (corner at cursor, expand toward the roomier side; if it
+   would cover the click target, offset by that rect).
+3. **Attached overlay** *(NEW — replaces group-drag)* — a float **pinned to a host window
+   at a relative offset** that **follows the host** when the host moves (in the rail or
+   freely). Combines with **[[crop-mode]]** (exists) and **per-window opacity** (NEW, a
+   slider). The motivating case: crop the Discord window, drop its opacity, pin it in a
+   corner of Minecraft as a custom overlay; move Minecraft along the rail and the Discord
+   overlay tracks it exactly at the offset you set. This is the *only* relational concept
+   that survives — targeted (one directed child→host link + offset), not the general
+   8-octant graph.
+4. **Agent-hidden** — test windows off-layout/off-camera (see [[agent-observation]]).
+
+### Rail behaviors (decided)
+
+- `Super+Ctrl+←/→` → swap with the left/right neighbor **in the rail order** (1D).
+- Closing a rail window → the rail **closes the gap** (shift left, niri-style).
+- Growing a window → **pushes the rail**.
+- **[[directional-focus]] stays** — cone-search geometry, independent of any graph.
+
+### Dropped vs kept
+
+- **Dropped:** the [[connection-graph]] entirely (8-octant neighbors, sever, gap-splice
+  *as graph ops*, `ConnectionLines.qml`, connection [[persistence]]) and general
+  group-drag. Big simplification — a 1D rail order + one overlay-attach link replace a
+  2D graph.
+- **Kept:** camera (pan/zoom/[[follow-mode]]/persistence), free 2D positioning,
+  [[crop-mode]], [[directional-focus]]. Persistence now saves position/size + **rail
+  order** + **overlay attachments** + **per-window opacity**.
+
+### New capabilities to build
+
+- **Per-window opacity** — a slider (via the WindowActions menu / an IPC command);
+  compositor sets the surface's scene opacity. *Verify if any per-window opacity exists
+  today; likely new.*
+- **Overlay-attach** — a directed pin (child → host, relative offset) + follow-on-host-move.
+- **Rail placement + scroll** — 1D flow + camera-along-rail; gap-close; 1D swap.
+
+### To resolve at implementation-plan time (not design blockers)
+
+- Exact rail data structure (linear list of window ids per rail vs positions on canvas).
+- How "informal extra rows" are detected/navigated vs the one default rail.
+- Offset rule specifics for float-under-cursor and overlay-attach anchoring.
+
+---
+
+## Origin — raw vision + reasoning (kept for provenance)
 
 ## Kalin's raw vision (verbatim intent)
 

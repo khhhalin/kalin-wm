@@ -10,7 +10,7 @@ Nothing here is started; this is the dispatch map.
 | Track | Note | Depends on | Can start now? |
 |---|---|---|---|
 | **Observation** (enabler) | [[agent-observation]] | — | Yes. Small, self-contained, mergeable alone. |
-| **Layout** (core) | [[layout-rethink]] | design sign-off | Design yes; build no (unresolved). |
+| **Layout** (core) | [[layout-rethink]] | impl plan | **Model decided** (hybrid rail); needs impl plan, then build. |
 | **Bar** (native) | — | stack decision | Design yes; build blocked on stack. |
 | **Overlay aesthetics** | [[connection-lines]] variants | **Layout decision** | Blocked — see dependency below. |
 | **OCaml exploration** | — | — | Strategic, any time. |

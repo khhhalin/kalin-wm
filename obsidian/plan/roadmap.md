@@ -36,9 +36,10 @@ and dependencies in [[parallel-tracks]].
 - **[[agent-observation]]** — `spawn --hidden` + native-resolution `screenshot-window`
   so an agent can spawn/capture windows without disturbing the live session. Enabler,
   highest-ROI, mergeable alone. *Proposed.*
-- **[[layout-rethink]]** — replace the [[connection-graph]] with a **scrolling rail**
-  (keyboard spawns) + float-under-cursor (menu spawns). Third iteration of the core
-  layout model — keeper-level, *exploratory, not signed off.*
+- **[[layout-rethink]]** — replace the [[connection-graph]] with a **hybrid scrolling
+  rail** on the free canvas: rail (keyboard) + float-under-cursor (menu) + attached
+  overlay (crop + opacity + follow-host) + agent-hidden. Third iteration of the core
+  layout model — keeper-level, **model decided 2026-08-13**, implementation not yet planned.
 - **Native bar** — wlr-layer-shell bar to replace the quickshell-hosted TUI bar (zero
   camera shift + instant start). *Parked* on stack (C / Rust / OCaml). See [[parallel-tracks]].
 - **Camera persistence** shipped 2026-08-13 (per-monitor pan+zoom across restarts) —
