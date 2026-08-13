@@ -7,9 +7,11 @@ described in [[spawn]] and [[connection-graph]]:
 
 1. A persisted position from a previous run of this exact app instance — see [[persistence]].
 2. To the right of the spawn-parent (whichever window was focused right
-   before this one was created), at the same y — a plain placement as of
-   2026-08-13 (the insert-into-a-line splice went with the [[connection-graph]]
-   removal; the rail re-adds order in Phase 2 — [[layout-impl]]).
+   before this one was created), at the parent's baseline y, and **spliced
+   into the [[rail]]** — the 1D scrolling order (layout Phase 2, DONE
+   2026-08-13). Successors of the parent shift right to open room; closing a
+   rail member shifts them back left (gap-close). See [[rail]] and
+   [[layout-impl]].
 3. Under the cursor when there's no spawn-parent but the cursor is on this
    monitor; otherwise monitor center, for the very first window.
 

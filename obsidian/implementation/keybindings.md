@@ -26,12 +26,19 @@
 
 Window management:
 - `Super+Arrows` — [[directional-focus]] (geometric cone search)
-- `Super+Ctrl+Arrows` — **unbound as of 2026-08-13** (was swap-with-neighbor; the
-  [[connection-graph]] it drove was removed — [[layout-impl]]). Reserved for the
-  Phase 2 rail 1D-swap.
+- `Super+Ctrl+Left` / `Super+Ctrl+Right` — **[[rail]] 1D swap** (`rail-swap`,
+  layout Phase 2 DONE 2026-08-13): trade the focused window's screen position
+  and its rail linkage with its left/right rail neighbour, animated via the
+  spring. No-op at the ends. `Super+Ctrl+Up`/`Down` left **unbound** (the rail
+  is 1D — there is no vertical rail order).
+- `Super+Ctrl+h` / `Super+Ctrl+l` — **rail discrete scroll** (`rail-focus`,
+  Phase 2): focus + camera-frame the prev/next rail neighbour
+  (`viewport_center_on`). The snap-to-neighbour companion to the loose
+  `Super+scroll` / `Super+Shift+arrow` free camera pan.
 - `Super+J` / `Super+K` — cycle focus through the window stack
-- `Super+Q` — close focused window (as of 2026-08-13 just leaves a hole where it
-  was; gap-close returns rail-based in Phase 2 — [[layout-impl]])
+- `Super+Q` — close focused window. On the [[rail]] this gap-closes (successors
+  shift left, niri-style, Phase 2 DONE 2026-08-13); an off-rail window still
+  just leaves its hole.
 - `Super+[` / `Super+]` (`bracketleft`/`bracketright`) and `Super+equal`/`Super+minus` — narrow / widen focused window
 - `Super+Shift+{` / `Super+Shift+}` (`braceleft`/`braceright`) and `Super+Shift+plus`/`Super+Shift+underscore` — shorten / lengthen focused window
 - `Super+F` — fit width: stretch to the monitor's usable width, growing/shrinking evenly on both sides so the horizontal center stays put (does *not* reset world position — see the [[ledger]] for the bug where it used to). Also re-centers the camera horizontally on the window (`viewport_center_on_x()`), leaving vertical pan untouched.

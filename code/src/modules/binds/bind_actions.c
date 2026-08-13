@@ -26,6 +26,8 @@ static const struct { const char *name; int id; } action_names[] = {
     { "viewport.follow-new",  ACT_VIEWPORT_FOLLOW_NEW },
     { "viewport.pan-grab",    ACT_VIEWPORT_PAN_GRAB },
     { "focus",                ACT_FOCUS_DIR },
+    { "rail-swap",            ACT_RAIL_SWAP },
+    { "rail-focus",           ACT_RAIL_FOCUS },
     { "focus-stack",          ACT_FOCUS_STACK },
     { "focus-monitor",        ACT_FOCUS_MONITOR },
     { "move-monitor",         ACT_MOVE_MONITOR },
@@ -247,6 +249,8 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         out->arg.i = v;
         return 0;
     case ACT_FOCUS_DIR:
+    case ACT_RAIL_SWAP:
+    case ACT_RAIL_FOCUS:
         v = -1;
         if (argc == 1) {
             if (strcmp(argv[0], "left") == 0) v = 0;
