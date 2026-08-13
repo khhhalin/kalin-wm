@@ -40,9 +40,11 @@ The graph can be removed **before** the rail exists — placement falls back to 
 cursor/monitor-center branches (`dwl.c:2135-2149`), so windows still spawn sanely. No atomic
 swap needed.
 
-- **Phase 0 — Persist opacity** (tiny, independent, ship first). Add `opacity` to
-  `save_client_cb`/parser/`SavedClientState` + apply on restore via `setopacity()`. Delivers
-  one "new capability" immediately, zero risk.
+- ~~**Phase 0 — Persist opacity**~~ **DONE 2026-08-13** (commit merged to local main).
+  `SavedClientState.opacity` + parser (1.0 fallback) + `save_client_cb` write + restore-block
+  apply (set `c->opacity` directly, clamped 0.1..1.0; `commitnotify`'s `applyopacity` reapplies).
+  Build clean, test 25/25, SAVE round-trip verified on a live nested build. Note: `setopacity()`
+  turned out to be dwl.c-internal, so the field is set directly rather than via that call.
 - **Phase 1 — Remove the connection-graph** (biggest, riskiest diff — touches `unmapnotify`/
   `motionnotify` hot paths). Pure-deletion callers first (Super+L manual link, click/drag-sever,
   IPC `connections` broadcast + `sever`, group-drag `motionnotify:2400-2416`), then entangled
