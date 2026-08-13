@@ -46,8 +46,8 @@
   lines (`ConnectionLines.qml`, [[quickshell-shell]]) could show whenever overview
   is open, not just while Super is held. The [[connection-graph]] and its
   `connections` broadcast were **removed 2026-08-13** ([[layout-impl]]); the field
-  itself stays (still useful state), and dropping the shell overlay that consumed
-  it is a cross-repo follow-up — see [[ipc-socket]].
+  itself stays (still useful state), and the shell overlay that consumed it
+  (`ConnectionLines.qml`) was deleted the same day (kalin-shell `5788f49`).
 
 ## Known issue — Zen flickers on entry/exit (root-caused 2026-08-10)
 

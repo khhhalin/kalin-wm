@@ -62,12 +62,13 @@ swap needed.
   Phase 2 rail 1D-swap; `Super+L`/`link-pick` likewise removed, freeing it for
   the Phase 5 overlay-pin. Build clean (only the pre-existing
   `default_binds.h` overlength-strings warning), tests 25/25 + shader-math OK,
-  nested smoke-boot verified. **Cross-repo follow-up STILL OPEN:**
-  `~/environment/kalin-shell` (separate quickshell repo) still has
-  `ConnectionLines.qml`/`LineGeometry.qml`/WindowActions "Link" reading the
-  now-absent `connections`/`pending_connect` IPC fields — compositor build is
-  green without it, but the shell errors on those missing fields until they're
-  removed there (was NOT touched, per Phase 1 scope).
+  nested smoke-boot verified. **Cross-repo follow-up DONE 2026-08-13**
+  (`~/environment/kalin-shell` commit `5788f49`): deleted
+  `ConnectionLines.qml`/`LineGeometry.qml` (+ qmldir entry + shell.qml
+  instantiation), removed KalinViewport's `connections`/`pendingConnect`/`sever`
+  and the WindowActions "Swap"/"Link" hints; kept pan/zoom/follow/dockPrep. The
+  shell now loads clean against both old and new compositor (verified: quickshell
+  reload, 0 QML errors, 0 restarts) → **Phase 1 is deploy-safe.**
 - **Phase 2 — Rail** (order + placement + scroll + gap-close + 1D swap). Add `rail_prev/next` +
   `rail_head`; `mapnotify` inserts keyboard-spawns after focus, shifts successors right;
   `unmapnotify` splices + shifts left (gap-close); `swap_neighbor_dir` → `rail_swap_dir` (1D,
@@ -102,9 +103,9 @@ swap needed.
 ### Still to spec at coding time (not blockers)
 4. **Non-obscuring offset rule** — concrete geometry for float-under-cursor + overlay anchoring
    (Phase 4/5).
-5. **Cross-repo** — the kalin-shell `ConnectionLines`/`LineGeometry`/"Link" removal must land
-   with Phase 1 (compositor build stays green without it; shell errors on absent `connections`
-   until updated).
+5. ~~**Cross-repo**~~ **DONE** — the kalin-shell `ConnectionLines`/`LineGeometry`/"Link"/"Swap"
+   removal landed with Phase 1 (kalin-shell `5788f49`); shell verified loading clean against
+   both old and new compositor. Phase 1 is deploy-safe.
 
 ## Critical files
 

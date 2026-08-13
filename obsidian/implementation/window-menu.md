@@ -58,20 +58,16 @@ neutral button treatment when on:
   grow-push ([[layout-impl]]). Backed by the per-`Client` `allow_overlap` flag.
 - **Swap** (`Ctrl+Arrows`, `swap-dir`) — **compositor action removed 2026-08-13**
   with the [[connection-graph]] (`swap-dir`/`ACT_SWAP_DIR` no longer exist). The
-  Phase 2 rail 1D-swap re-adds a swap on the same chord. *(The shell button is a
-  cross-repo follow-up — see below.)*
+  Phase 2 rail 1D-swap re-adds a swap on the same chord. *(Shell hint removed too — see below.)*
 - **Link** (`L`, `link-pick` / `ACT_LINK_PICK`) — **compositor action removed
   2026-08-13** with the [[connection-graph]]. The chord is reserved for the
   Phase 5 overlay-pin. *(The shell button is a cross-repo follow-up — see below.)*
 
-> [!warning] Cross-repo follow-up (2026-08-13, layout Phase 1)
-> This menu is `WindowActions.qml` in `~/environment/kalin-shell` (a separate
-> quickshell repo), which was **not** edited in Phase 1. Its **Swap** and
-> **Link** buttons still send the now-removed `swap-dir`/`link-pick` IPC
-> commands (no-ops the compositor ignores), and its `ConnectionLines.qml` /
-> `LineGeometry.qml` read the removed `connections`/`pending_connect` state
-> fields. The shell must drop the Link/Swap buttons and the connection-line
-> overlay to stop erroring on the absent fields.
+> [!done] Cross-repo follow-up resolved (2026-08-13, kalin-shell `5788f49`)
+> The **Swap** and **Link** hints were removed from `WindowActions.qml`, and
+> `ConnectionLines.qml` / `LineGeometry.qml` (which read the removed
+> `connections`/`pending_connect` state) were deleted, in `~/environment/kalin-shell`.
+> The shell now loads clean against both the old and the new compositor.
 
 **Removed 2026-07-09**: the old "Tile/Float" toggle. It read
 `KalinViewport.focusedFloating`, a field the compositor stopped sending once
