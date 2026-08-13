@@ -28,6 +28,22 @@
 - [[zoom]] is **parked** — dropped from active focus and being rethought.
 - Target: laptop screen first, occasional external monitor second.
 
+## Proposed tracks (2026-08-13)
+
+Open threads from a working session, not yet started or signed off. Dispatch map
+and dependencies in [[parallel-tracks]].
+
+- **[[agent-observation]]** — `spawn --hidden` + native-resolution `screenshot-window`
+  so an agent can spawn/capture windows without disturbing the live session. Enabler,
+  highest-ROI, mergeable alone. *Proposed.*
+- **[[layout-rethink]]** — replace the [[connection-graph]] with a **scrolling rail**
+  (keyboard spawns) + float-under-cursor (menu spawns). Third iteration of the core
+  layout model — keeper-level, *exploratory, not signed off.*
+- **Native bar** — wlr-layer-shell bar to replace the quickshell-hosted TUI bar (zero
+  camera shift + instant start). *Parked* on stack (C / Rust / OCaml). See [[parallel-tracks]].
+- **Camera persistence** shipped 2026-08-13 (per-monitor pan+zoom across restarts) —
+  see [[persistence]] "Camera persistence".
+
 ## Blocking v1.0
 
 - [[stability]] — Phase 0 audit (all 23 items fixed and re-verified). ✅ done.
