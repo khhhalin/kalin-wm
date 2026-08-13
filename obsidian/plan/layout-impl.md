@@ -1,6 +1,6 @@
 # Layout implementation plan — rail + overlay-attach
 
-**Status: IN PROGRESS. Phase 0–5 DONE (2026-08-13); Phase 6 (persistence) pending.**
+**Status: COMPLETE. Phases 0–6 DONE (2026-08-13). The layout refactor is finished.**
 Implements the decided model in [[layout-rethink]]. Code-grounded (file:line from a
 planning pass; line numbers drift as phases land). See [[parallel-tracks]].
 
@@ -135,8 +135,28 @@ swap needed.
   that file gains `bind Super+l -> overlay-pin` (or `unbind overlay-pin`);
   editing the live config wasn't authorized here. (2) a shell "Pin" button in
   the WindowActions menu to drive `overlay-pin`/`float-next` from the UI.
-- **Phase 6 — Persist rail + overlay** (drop `connections`; add rail linkage + overlay host-key +
-  offset via the existing appid/title/instance identity keys; rebuild order-independently on load).
+- **Phase 6 — Persist rail + overlay** — **DONE 2026-08-13** (branch
+  `layout-phase6-persist`). Extended `SavedClientState` with the rail
+  predecessor's identity (`rail_prev_{appid,title,instance}`) and the overlay
+  host's identity + follow offset (`overlay_host_{appid,title,instance}`,
+  `overlay_off_{x,y}`) — per-client fields, not a separate array. `save_client_cb`
+  writes each client's registered-snapshot `rail_prev`/`overlay_host` (empty =
+  no edge); the object parser reads them back. Relink in
+  `persistence_register_client()` is **order-independent, both directions**
+  (whichever endpoint maps second completes the link) — the removed
+  [[connection-graph]] reconnect pattern verbatim; re-added the dead
+  `registered_find_by_key()` helper. Rail splice is linkage-only
+  (`rail_insert_after`, geometry already restored); overlay attach mirrors
+  `overlay_pin()`'s core. Added `persistence_save()` at the four uncovered
+  layout mutations (mapnotify rail-insert, `rail_swap_dir`, unmapnotify
+  gap-close, `overlay_pin`). Build clean (only the pre-existing
+  `default_binds.h` overlength warning); tests: **9 new `test_persistence`
+  cases** (JSON round-trip of the new fields + order-independent relink, both
+  orders, rail + overlay) + all existing suites 0 failures. **Nested round-trip
+  verified** (isolated `$HOME`): railA→railB→railC + overlay ovl→railC (25,25)
+  saved the predecessor + host fields, and a fresh boot seeded with that save
+  restored the geom + rail chain + the overlay re-pin. As-built: [[persistence]]
+  ("Rail order + overlay attachment"), [[rail]], [[float-overlay]].
 
 ## Resolved sub-decisions (signed off 2026-08-13)
 

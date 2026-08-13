@@ -54,6 +54,27 @@ typedef struct {
 	 * substituted with "foot -e kalin-term", which reattaches the tmux
 	 * content-persistence layer instead. */
 	char cmd[512];
+	/* Rail order (layout Phase 6). Each rail member saves the identity key of
+	 * its rail_prev, so the 1D order rebuilds order-independently on load: when
+	 * both a client and its saved predecessor are registered this run, they are
+	 * spliced (whichever registers second completes the link — the same
+	 * order-independent reconnect the removed connection-graph edges used). An
+	 * off-rail window (float / overlay: rail_prev == rail_next == NULL at save)
+	 * saves an empty rail_prev appid, i.e. no edge; the earliest rail member
+	 * (rail_head, no predecessor) likewise saves none and starts the head. */
+	char rail_prev_appid[128];
+	char rail_prev_title[128];
+	int rail_prev_instance;
+	/* Attached overlay (layout Phase 6). An overlay child (overlay_host != NULL)
+	 * saves its host's identity key plus the world-space follow offset, restored
+	 * the same order-independent way: when both child and host are registered,
+	 * the child's overlay_host + offsets are set and it's taken off the rail
+	 * (like overlay_pin()). A non-overlay saves an empty overlay_host appid. */
+	char overlay_host_appid[128];
+	char overlay_host_title[128];
+	int overlay_host_instance;
+	int overlay_off_x;
+	int overlay_off_y;
 } SavedClientState;
 
 typedef struct {
@@ -76,9 +97,11 @@ int persistence_load(CanvasState *out);
 
 /* Register a freshly-mapped managed client with the persistence system:
  * assigns it a stable (appid,title,instance) identity for this run, applies
- * any matching saved geometry/size/crop/fullscreen/ontop state, and
- * reconnects any saved connection-graph edges to whichever partner has
- * already been registered this run. Returns 1 if a saved absolute position
+ * any matching saved geometry/size/crop/fullscreen/ontop state, and relinks
+ * any saved rail order + overlay attachment to whichever partner (rail
+ * predecessor / overlay host) has already been registered this run — the
+ * order-independent reconnect the connection-graph edges used to do (layout
+ * Phase 6). Returns 1 if a saved absolute position
  * (geom_x/geom_y) was applied, 0 otherwise — callers use this to decide
  * whether to skip their own spawn-placement fallback. Call exactly once per
  * managed client, right after c->mon/c->geom are set but before any

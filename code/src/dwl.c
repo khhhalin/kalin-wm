@@ -2161,6 +2161,10 @@ mapnotify(struct wl_listener *listener, void *data)
 				rail_insert_after(p, c);
 				wlr_log(WLR_DEBUG, "rail: placed %u at (%d,%d) right of %u",
 					c->id, c->geom.x, c->geom.y, p->id);
+				/* Persist the new rail order (this spawn's predecessor + the
+				 * shifted successors) so it survives a restart — layout Phase 6.
+				 * No other save reliably fires for a fresh keyboard spawn. */
+				persistence_save();
 			} else if (cursor && c->mon == xytomon(cursor->x, cursor->y)) {
 				/* No spawn parent (nothing was focused, or the focused
 				 * window is on a different monitor) — center the new window
@@ -3605,6 +3609,9 @@ overlay_pin(Client *child, Client *host, int dx, int dy)
 		.x = host->geom.x + dx, .y = host->geom.y + dy,
 		.width = child->geom.width, .height = child->geom.height}, 0);
 	status_mark_dirty();
+	/* Persist the new attachment (host identity + offset) + the child leaving
+	 * the rail, so the overlay re-pins on the next boot — layout Phase 6. */
+	persistence_save();
 	return 1;
 }
 
@@ -4170,6 +4177,12 @@ unmapnotify(struct wl_listener *listener, void *data)
 		setmon(c, NULL);
 		if (c->flink.prev && c->flink.next)
 			wl_list_remove(&c->flink);
+		/* Persist the gap-closed rail (successors shifted left by rail_remove()
+		 * above, and this client now off the clients list so it won't be
+		 * re-saved/respawned) — layout Phase 6. The closed window's slot is
+		 * gone; without this the surviving members keep their pre-close saved
+		 * positions and the row reopens the closed gap on the next boot. */
+		persistence_save();
 	}
 
 	/* Paper mode: detach the borrowed shaded buffer from its overlay node

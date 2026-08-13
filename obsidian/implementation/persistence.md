@@ -6,10 +6,14 @@
   [[infinite-canvas]], the apps themselves, and the exact view survive a session
   ending — see "Session resurrection" and "Camera persistence" below. Own
   translation unit, `code/src/persistence.c` / `code/include/persistence.h`.
-  **The [[connection-graph]] used to be saved/restored too (`connections` array,
-  `SavedConnection`, reconnect-on-load); removed 2026-08-13 with the graph
-  (layout Phase 1 — [[layout-impl]]). Rail order + overlay attachments return to
-  the save file in Phase 6.**
+  Since **layout Phase 6 (2026-08-13)** it also saves/restores each window's
+  [[rail]] position (the identity of its `rail_prev`) and any [[float-overlay|overlay]]
+  attachment (host identity + follow offset) — see "Rail order + overlay
+  attachment" below. **The [[connection-graph]] used to be saved/restored the
+  same way (`connections` array, `SavedConnection`, reconnect-on-load); removed
+  2026-08-13 with the graph (layout Phase 1 — [[layout-impl]]). Its
+  identity-key + order-independent reconnect pattern is exactly what Phase 6
+  mirrors for rail + overlay.**
 - State file: `~/.local/share/kalin-wm/canvas_state.json`, hand-rolled flat
   JSON (own writer + a small non-nesting-safe parser — objects inside the
   top-level `clients`/`cameras` arrays must stay flat, no nested
@@ -123,6 +127,52 @@
   (after the client leaves the `clients` list), which is outside
   persistence.c.
 
+## Rail order + overlay attachment (layout Phase 6, 2026-08-13)
+
+The last layout phase ([[layout-impl]]) returned window *relationships* to the
+save file — the [[rail]] order and [[float-overlay|overlay]] attachments — using
+the removed [[connection-graph]]'s identity-key + order-independent reconnect
+pattern verbatim.
+
+- **Extra `SavedClientState` fields** (`persistence.h`): the rail predecessor's
+  identity `rail_prev_{appid,title,instance}`, and the overlay host's identity
+  `overlay_host_{appid,title,instance}` + follow offset `overlay_off_{x,y}`.
+  Runtime `Client*` ids aren't stable across restarts, so a relationship is keyed
+  by each partner's `(appid,title,instance)` — the same identity everything else
+  in the file matches on.
+- **Save side** (`save_client_cb`): each client writes the *registered snapshot*
+  of its `c->rail_prev` (empty appid = no edge: an off-rail float/overlay, or the
+  rail head with no predecessor) and of its `c->overlay_host` (empty = not an
+  overlay) + `c->overlay_off_{x,y}`. Flat, no nested objects — appid/title are
+  brace-safe by construction, so the [[dwl-fork|hand-rolled]] parser is unaffected.
+- **Load/relink** (`persistence_register_client`, after the geometry restore):
+  **order-independent, both directions each time a client registers** — whichever
+  of a pair maps second completes the link. (a) If this client's own saved
+  `rail_prev` / `overlay_host` partner is already registered, splice/attach now;
+  (b) scan the loaded states for any client that named *this* one as its
+  predecessor/host and, if that successor is already registered, splice/attach
+  it. The rail splice is `rail_insert_after()` — **linkage only, no reposition**
+  (geometry was already restored from the saved absolute position above, matching
+  what `rail_insert_after` deliberately leaves to its caller). The overlay attach
+  mirrors `overlay_pin()`'s core (`rail_remove()` the child, set `overlay_host` +
+  offsets, mark `isfloating`) without re-snapping geometry. A `registered_find_by_key()`
+  helper (re-added — Phase 1 had removed it as dead) resolves a key to its live client.
+- **Save triggers added** for the layout mutations that weren't already covered
+  by an existing `persistence_save()` (a rail move not saved = reordering lost on
+  restart): after the rail insert in `mapnotify()`, at the end of `rail_swap_dir()`,
+  in `unmapnotify()` after the gap-close (once the closed client is off the
+  `clients` list, so it's neither re-saved nor respawned), and at the end of
+  `overlay_pin()`.
+- **Round-trip verified end-to-end (nested, isolated `$HOME`, 2026-08-13):** three
+  rail windows (railA→railB→railC) + an overlay child pinned to railC at offset
+  (25,25) saved `rail_prev_appid` railA/railB and `overlay_host_appid` railC with
+  the offset; on a fresh boot seeded with that save, respawning the same appids in
+  order restored railA's geom (280,120) + the railA→railB→railC chain + ovl
+  re-pinned off-rail to railC at (25,25). The order-independence (either endpoint
+  first) is unit-tested (`test_persistence.c`), since the nested respawn happens to
+  map in save order. Respawn-in-nested itself uses the tmux `kalin-apps` path (see
+  Session resurrection); the nested check spawned by hand.
+
 ## Camera persistence (2026-08-13)
 
 - Each monitor's camera (pan `x`/`y` + `zoom`, settled values not the
@@ -166,7 +216,11 @@
      "geom_set": 1, "crop_active": 0, "crop_x": 0, "crop_y": 0,
      "crop_w": 0, "crop_h": 0, "crop_base_w": 702, "crop_base_h": 500,
      "crop_saved_base": 1, "isfullscreen": 0, "isontop": 0,
-     "opacity": 1.0000, "cmd": "foot -e kalin-term"}
+     "opacity": 1.0000, "cmd": "foot -e kalin-term",
+     "rail_prev_appid": "firefox", "rail_prev_title": "web",
+     "rail_prev_instance": 0,
+     "overlay_host_appid": "", "overlay_host_title": "",
+     "overlay_host_instance": 0, "overlay_off_x": 0, "overlay_off_y": 0}
   ],
   "cameras": [
     {"output": "LVDS-1", "x": 640.00, "y": 360.00, "zoom": 1.5000}
@@ -176,7 +230,8 @@
 
 (A `"connections"` array once sat between `clients` and `cameras`; removed
 2026-08-13 with the [[connection-graph]] — [[layout-impl]]. Rail order +
-overlay attachments return here in Phase 6.)
+overlay attachments came back in Phase 6 as **per-client fields**, not a
+separate array — see "Rail order + overlay attachment" above.)
 
 - Client `title` in the save file is the **registered snapshot** (whatever
   the client's title was at map time), not a fresh query at save time —
@@ -186,9 +241,10 @@ overlay attachments return here in Phase 6.)
   made client entries key inconsistently and restoration silently failed to
   match.)
 - `persistence_save()` runs on drag-release, on `fitwidth()`/`fitheight()`,
-  and at various other geometry-changing points (each calls it directly,
-  not on a timer) — see the [[ledger]] for the call sites added as each
-  feature landed.
+  on the rail mutations (mapnotify rail-insert, `rail_swap_dir`, unmapnotify
+  gap-close), on `overlay_pin`, and at various other geometry-changing points
+  (each calls it directly, not on a timer) — see the [[ledger]] for the call
+  sites added as each feature landed.
 
 ## What isn't handled yet
 

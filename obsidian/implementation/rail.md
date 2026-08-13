@@ -117,10 +117,14 @@ just flips the bit (the effect shows the next time the window grows).
   `resize()` hook); `overlay_pin()` `rail_remove()`s the child so an overlay is
   never on the rail. On the freed `Super+L` + the `overlay-pin` IPC. See
   [[float-overlay]].
-- **Phase 6** — **rail-order persistence.** NOT folded into Phase 2: the rail is
-  rebuilt only from live spawns, so a restart currently restores window
-  positions/sizes/crop/opacity/camera (unchanged) but **not** rail linkage.
-  Phase 6 adds that via the existing appid/title/instance identity keys.
+- ~~**Phase 6** — **rail-order persistence.**~~ **DONE 2026-08-13.** Each rail
+  member now saves the identity key of its `rail_prev`; on load,
+  `persistence_register_client()` relinks the chain order-independently (splice
+  when both a client and its saved predecessor have registered this run — the
+  removed [[connection-graph]]'s reconnect pattern). Off-rail windows save no
+  edge. `rail_swap_dir()`, the mapnotify rail-insert, and the unmapnotify
+  gap-close each now trigger a `persistence_save()` so reordering survives a
+  restart. See [[persistence]] ("Rail order + overlay attachment").
 
 See also: [[layout-rethink]] · [[layout-impl]] · [[connection-graph]] ·
 [[window-placement]] · [[spawn]] · [[keybindings]] · [[directional-focus]]
