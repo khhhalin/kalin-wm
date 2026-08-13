@@ -43,10 +43,11 @@
 - A new window's spawn-parent is whichever window was focused right before
   it was created (snapshotted in `mapnotify()` before the new client is
   focused or inserted into any list). Placed `SPAWN_GAP` px to the parent's
-  right at the same y. **As of 2026-08-13** this is a plain placement — no
-  connection, no insert-into-a-line splice (the [[connection-graph]] that did
-  both was removed, layout Phase 1 — [[layout-impl]]). Two windows can land on
-  top of each other until the Phase 2 rail reintroduces order + gap management.
+  right at the parent's baseline y, and **spliced into the [[rail]]** — the 1D
+  scrolling order (layout Phase 2 DONE 2026-08-13). Any rail successors of the
+  parent shift right to open room; closing a rail member shifts them back left
+  (gap-close). The [[connection-graph]] that used to insert-into-a-line was
+  removed in Phase 1; the rail is its 1D heir — see [[rail]] and [[layout-impl]].
 - **No spawn-parent** (nothing was focused, or the focused window is on a
   different monitor): placed **under the cursor** (2026-07-09, `mapnotify()`
   in `code/src/dwl.c`), not the monitor's geometric center — `c->geom.x/y`

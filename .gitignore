@@ -19,6 +19,7 @@ tests/test_binds
 tests/test_connection_graph
 tests/test_growth_overlap
 tests/test_viewport_ops
+tests/test_rail
 __pycache__/
 tools/vault-review/state*.json
 

@@ -360,6 +360,15 @@ struct Client {
     float vx, vy;
     int animating;
     int anim_ready;
+
+    /* Rail: the 1D doubly-linked order keyboard-spawned managed windows flow
+     * into (the "hybrid rail on the free canvas", layout rethink Phase 2 —
+     * obsidian/plan/layout-rethink.md). rail_prev==rail_next==NULL means this
+     * window is NOT on the rail (free/float/overlay bucket): panels, floating
+     * overlays and any window never keyboard-spawned stay free-positioned.
+     * rail_head (in dwl.c) anchors the leftmost member. Replaces the removed
+     * 8-octant neighbor[] graph — one dimension, one default rail. */
+    Client *rail_prev, *rail_next;
 };
 
 /**
@@ -585,6 +594,7 @@ extern struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 extern struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 extern struct wl_list clients;      /* Tiling order */
 extern struct wl_list fstack;       /* Focus order */
+extern Client *rail_head;            /* Leftmost rail member (layout Phase 2) */
 
 /* Idle and power management */
 extern struct wlr_idle_notifier_v1 *idle_notifier;
@@ -893,6 +903,16 @@ void client_apply_zoom_scale(void);
 
 /* Directional focus navigation */
 void focus_directional(const Arg *arg);
+
+/* Rail — the 1D scrolling order keyboard-spawned managed windows flow into
+ * (layout Phase 2, modules/layout/rail.c). rail_insert_after()/rail_remove()
+ * maintain the linkage + close gaps; rail_swap_dir()/rail_focus_dir() are the
+ * bound actions. See obsidian/implementation/rail.md. */
+void rail_insert_after(Client *p, Client *c);
+void rail_open_gap_after(Client *c);
+void rail_remove(Client *c);
+void rail_swap_dir(const Arg *arg);
+void rail_focus_dir(const Arg *arg);
 
 /* Crop functionality (kalin-wm specific) */
 void cropbegin(const Arg *arg);

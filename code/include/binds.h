@@ -59,6 +59,8 @@ typedef enum {
     ACT_VIEWPORT_FOLLOW_NEW,/* none */
     ACT_VIEWPORT_PAN_GRAB, /* none: hold to drag-pan the camera (background only) */
     ACT_FOCUS_DIR,         /* i: DIR_* 0..3 */
+    ACT_RAIL_SWAP,         /* i: DIR_* — 1D swap with the left/right rail neighbour */
+    ACT_RAIL_FOCUS,        /* i: DIR_* — focus + frame the prev/next rail neighbour */
     ACT_FOCUS_STACK,       /* i: -1/+1 */
     ACT_FOCUS_MONITOR,     /* i: 0=left 1=right */
     ACT_MOVE_MONITOR,      /* i: 0=left 1=right — teleport to that monitor's

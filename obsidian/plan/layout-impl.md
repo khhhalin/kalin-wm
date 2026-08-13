@@ -1,6 +1,6 @@
 # Layout implementation plan — rail + overlay-attach
 
-**Status: IN PROGRESS. Phase 0 + Phase 1 DONE (2026-08-13); Phases 2–6 pending.**
+**Status: IN PROGRESS. Phase 0 + Phase 1 + Phase 2 DONE (2026-08-13); Phases 3–6 pending.**
 Implements the decided model in [[layout-rethink]]. Code-grounded (file:line from a
 planning pass; line numbers drift as phases land). See [[parallel-tracks]].
 
@@ -69,10 +69,26 @@ swap needed.
   and the WindowActions "Swap"/"Link" hints; kept pan/zoom/follow/dockPrep. The
   shell now loads clean against both old and new compositor (verified: quickshell
   reload, 0 QML errors, 0 restarts) → **Phase 1 is deploy-safe.**
-- **Phase 2 — Rail** (order + placement + scroll + gap-close + 1D swap). Add `rail_prev/next` +
-  `rail_head`; `mapnotify` inserts keyboard-spawns after focus, shifts successors right;
-  `unmapnotify` splices + shifts left (gap-close); `swap_neighbor_dir` → `rail_swap_dir` (1D,
-  `Super+Ctrl+Left/Right`, reuse the spring anim); rail scroll = camera pan along the rail.
+- **Phase 2 — Rail** — **DONE 2026-08-13** (branch `layout-phase2-rail`). Added
+  `Client.rail_prev/rail_next` + global `rail_head`; new module
+  `code/src/modules/layout/rail.c` (separate TU) with `rail_insert_after` /
+  `rail_open_gap_after` / `rail_remove` / `rail_swap_dir` / `rail_focus_dir`.
+  `mapnotify` places a keyboard-spawn right of its focused parent at the
+  parent's baseline y, shifts successors right (`rail_open_gap_after`), then
+  splices (`rail_insert_after`); `unmapnotify` gap-closes + unlinks
+  (`rail_remove`, nulls the pointers). **Chords:** 1D swap on the freed
+  **`Super+Ctrl+Left/Right`** (`rail-swap`; `Up`/`Down` left **unbound** — the
+  rail is 1D); discrete "focus+frame next/prev rail window" on
+  **`Super+Ctrl+h/l`** (`rail-focus`, reuses `viewport_center_on`), the snap
+  companion to the kept loose free pan. Wired the two new actions through the
+  bind DSL (enum/string-table/parser/dispatch). Build clean (only the
+  pre-existing `default_binds.h` overlength warning); tests 25 binds + 10 new
+  `test_rail` linkage cases + shader-math, 0 failures; nested smoke verified —
+  window 2 landed right of window 1 (x 340→1060), window 3 right of 2
+  (1060→1780), closing the middle gap-closed the successor left by 722, no
+  crash/asserts. **Deferred to Phase 6:** rail-order **persistence** — the rail
+  rebuilds from live spawns only; a restart restores positions/size/crop/opacity/
+  camera (unchanged) but not rail linkage. As-built note: [[rail]].
 - **Phase 3 — Growing pushes the rail** (reintroduce the dropped `resolve_growth_overlap` as a
   1D forward-walk over `rail_next`; re-hook `commitnotify:1148` + `resize_actions.c`).
 - **Phase 4 — Float-under-cursor** (menu spawns). **The one genuinely missing primitive:** no

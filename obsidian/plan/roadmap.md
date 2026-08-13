@@ -41,7 +41,9 @@ and dependencies in [[parallel-tracks]].
   overlay (crop + opacity + follow-host) + agent-hidden. Third iteration of the core
   layout model — keeper-level, model decided 2026-08-13. **In progress** (see
   [[layout-impl]]): Phase 0 (persist opacity) + **Phase 1 (connection-graph removed)**
-  DONE 2026-08-13; rail/float/overlay/persistence in Phases 2–6.
+  + **Phase 2 ([[rail]] — order/placement/gap-close/1D-swap/discrete-scroll)** DONE
+  2026-08-13; grow-push (Phase 3) / float-under-cursor (Phase 4) / overlay (Phase 5)
+  / rail+overlay persistence (Phase 6) still pending.
 - **Native bar** — wlr-layer-shell bar to replace the quickshell-hosted TUI bar (zero
   camera shift + instant start). *Parked* on stack (C / Rust / OCaml). See [[parallel-tracks]].
 - **Camera persistence** shipped 2026-08-13 (per-monitor pan+zoom across restarts) —

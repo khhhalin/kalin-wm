@@ -8,10 +8,12 @@
 > `Super+Ctrl+Arrow` swap binds, the IPC `connections` broadcast +
 > `pending_connect` field + `sever` command, and connection persistence
 > (`save_connections`/reconnect, `SavedConnection`) were all deleted. Windows
-> now spawn simply to the right of the focused parent at the same y; closing a
-> window leaves a hole (no gap-close); dragging moves only the grabbed window.
-> Replaced by the **rail model** — see [[layout-rethink]] and [[layout-impl]]:
-> the rail (order + gap-close + 1D swap) lands in Phase 2, grow-push in Phase 3,
+> now spawn to the right of the focused parent and join the **[[rail]]** (order
+> + gap-close + 1D swap, Phase 2 DONE 2026-08-13); dragging moves only the
+> grabbed window.
+> Replaced by the **rail model** — see [[rail]], [[layout-rethink]] and
+> [[layout-impl]]: the rail (order + gap-close + 1D swap) **shipped in Phase 2**,
+> grow-push in Phase 3,
 > and the one surviving relational concept (targeted overlay-attach, replacing
 > group-drag) in Phase 5. `allow_overlap` (`Super+Shift+o`) survives as a
 > **dormant flag** — it toggles and broadcasts but does nothing until Phase 3.

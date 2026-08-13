@@ -349,6 +349,11 @@ static struct wlr_xdg_activation_v1 *activation;
 struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 struct wl_list clients; /* tiling order */
+/* Leftmost member of the (single, default) rail — the 1D order keyboard-spawned
+ * managed windows flow into; anchors rail iteration/scroll. NULL when no rail
+ * exists yet. Kept correct as windows insert (mapnotify), close (unmapnotify)
+ * and swap (rail_swap_dir). See obsidian/implementation/rail.md. */
+Client *rail_head; /* extern; consumed by modules/layout/rail.c */
 struct wl_list fstack;  /* focus order (extern; consumed by layout_world.c) */
 struct wl_list static_listeners;
 struct wlr_idle_notifier_v1 *idle_notifier;  /* extern; consumed by modules/input/keyboard.c */
@@ -414,6 +419,15 @@ static struct wl_listener start_drag = {.notify = startdrag};
  * modules/layout/directional_focus.c TU) - forward declaration for
  * config.h. */
 void focus_directional(const Arg *arg);
+
+/* Rail (defined in the separately-compiled modules/layout/rail.c TU) —
+ * forward declarations for mapnotify()/unmapnotify()/bind_invoke(), since
+ * DWL_INTERNAL hides kalin.h's public prototypes from this TU. */
+void rail_insert_after(Client *p, Client *c);
+void rail_open_gap_after(Client *c);
+void rail_remove(Client *c);
+void rail_swap_dir(const Arg *arg);
+void rail_focus_dir(const Arg *arg);
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -1761,6 +1775,8 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_VIEWPORT_FOLLOW:   viewport_toggle_follow(arg); break;
 	case ACT_VIEWPORT_FOLLOW_NEW: viewport_toggle_follow_new(arg); break;
 	case ACT_FOCUS_DIR:         focus_directional(arg); break;
+	case ACT_RAIL_SWAP:         rail_swap_dir(arg); break;
+	case ACT_RAIL_FOCUS:        rail_focus_dir(arg); break;
 	case ACT_FOCUS_STACK:       focusstack(arg); break;
 	case ACT_TOGGLE_FULLSCREEN: togglefullscreen(arg); break;
 	case ACT_TOGGLE_MAXIMIZED: togglemaximized(arg); break;
@@ -2050,16 +2066,23 @@ mapnotify(struct wl_listener *listener, void *data)
 				c->geom.y = snap_grid(c->geom.y);
 				resize(c, c->geom, 0);
 			} else if (p) {
-				/* Place to the right of the spawn parent at the same y
-				 * (SPAWN_GAP px away). The connection graph that used to
-				 * splice into an existing line here is gone; a keyboard
-				 * spawn's row order becomes the rail in the layout rethink's
-				 * Phase 2 (see obsidian/plan/layout-impl.md). No overlap
-				 * check for now — a window landing on an existing one just
-				 * sits on top until the rail reintroduces gap management. */
+				/* Rail placement (layout Phase 2): the keyboard spawn joins
+				 * the 1D rail immediately after its focused parent, landing
+				 * to the parent's right at the parent's baseline y (SPAWN_GAP
+				 * px away). If the parent already had a rail successor, that
+				 * successor and everything past it slides right to open room
+				 * — a forward walk over rail_next (rail_open_gap_after()),
+				 * the 1D heir of the old graph's collect_component push. Do
+				 * the shift *before* linking c in, so it walks the old
+				 * successors (c isn't between them yet). Panels/floats never
+				 * reach here (handled by the isfloating/dockprep branches). */
 				c->geom.x = snap_grid(p->geom.x + p->geom.width + SPAWN_GAP);
 				c->geom.y = snap_grid(p->geom.y);
 				resize(c, c->geom, 0);
+				rail_open_gap_after(p);
+				rail_insert_after(p, c);
+				wlr_log(WLR_DEBUG, "rail: placed %u at (%d,%d) right of %u",
+					c->id, c->geom.x, c->geom.y, p->id);
 			} else if (cursor && c->mon == xytomon(cursor->x, cursor->y)) {
 				/* No spawn parent (nothing was focused, or the focused
 				 * window is on a different monitor) — center the new window
@@ -3954,11 +3977,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 		}
 		window_size_history_store(c, save_w, save_h);
 
-		/* No layout cleanup on close: a closing window just leaves a hole
-		 * where it was. The connection graph used to splice its opposite
-		 * neighbors together and shift the rest of the line in to close the
-		 * gap; niri-style gap-close returns rail-based in the layout
-		 * rethink's Phase 2 (see obsidian/plan/layout-impl.md). */
+		/* Rail gap-close (layout Phase 2): if this window was on the rail,
+		 * unlink it and slide its successors left to close the gap it leaves
+		 * (niri-style, rail_remove()). A window that was never on the rail
+		 * (free/float/overlay) leaves its hole untouched, as before. */
+		rail_remove(c);
 
 		persistence_unregister_client(c);
 
