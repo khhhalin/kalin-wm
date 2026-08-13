@@ -489,6 +489,9 @@ struct SessionLock {
 #define SCREEN_TO_WORLD_X(mon_, sx) (((float)(sx) - (float)((mon_) ? (mon_)->m.x : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.x : 0.0f))
 #define SCREEN_TO_WORLD_Y(mon_, sy) (((float)(sy) - (float)((mon_) ? (mon_)->m.y : 0)) / MON_ZOOM_SAFE(mon_) + ((mon_) ? (mon_)->cam.y : 0.0f))
 #define SPAWN_GAP 20
+/* Margin between the cursor and the nearest corner of a float-under-cursor
+ * (menu-spawned) window, so the clicked point stays visible (layout Phase 4). */
+#define FLOAT_CURSOR_MARGIN 24
 
 /**
  * Wallpaper - stationary tiled background scene state (owned by dwl.c).
@@ -730,6 +733,8 @@ void setdocked(Client *c, int docked, struct wlr_box rect);
 Client *client_find_by_appid(const char *appid);
 void dockprep_register(const char *appid, struct wlr_box rect);
 int dockprep_consume(const char *appid, struct wlr_box *out);
+void floatprep_register(const char *appid);
+int floatprep_consume(const char *appid);
 Monitor *monitor_find_by_name(const char *name);
 int ipc_set_output(const char *name, int width, int height, float refresh,
         float scale, int x, int y, int enabled);

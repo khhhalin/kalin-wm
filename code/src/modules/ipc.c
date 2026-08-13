@@ -654,6 +654,18 @@ ipc_exec_command(struct ipc_client *cl, char *line)
 			wlr_log(WLR_DEBUG, "ipc: dockprep: missing appid or args ('%s')",
 					appid ? appid : "(none)");
 		}
+	} else if (strcmp(cmd, "float-next") == 0) {
+		/* float-next <appid>: arm a one-shot hint that the next window with
+		 * this app_id should float under the cursor instead of joining the
+		 * rail (layout Phase 4). Mirrors dockprep — a menu-spawn intent the
+		 * shell declares before spawning, since the compositor can't tell a
+		 * menu-spawn from a keyboard-spawn once the window arrives. */
+		char *appid = strtok_r(NULL, " \t\r", &save);
+		if (appid && *appid) {
+			floatprep_register(appid);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: float-next: missing appid");
+		}
 	} else if (strcmp(cmd, "dock") == 0) {
 		char *appid = strtok_r(NULL, " \t\r", &save);
 		char *sx = strtok_r(NULL, " \t\r", &save);

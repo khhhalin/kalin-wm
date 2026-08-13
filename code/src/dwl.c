@@ -104,6 +104,12 @@ Client *dock_hover_client;
 void dockprep_register(const char *appid, struct wlr_box rect);
 int dockprep_consume(const char *appid, struct wlr_box *out);
 
+/* floatprep table lives in modules/dock/floatprep.c (#included below); these
+ * forward-decls satisfy mapnotify()'s earlier floatprep_consume() call (the
+ * menu-spawn float-under-cursor hint, layout rethink Phase 4). */
+void floatprep_register(const char *appid);
+int floatprep_consume(const char *appid);
+
 /* Camera defaults for a fresh monitor (multi-camera: every Monitor owns its
  * own `cam` Viewport over the shared world — see obsidian/multi-camera.md;
  * initialized in createmon()). */
@@ -2046,9 +2052,11 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		struct wlr_box dockprep_rect = {0};
 		int dockprep_matched;
+		int floatprep_matched;
 
 		applyrules(c);
 		dockprep_matched = dockprep_consume(client_get_appid(c), &dockprep_rect);
+		floatprep_matched = floatprep_consume(client_get_appid(c));
 		p = (spawn_parent_candidate && spawn_parent_candidate->mon == c->mon)
 				? spawn_parent_candidate : NULL;
 
@@ -2056,6 +2064,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * (see its declaration above) — the shell told us in advance this
 		 * app_id is about to be docked into an exact rect, so skip straight
 		 * to setdocked() instead of picking any floating position at all;
+		 * (0b) a pending "float-next" request (Phase 4) — a menu-spawned
+		 * window floats under the cursor, off the rail (see that branch);
 		 * (1) a persisted position from a previous run of this exact app
 		 * instance (persistence_register_client() matches by appid+title+
 		 * spawn-order — two simultaneously open windows of the same app,
@@ -2066,6 +2076,40 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * default (monitor center) for the very first window. */
 		if (c->mon && dockprep_matched) {
 			setdocked(c, 1, dockprep_rect);
+		} else if (c->mon && floatprep_matched) {
+			/* Float-under-cursor (layout Phase 4): the shell armed a
+			 * "float-next <appid>" hint before spawning this window from the
+			 * right-click menu, so it floats near the cursor instead of
+			 * joining the rail. Mark it isfloating (camera-bypassed, exempt
+			 * from rail insertion — rail_prev/rail_next stay NULL) and place
+			 * it non-obscuringly: the corner nearest the cursor sits a small
+			 * margin AWAY from the click, expanding toward whichever side has
+			 * more room, so the point the user clicked stays visible. */
+			int dw = c->geom.width, dh = c->geom.height;
+			int cx = (int)SCREEN_TO_WORLD_X(c->mon, cursor->x);
+			int cy = (int)SCREEN_TO_WORLD_Y(c->mon, cursor->y);
+			/* Monitor extent in world coords (room test for the expand side). */
+			int mx = (int)SCREEN_TO_WORLD_X(c->mon, c->mon->w.x);
+			int my = (int)SCREEN_TO_WORLD_Y(c->mon, c->mon->w.y);
+			int mw = (int)(c->mon->w.width / MON_ZOOM_SAFE(c->mon));
+			int mh = (int)(c->mon->w.height / MON_ZOOM_SAFE(c->mon));
+
+			c->isfloating = 1;
+			/* Expand toward the roomier side of the cursor: if there's more
+			 * room to the right, the window's left edge starts right of the
+			 * cursor (offset by FLOAT_CURSOR_MARGIN so the click isn't
+			 * covered); otherwise its right edge ends left of the cursor. */
+			if ((mx + mw) - cx >= cx - mx)
+				c->geom.x = snap_grid(cx + FLOAT_CURSOR_MARGIN);
+			else
+				c->geom.x = snap_grid(cx - FLOAT_CURSOR_MARGIN - dw);
+			if ((my + mh) - cy >= cy - my)
+				c->geom.y = snap_grid(cy + FLOAT_CURSOR_MARGIN);
+			else
+				c->geom.y = snap_grid(cy - FLOAT_CURSOR_MARGIN - dh);
+			resize(c, c->geom, 0);
+			wlr_log(WLR_DEBUG, "float: placed %u at (%d,%d) near cursor (%d,%d), off-rail",
+				c->id, c->geom.x, c->geom.y, cx, cy);
 		} else if (c->mon) {
 			has_saved_geom = persistence_register_client(c);
 			if (has_saved_geom) {
@@ -2564,6 +2608,7 @@ quit(const Arg *arg)
 #include "modules/spawn/tmux_spawn.c"
 #include "modules/output/output.c"
 #include "modules/dock/dockprep.c"
+#include "modules/dock/floatprep.c"
 
 void
 rendermon(struct wl_listener *listener, void *data)
