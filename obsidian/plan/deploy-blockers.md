@@ -1,9 +1,24 @@
-# Deploy — layout refactor (Phases 0-3 + agent input)
+# Deploy — layout refactor
 
-**DEPLOYED 2026-08-13.** The live session runs the new build
+**Phases 0-3 + agent input: DEPLOYED 2026-08-13** — the live session runs
 `/nix/store/if6rzbma…-kalin-wm` (rail + grow-push + opacity-persist + graph
-removed + click/key/type). Kept here as the record of what the deploy needed and
-the build trap it exposed. See [[layout-impl]].
+removed + click/key/type). **Phases 4-5 (float + overlay): merged to local main,
+NOT yet deployed** — see the new blocker below. See [[layout-impl]].
+
+## 0. Phases 4-5 deploy blocker — `binds.conf` needs `overlay-pin` (NOT yet deployed)
+
+Phase 5 adds a new action `overlay-pin` (bound to `Super+L` in `default_binds.h`).
+kalin-wm's bind engine runs a **coverage check that `die()`s at startup** if any known
+action is neither bound nor `unbind`-ed in the on-disk config. The user's live
+`~/.config/kalin-wm/binds.conf` doesn't mention `overlay-pin`, so a Phase-4/5 build
+would **abort at startup** on it. Before deploying Phases 4-5, add to that file:
+
+- `bind Super+l -> overlay-pin`   (arm-then-click: focus child, click host)
+
+**AT deploy time only** — the currently-live build (`if6rzbma`) has no `overlay-pin`
+action, so adding the line sooner would abort *it* on a reload/restart. Same timing
+rule as the Phase-1 `binds.conf` migration below. (`float-next` is IPC-only, no bind,
+so it needs nothing.)
 
 ## 1. `~/.config/kalin-wm/binds.conf` — migrated (was a startup-abort blocker) ✅
 
