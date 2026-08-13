@@ -1,6 +1,6 @@
 # Layout implementation plan — rail + overlay-attach
 
-**Status: IN PROGRESS. Phase 0 + Phase 1 + Phase 2 DONE (2026-08-13); Phases 3–6 pending.**
+**Status: IN PROGRESS. Phase 0 + Phase 1 + Phase 2 + Phase 3 DONE (2026-08-13); Phases 4–6 pending.**
 Implements the decided model in [[layout-rethink]]. Code-grounded (file:line from a
 planning pass; line numbers drift as phases land). See [[parallel-tracks]].
 
@@ -89,8 +89,27 @@ swap needed.
   crash/asserts. **Deferred to Phase 6:** rail-order **persistence** — the rail
   rebuilds from live spawns only; a restart restores positions/size/crop/opacity/
   camera (unchanged) but not rail linkage. As-built note: [[rail]].
-- **Phase 3 — Growing pushes the rail** (reintroduce the dropped `resolve_growth_overlap` as a
-  1D forward-walk over `rail_next`; re-hook `commitnotify:1148` + `resize_actions.c`).
+- **Phase 3 — Growing pushes the rail** — **DONE 2026-08-13** (branch
+  `layout-phase3-growpush`). Added `rail_push_growth(grown)` in
+  `modules/layout/rail.c`: an overlap-based 1D forward-walk over `rail_next` that
+  slides successors right by however far `grown`'s new right edge (plus
+  `SPAWN_GAP`) overruns the first successor, reusing `rail_shift_successors()`.
+  Position-based (correct for both top-left `resizefocused` and centered
+  `fitwidth` growth) and idempotent → that idempotence is the feedback-loop
+  guard (successors move via `client_set_target_geom`, no `resize()` re-entry).
+  Hooked in `commitnotify()` (gated on an actual width increase, capturing
+  `old_width` before `client_accept_requested_size()`) and in
+  `fitwidth()`/`resizefocused()` (`resize_actions.c`); `fitheight()` deliberately
+  not hooked (height doesn't overlap along a horizontal rail). **`allow_overlap`
+  re-homed** (Super+Shift+o, `toggle-overlap`): now live — a flagged rail member
+  grows *over* its successors (push skipped); its stale "dormant" comment
+  (`kalin.h`) and `toggleoverlap()`'s were updated to the new meaning. Build
+  clean (only pre-existing `default_binds.h` overlength warning); tests: rail
+  suite 17/17 (10 linkage + **7 new grow-push math cases**, incl. an
+  `allow_overlap`-suppresses-push case), all suites 0 failures; nested smoke
+  verified — rail placed/gap-closed across map+unmap with no asserts (growth
+  itself is **unit-tested, not runtime-tested** — no headless input injection /
+  IPC resize command to drive a live grow). As-built: [[rail]].
 - **Phase 4 — Float-under-cursor** (menu spawns). **The one genuinely missing primitive:** no
   compositor signal distinguishes keyboard vs menu spawn (both arrive via the tmux `spawn` path).
   Needs a shell→compositor pre-spawn hint — recommend a dockprep-style `float-next <appid>` IPC

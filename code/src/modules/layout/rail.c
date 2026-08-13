@@ -230,3 +230,39 @@ rail_open_gap_after(Client *c)
 		return;
 	rail_shift_successors(c, c->geom.width + SPAWN_GAP);
 }
+
+/* A rail member grew (wider buffer, or an explicit fit/resize): push its
+ * successors right so the growth doesn't cover them — the 1D forward-walk heir
+ * of the old graph's resolve_growth_overlap() (layout rethink Phase 3,
+ * obsidian/plan/layout-impl.md). The push amount is the *overlap* of `grown`'s
+ * right edge (plus the row gap) into its immediate successor's left edge; the
+ * whole successor chain slides by that one delta (via rail_shift_successors),
+ * so the inter-successor spacing the rail already maintains is preserved and
+ * only what's actually covered moves. Position-based, not delta-based, so it's
+ * correct whether the caller grew top-left-anchored (resizefocused) or
+ * centered (fitwidth), and idempotent: once the successors clear, the overlap
+ * is <= 0 and this is a no-op — which is also the feedback-loop guard, since
+ * commitnotify() calls this on every committed buffer.
+ *
+ * allow_overlap re-home (Phase 3): a flagged window grows *over* its successors
+ * instead of pushing them, so this is a no-op for it — the flag's live meaning
+ * under the rail (Super+Shift+o). No-op too for an off-rail window. */
+void
+rail_push_growth(Client *grown)
+{
+	Client *first;
+	int overlap;
+
+	if (!grown || grown->allow_overlap)
+		return;
+	if (!grown->rail_prev && !grown->rail_next && rail_head != grown)
+		return; /* not on the rail */
+
+	first = grown->rail_next;
+	if (!first)
+		return; /* nothing to the right to push */
+
+	overlap = (grown->geom.x + grown->geom.width + SPAWN_GAP) - first->geom.x;
+	if (overlap > 0)
+		rail_shift_successors(grown, overlap);
+}

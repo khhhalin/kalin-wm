@@ -425,6 +425,7 @@ void focus_directional(const Arg *arg);
  * DWL_INTERNAL hides kalin.h's public prototypes from this TU. */
 void rail_insert_after(Client *p, Client *c);
 void rail_open_gap_after(Client *c);
+void rail_push_growth(Client *grown);
 void rail_remove(Client *c);
 void rail_swap_dir(const Arg *arg);
 void rail_focus_dir(const Arg *arg);
@@ -1068,6 +1069,7 @@ void
 commitnotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, commit);
+	int old_width;
 
 	if (c->surface.xdg->initial_commit) {
 		/*
@@ -1099,16 +1101,25 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * requested via resize() below, and would silently clobber the
 	 * restore if allowed through — skip exactly that one commit's accept,
 	 * then behave normally again. */
+	old_width = c->geom.width; /* to detect growth for the rail push below */
 	if (c->persist_size_pending)
 		c->persist_size_pending = 0;
 	else
-		/* Accept the client's own requested content size into c->geom (the
-		 * return value only mattered when it gated resolve_growth_overlap();
-		 * that push-neighbors-on-growth step left with the connection graph
-		 * and comes back rail-based in the layout rethink's Phase 3). */
+		/* Accept the client's own requested content size into c->geom. The
+		 * return value once gated resolve_growth_overlap(); that
+		 * push-neighbors-on-growth step is now rail-based (rail_push_growth()
+		 * below), keyed off c->geom's new width rather than that flag. */
 		(void)client_accept_requested_size(c);
 
 	resize(c, c->geom, 0);
+
+	/* Growing pushes the rail (layout rethink Phase 3): if this committed a
+	 * wider buffer for a rail member, slide its successors right so they aren't
+	 * covered. Gated on an actual width increase so the common no-growth commit
+	 * doesn't walk the rail; the push itself is overlap-based and idempotent, so
+	 * a resize()-driven successor move can't feed back into another push here. */
+	if (c->geom.width > old_width)
+		rail_push_growth(c);
 
 	/* keep a non-opaque window's opacity applied to freshly committed buffers */
 	if (c->opacity < 1.0f)
@@ -3862,11 +3873,11 @@ toggleontop(const Arg *arg)
 		setontop(sel, !sel->isontop);
 }
 
-/* Toggle the focused window's "grow over neighbors" flag. Dormant since the
- * connection graph was removed (its consumer resolve_growth_overlap() went
- * with it); the flag still toggles and broadcasts, and a rail-based grow-push
- * re-reads it in the layout rethink's Phase 3. Purely a flag flip: there's no
- * layer/geometry change, unlike setontop()/setmaximized(). */
+/* Toggle the focused window's "grow over rail successors" flag (layout Phase 3):
+ * rail_push_growth() skips the push for a flagged window, so it grows *over* the
+ * windows to its right instead of shoving them along the rail. Purely a flag
+ * flip: there's no layer/geometry change here, unlike setontop()/setmaximized()
+ * — the effect shows the next time the window grows. */
 void
 toggleoverlap(const Arg *arg)
 {
