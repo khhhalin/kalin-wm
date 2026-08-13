@@ -127,16 +127,12 @@ typedef struct SessionLock SessionLock;
 enum {
     CurNormal,      /* Normal cursor operation */
     CurPressed,     /* Mouse button is pressed */
-    CurMove,        /* Moving a window (drags its whole connection component along) */
+    CurMove,        /* Moving a window (Super+LMB) */
     CurResize,      /* Resizing a window, from whichever corner was nearest the grab */
     CurPan,         /* Dragging the camera (Super+Ctrl+LMB on background) */
-    CurCut,         /* Super+LMB pressed on empty canvas: sweeping the cursor
-                      * near/across a connection line severs it (see
-                      * connection_click_hit(), buttonpress()/motionnotify()) */
-    CurMoveSolo     /* Super+Ctrl+LMB on a window: move just that window,
-                      * leaving its connections intact but not dragging the
-                      * rest of the component along (see moveresize(),
-                      * ACT_VIEWPORT_PAN_GRAB in bind_invoke()) */
+    CurMoveSolo     /* Super+Ctrl+LMB on a window: same move as CurMove today —
+                      * kept as its own mode for the pan-grab fallback wiring
+                      * (see moveresize(), ACT_VIEWPORT_PAN_GRAB in bind_invoke()) */
 };
 
 /**
@@ -172,22 +168,6 @@ enum Direction {
     DIR_RIGHT,
     DIR_UP,
     DIR_DOWN
-};
-
-/**
- * Octant - the 8 compass directions a Client.neighbor[] connection slot can
- * occupy, assigned by the angle between two windows' centers. Ordered so the
- * opposite direction is always +4 (mod 8): OCT_N<->OCT_S, OCT_E<->OCT_W, etc.
- */
-enum Octant {
-    OCT_N,
-    OCT_NE,
-    OCT_E,
-    OCT_SE,
-    OCT_S,
-    OCT_SW,
-    OCT_W,
-    OCT_NW
 };
 
 /* ============================================================================
@@ -255,15 +235,6 @@ struct Client {
     /* Crop state for window cropping functionality */
     CropState crop;             /* Normalized crop rectangle */
 
-    /* Connection graph: up to 8 neighbor links, one per compass octant (see
-     * enum Octant below), assigned by the angle between two windows' centers
-     * when the connection forms. Symmetric — if neighbor[DIR_W] == other,
-     * then other->neighbor[DIR_E] == this client. NULL slot = no connection
-     * in that direction. Used for (a) initial spawn placement (new window
-     * connects W/E to whichever window was focused when it was created) and
-     * (b) group-drag (dragging any window in a connected component moves the
-     * whole component together) and (c) Super+Ctrl+Arrow swap-with-neighbor. */
-    Client *neighbor[8];
     uint32_t id;                 /* stable id, for IPC references */
 
     Monitor *mon;               /* Associated monitor */
@@ -310,10 +281,14 @@ struct Client {
     int isontop;                /* "always on top" pin: stays above other
                                   * windows regardless of subsequent focus
                                   * elsewhere. */
-    int allow_overlap;          /* When set, resolve_growth_overlap() skips
-                                  * this client entirely: its growth never
-                                  * pushes connection-graph neighbors out of
-                                  * the way, so it's free to overlap them. */
+    int allow_overlap;          /* "let this window grow over its neighbors"
+                                  * flag, toggled by Super+Shift+o and broadcast
+                                  * to the shell. Dormant since the connection
+                                  * graph was removed (its only consumer,
+                                  * resolve_growth_overlap(), went with it);
+                                  * a rail-based grow-push re-reads it in the
+                                  * layout rethink's Phase 3 (see
+                                  * obsidian/plan/layout-impl.md). */
     int isurgent;               /* Urgency hint */
     int isfullscreen;           /* Fullscreen state */
     int ismaximized;            /* Maximize-toggle (Super+f): fills mon->w, keeps
@@ -758,14 +733,6 @@ void togglefullscreen(const Arg *arg);
 void togglemaximized(const Arg *arg);
 void toggleontop(const Arg *arg);
 void toggleoverlap(const Arg *arg);
-void sever_connection(uint32_t id_a, uint32_t id_b);
-void sever_cross_monitor_edges(Client *c);
-void connect_clients(Client *a, Client *b);
-void resolve_growth_overlap(Client *c);
-void connect_pick_arm(void);
-void connect_pick_cancel(void);
-void connect_pick_complete(Client *target);
-Client *connect_pick_pending(void);
 void toggleminimize(const Arg *arg);
 void togglescratchpad(const Arg *arg);
 void unmapnotify(struct wl_listener *listener, void *data);

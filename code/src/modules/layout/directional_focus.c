@@ -1,8 +1,6 @@
 /* Directional focus navigation (cone search): Super+Arrow finds the nearest
- * window in roughly the pressed direction, independent of the connection-
- * graph (unlike swap_neighbor_dir(), connection_graph.c, which only acts on
- * an established neighbor link) — a pure geometric nearest-neighbor-in-a-cone
- * search over every currently visible client.
+ * window in roughly the pressed direction — a pure geometric
+ * nearest-neighbor-in-a-cone search over every currently visible client.
  *
  * Separately-compiled TU: links against dwl.c's externed globals (clients,
  * selmon, viewport, menu_shown) and functions (focustop, focusclient) via

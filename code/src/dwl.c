@@ -414,37 +414,12 @@ static struct wl_listener start_drag = {.notify = startdrag};
  * modules/layout/directional_focus.c TU) - forward declaration for
  * config.h. */
 void focus_directional(const Arg *arg);
-/* Connection-graph (defined in the separately-compiled
- * modules/layout/connection_graph.c TU) - forward declaration for config.h,
- * same as focus_directional above. */
-void swap_neighbor_dir(const Arg *arg);
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
 
 /* attempt to encapsulate suck into one file */
 #include "client_inline.h"
-
-/* Connection-graph (defined in the separately-compiled
- * modules/layout/connection_graph.c TU). kalin.h also declares
- * connect_clients()/resolve_growth_overlap()/sever_connection() for other
- * modules (resize_actions.c, ipc.c) — but dwl.c itself doesn't see that
- * section of kalin.h (it's guarded by "#ifndef DWL_INTERNAL", which dwl.c
- * defines, since dwl.c owns these symbols' *other* declarations there
- * directly), so every one of these functions dwl.c calls needs its own
- * forward declaration here too, independent of kalin.h's copy. */
-void connect_clients(Client *a, Client *b);
-void resolve_growth_overlap(Client *c);
-void sever_connection(uint32_t id_a, uint32_t id_b);
-void sever_cross_monitor_edges(Client *c);
-int opposite_octant(int oct);
-int connection_click_hit(double sx, double sy, uint32_t *out_a, uint32_t *out_b);
-void close_gap(Client *a, Client *b);
-int collect_component(Client *start, Client **out, int max);
-void connect_pick_arm(void);
-void connect_pick_cancel(void);
-void connect_pick_complete(Client *target);
-Client *connect_pick_pending(void);
 
 /* wlr-foreign-toplevel-management (defined in modules/foreign_toplevel.c). */
 void ftl_create(Client *c);
@@ -858,38 +833,6 @@ buttonpress(struct wl_listener *listener, void *data)
 			return;
 		}
 
-		/* Click-to-sever a spawn-connection line: only while Super is held
-		 * (matching when quickshell actually draws the lines) and only on
-		 * BTN_LEFT, and only if the click didn't land on a client (a real
-		 * window always takes priority over a line running behind/near it).
-		 * Entering CurCut here (rather than just testing this one point) lets
-		 * motionnotify() keep re-testing every subsequent cursor position for
-		 * the rest of the drag, so severing a line no longer needs a precise
-		 * single click — sweeping the cursor near/across it while the button
-		 * is held cuts it too (a plain click is just the zero-motion case of
-		 * the same sweep). */
-		if (super_held && event->button == BTN_LEFT) {
-			Client *hit, *pending = connect_pick_pending();
-			xytonode(cursor->x, cursor->y, NULL, &hit, NULL, NULL, NULL);
-			if (!hit) {
-				uint32_t id_a, id_b;
-				if (pending)
-					connect_pick_cancel();
-				if (connection_click_hit(cursor->x, cursor->y, &id_a, &id_b))
-					sever_connection(id_a, id_b);
-				cursor_mode = CurCut;
-				return;
-			} else if (pending && hit != pending) {
-				/* Menu-armed create: the pending source was set by
-				 * connect_pick_arm() (Super+L, WindowActions.qml's "Link"
-				 * button). The next click on a *different* window completes
-				 * it; connect_clients() already no-ops on an occupied slot
-				 * or an existing link, so this is safe to always attempt. */
-				connect_pick_complete(hit);
-				return;
-			}
-		}
-
 		/* Change focus if the button was _pressed_ over a client */
 		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
 		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
@@ -1144,8 +1087,12 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * then behave normally again. */
 	if (c->persist_size_pending)
 		c->persist_size_pending = 0;
-	else if (client_accept_requested_size(c))
-		resolve_growth_overlap(c);
+	else
+		/* Accept the client's own requested content size into c->geom (the
+		 * return value only mattered when it gated resolve_growth_overlap();
+		 * that push-neighbors-on-growth step left with the connection graph
+		 * and comes back rail-based in the layout rethink's Phase 3). */
+		(void)client_accept_requested_size(c);
 
 	resize(c, c->geom, 0);
 
@@ -1814,7 +1761,6 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_VIEWPORT_FOLLOW:   viewport_toggle_follow(arg); break;
 	case ACT_VIEWPORT_FOLLOW_NEW: viewport_toggle_follow_new(arg); break;
 	case ACT_FOCUS_DIR:         focus_directional(arg); break;
-	case ACT_SWAP_DIR:          swap_neighbor_dir(arg); break;
 	case ACT_FOCUS_STACK:       focusstack(arg); break;
 	case ACT_TOGGLE_FULLSCREEN: togglefullscreen(arg); break;
 	case ACT_TOGGLE_MAXIMIZED: togglemaximized(arg); break;
@@ -1822,7 +1768,6 @@ bind_invoke(int action_id, const Arg *arg)
 	case ACT_FIT_HEIGHT: fitheight(arg); break;
 	case ACT_TOGGLE_ONTOP:     toggleontop(arg); break;
 	case ACT_TOGGLE_OVERLAP:   toggleoverlap(arg); break;
-	case ACT_LINK_PICK:        connect_pick_arm(); break;
 	case ACT_TOGGLE_PAPER:     togglepaper(arg); break;
 	case ACT_PAPER_YELLOW:     paperyellow(arg); break;
 	case ACT_TOGGLE_OVERVIEW:   toggle_overview(arg); break;
@@ -1963,7 +1908,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
-	Client *old_east = NULL;
 	Monitor *m;
 	int i;
 	int restore_width;
@@ -2106,32 +2050,16 @@ mapnotify(struct wl_listener *listener, void *data)
 				c->geom.y = snap_grid(c->geom.y);
 				resize(c, c->geom, 0);
 			} else if (p) {
+				/* Place to the right of the spawn parent at the same y
+				 * (SPAWN_GAP px away). The connection graph that used to
+				 * splice into an existing line here is gone; a keyboard
+				 * spawn's row order becomes the rail in the layout rethink's
+				 * Phase 2 (see obsidian/plan/layout-impl.md). No overlap
+				 * check for now — a window landing on an existing one just
+				 * sits on top until the rail reintroduces gap management. */
 				c->geom.x = snap_grid(p->geom.x + p->geom.width + SPAWN_GAP);
 				c->geom.y = snap_grid(p->geom.y);
 				resize(c, c->geom, 0);
-
-				/* p already has an East neighbor (e.g. focused window is the
-				 * leftmost of an existing line) — insert the new window
-				 * between them instead of silently failing to connect (what
-				 * connect_clients() alone would do, since p's E slot is
-				 * taken): sever p<->old_east, shift old_east and everything
-				 * still transitively connected to it (the rest of the line)
-				 * right to make room, then splice c in between. */
-				old_east = p->neighbor[OCT_E];
-				if (old_east) {
-					Client *component[256];
-					int shift = c->geom.width + SPAWN_GAP;
-					int ncomp, k;
-
-					p->neighbor[OCT_E] = NULL;
-					old_east->neighbor[OCT_W] = NULL;
-					ncomp = collect_component(old_east, component, (int)LENGTH(component));
-					for (k = 0; k < ncomp; k++) {
-						struct wlr_box nb = component[k]->geom;
-						nb.x += shift;
-						resize(component[k], nb, 0);
-					}
-				}
 			} else if (cursor && c->mon == xytomon(cursor->x, cursor->y)) {
 				/* No spawn parent (nothing was focused, or the focused
 				 * window is on a different monitor) — center the new window
@@ -2148,21 +2076,6 @@ mapnotify(struct wl_listener *listener, void *data)
 				c->geom.y = snap_grid(c->mon->w.y + c->mon->w.height / 2 - c->geom.height / 2);
 				resize(c, c->geom, 0);
 			}
-		}
-
-		/* Link into the connection graph (same p as the placement anchor
-		 * above, same-monitor only, matching setmon() above) — placed to p's
-		 * right, so this always connects W/E; connect_clients() computes the
-		 * actual octant from the real geometry rather than assuming, and
-		 * silently no-ops if a slot is somehow already taken (shouldn't
-		 * happen for p's E slot here — old_east above already cleared it —
-		 * or for c's W slot, since c is brand new). Skipped for a dockprep
-		 * match — a docked panel isn't part of the tiling/connection graph
-		 * at all, same as it's exempt from the placement logic above. */
-		if (p && !dockprep_matched) {
-			connect_clients(p, c);
-			if (old_east)
-				connect_clients(c, old_east);
 		}
 	}
 	/* Auto-pan to a newly spawned window (viewport.follow_new_windows,
@@ -2315,29 +2228,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		/* Update selmon (even while dragging a window) */
 		if (sloppyfocus)
 			selmon = xytomon(cursor->x, cursor->y);
-
-		/* While a menu-armed connect (Super+L) is pending, the shell needs
-		 * the live cursor position every tick to draw the rubber-band line
-		 * (see ipc_build_state()'s "pending_connect"). Gated on the pending
-		 * state itself so this doesn't add per-motion IPC traffic in the
-		 * common (nothing armed) case. */
-		if (connect_pick_pending())
-			status_mark_dirty();
 	}
 
 	/* Update drag icon's position */
 	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
-
-	/* Drag-to-cut: re-test the *current* cursor position against every live
-	 * connection line each tick, for the rest of the CurCut drag armed in
-	 * buttonpress() — see the comment there for why sweeping is more
-	 * forgiving than a single precise click. */
-	if (cursor_mode == CurCut) {
-		uint32_t id_a, id_b;
-		if (connection_click_hit(cursor->x, cursor->y, &id_a, &id_b))
-			sever_connection(id_a, id_b);
-		return;
-	}
 
 	if ((cursor_mode == CurMove || cursor_mode == CurMoveSolo || cursor_mode == CurResize) && !grabc) {
 		cursor_mode = CurNormal;
@@ -2350,8 +2244,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * grab offset in world units (see moveresize()). */
 	if ((cursor_mode == CurMove || cursor_mode == CurMoveSolo) && grabc) {
 		Monitor *drag_mon = xytomon(cursor->x, cursor->y);
-		int old_x, old_y, new_x, new_y, move_dx, move_dy;
-		int handed_off = 0;
+		int new_x, new_y;
 
 		/* Drag hand-off (multi-camera): when the cursor crosses onto another
 		 * monitor mid-drag, reassign the holder so the transform below goes
@@ -2361,59 +2254,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * grabbed point back under the cursor through the *new* camera.
 		 * Camera-bypassed clients (docked/fullscreen/maximized — screen-space
 		 * geometry, see client_apply_zoom_frame()) keep the old release-time
-		 * setmon() in buttonpress() instead. Edges into the old monitor are
-		 * severed: a connection line through two different cameras has no
-		 * coherent geometry (see sever_cross_monitor_edges()). */
+		 * setmon() in buttonpress() instead. Only the grabbed window moves now
+		 * (group-drag along neighbors went with the connection graph), so
+		 * there's nothing left to re-base or fling on the hand-off tick. */
 		if (drag_mon && grabc->mon && drag_mon != grabc->mon
-				&& !grabc->docked && !grabc->isfullscreen && !grabc->ismaximized) {
+				&& !grabc->docked && !grabc->isfullscreen && !grabc->ismaximized)
 			setmon(grabc, drag_mon);
-			sever_cross_monitor_edges(grabc);
-			handed_off = 1;
-		}
 
-		old_x = grabc->geom.x;
-		old_y = grabc->geom.y;
 		new_x = (int)lroundf(SCREEN_TO_WORLD_X(grabc->mon, cursor->x)) - grabcx;
 		new_y = (int)lroundf(SCREEN_TO_WORLD_Y(grabc->mon, cursor->y)) - grabcy;
-		move_dx = new_x - old_x;
-		move_dy = new_y - old_y;
 
 		/* Move the grabbed client to the new position. */
 		resize(grabc, (struct wlr_box){
 			.x = new_x, .y = new_y,
 			.width = grabc->geom.width, .height = grabc->geom.height}, 1);
-
-		/* Drag the whole spawn-connection component along: every window
-		 * transitively reachable from grabc via an unsevered connection
-		 * moves by the same screen-space delta — but gliding after grabc
-		 * (spring-animated, like a tether) rather than snapping instantly,
-		 * unlike grabc itself which stays pinned exactly under the cursor.
-		 * Based off target_geom (not geom) when a member is still mid-glide,
-		 * so repeated small deltas during one continuous drag accumulate
-		 * correctly instead of compounding against a stale animated position.
-		 * Skipped entirely for CurMoveSolo (Super+Ctrl+LMB): that mode moves
-		 * just the grabbed window, leaving its connections intact but not
-		 * dragging the rest of the component along. Also skipped on the
-		 * hand-off tick: move_dx/dy then include the camera re-basing jump,
-		 * not cursor motion, and any surviving (same-monitor) component
-		 * member would be flung by it. */
-		if (cursor_mode == CurMove && !handed_off && (move_dx || move_dy)) {
-			Client *component[256];
-			int n = collect_component(grabc, component, (int)LENGTH(component));
-			int i;
-			for (i = 0; i < n; i++) {
-				int base_x, base_y;
-				if (component[i] == grabc)
-					continue;
-				base_x = component[i]->animating ? component[i]->target_geom.x : component[i]->geom.x;
-				base_y = component[i]->animating ? component[i]->target_geom.y : component[i]->geom.y;
-				client_set_target_geom(component[i], (struct wlr_box){
-					.x = base_x + move_dx,
-					.y = base_y + move_dy,
-					.width = component[i]->geom.width,
-					.height = component[i]->geom.height});
-			}
-		}
 		return;
 	} else if (cursor_mode == CurResize && grabc) {
 		/* resize_anchor_x/y (set once in moveresize()) is the fixed corner
@@ -3948,9 +3802,8 @@ tagmon(const Arg *arg)
 	 * through the new holder's camera, so teleport to the center of what
 	 * that camera currently shows. Camera-bypassed clients (docked/
 	 * fullscreen/maximized) keep their screen-space geometry — setmon()'s
-	 * own resize/setfullscreen already relocates those. Cross-camera edges
-	 * are severed for the same reason as the drag hand-off in
-	 * motionnotify(); the new position is persisted like a drag drop is. */
+	 * own resize/setfullscreen already relocates those. The new position is
+	 * persisted like a drag drop is. */
 	if (!sel->isfullscreen && !sel->ismaximized && !sel->docked) {
 		int cwx = (int)lroundf(SCREEN_TO_WORLD_X(m, m->m.x + m->m.width / 2.0));
 		int cwy = (int)lroundf(SCREEN_TO_WORLD_Y(m, m->m.y + m->m.height / 2.0));
@@ -3958,7 +3811,6 @@ tagmon(const Arg *arg)
 			.x = cwx - sel->geom.width / 2, .y = cwy - sel->geom.height / 2,
 			.width = sel->geom.width, .height = sel->geom.height}, 0);
 	}
-	sever_cross_monitor_edges(sel);
 	persistence_save();
 }
 
@@ -3987,9 +3839,11 @@ toggleontop(const Arg *arg)
 		setontop(sel, !sel->isontop);
 }
 
-/* Toggle whether the focused window is allowed to overlap its
- * connection-graph neighbors (see resolve_growth_overlap()). Purely a flag
- * flip: there's no layer/geometry change, unlike setontop()/setmaximized(). */
+/* Toggle the focused window's "grow over neighbors" flag. Dormant since the
+ * connection graph was removed (its consumer resolve_growth_overlap() went
+ * with it); the flag still toggles and broadcasts, and a rail-based grow-push
+ * re-reads it in the layout rethink's Phase 3. Purely a flag flip: there's no
+ * layer/geometry change, unlike setontop()/setmaximized(). */
 void
 toggleoverlap(const Arg *arg)
 {
@@ -4075,17 +3929,9 @@ unmapnotify(struct wl_listener *listener, void *data)
 		cursor_mode = CurNormal;
 		grabc = NULL;
 	}
-	/* A pending Super+L connect (see connect_pick_arm()) holds a raw
-	 * Client* between arming and the completing click — cancel it if the
-	 * armed window itself closes in that window, or the pointer would
-	 * dangle. */
-	if (c == connect_pick_pending())
-		connect_pick_cancel();
-
-	/* Same dangling-pointer concern as connect_pick_pending() above: clear
-	 * the hover mirror if the client that unmapped is the one it points at,
-	 * and tell the shell so it doesn't keep a docked panel considered
-	 * "hovered" after the client is gone. */
+	/* Clear the hover mirror if the client that unmapped is the one it
+	 * points at, and tell the shell so it doesn't keep a docked panel
+	 * considered "hovered" after the client is gone. */
 	if (c == dock_hover_client) {
 		dock_hover_client = NULL;
 		status_mark_dirty();
@@ -4108,52 +3954,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 		}
 		window_size_history_store(c, save_w, save_h);
 
-		/* Connection graph cleanup: first splice each pair of opposite
-		 * neighbors (N<->S, NE<->SW, E<->W, SE<->NW) directly together if
-		 * both sides of that axis exist — removing the middle of a line
-		 * should join what's left into one line again, not leave a gap
-		 * with two dangling ends. connect_clients() computes the real
-		 * octant from current geometry and no-ops if a slot's already
-		 * taken, so this is safe to attempt even when it doesn't quite
-		 * apply (e.g. the two neighbors are also connected some other
-		 * way already). Then detach every one of our up-to-8 neighbors
-		 * symmetrically (sever, not reparent otherwise — the simplest,
-		 * safest choice, matching "sever" already being a one-edge cut
-		 * elsewhere). */
-		{
-			int i, j;
-			for (i = 0; i < 4; i++) {
-				Client *a = c->neighbor[i];
-				Client *b = c->neighbor[i + 4];
-				if (a && b) {
-					/* a's and b's slots pointing back at c (by symmetry,
-					 * the opposite octant of the one c uses for each)
-					 * are still set at this point — connect_clients()
-					 * treats an occupied slot as "already connected to
-					 * something else" and silently no-ops, so it would
-					 * always refuse to link a<->b while they still each
-					 * point back at the client that's leaving. Clear
-					 * just those two back-pointers first. */
-					int opp_a = opposite_octant(i);
-					int opp_b = opposite_octant(i + 4);
-					if (a->neighbor[opp_a] == c)
-						a->neighbor[opp_a] = NULL;
-					if (b->neighbor[opp_b] == c)
-						b->neighbor[opp_b] = NULL;
-					connect_clients(a, b);
-					close_gap(a, b);
-				}
-			}
-			for (i = 0; i < 8; i++) {
-				Client *n = c->neighbor[i];
-				if (!n)
-					continue;
-				for (j = 0; j < 8; j++)
-					if (n->neighbor[j] == c)
-						n->neighbor[j] = NULL;
-				c->neighbor[i] = NULL;
-			}
-		}
+		/* No layout cleanup on close: a closing window just leaves a hole
+		 * where it was. The connection graph used to splice its opposite
+		 * neighbors together and shift the rest of the line in to close the
+		 * gap; niri-style gap-close returns rail-based in the layout
+		 * rethink's Phase 2 (see obsidian/plan/layout-impl.md). */
 
 		persistence_unregister_client(c);
 

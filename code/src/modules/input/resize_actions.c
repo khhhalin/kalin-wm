@@ -39,15 +39,13 @@ resizefocused(const Arg *arg)
  * window in mapnotify() — never a bound this resize should snap existing
  * windows back to): an earlier version set geo.x = c->mon->w.x, which
  * teleported the window to the monitor's fixed home offset in world space
- * regardless of where it currently sat in a connection-graph chain,
- * abandoning its neighbors and overlapping whatever else happened to live
- * near that anchor — this is what broke the tiling. Growing in place (from
- * either edge) can still newly overlap a connection-graph neighbor once the
- * window is wider than the gap to it, so push any such neighbor (and
- * everything still transitively connected beyond it) out of the way the
- * same way a client's own post-map growth does (see
- * resolve_growth_overlap(), dwl.c). Also re-centers the camera on the
- * window along the X axis only (viewport_center_on_x()) — the resize keeps
+ * regardless of where it currently sat, overlapping whatever else happened
+ * to live near that anchor — this is what broke the tiling. Growing in place
+ * can overlap whatever it grows into; the push-neighbors-aside step that used
+ * to run here left with the connection graph and comes back rail-based in the
+ * layout rethink's Phase 3 (see obsidian/plan/layout-impl.md). Also re-centers
+ * the camera on the window along the X axis only (viewport_center_on_x()) —
+ * the resize keeps
  * the window's own center fixed in world space, but the camera might not be
  * looking at that point, so this brings it into view without touching
  * wherever the camera was panned to vertically. */
@@ -70,7 +68,6 @@ fitwidth(const Arg *arg)
 	geo.width = c->mon->w.width;
 	geo.x -= (geo.width - old_width) / 2;
 	resize(c, geo, 0);
-	resolve_growth_overlap(c);
 	viewport_center_on_x(c);
 	status_mark_dirty();
 	persistence_save();
@@ -101,7 +98,6 @@ fitheight(const Arg *arg)
 	geo.height = c->mon->w.height;
 	geo.y -= (geo.height - old_height) / 2;
 	resize(c, geo, 0);
-	resolve_growth_overlap(c);
 	viewport_center_on_y(c);
 	status_mark_dirty();
 	persistence_save();

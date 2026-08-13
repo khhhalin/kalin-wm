@@ -1,16 +1,18 @@
 # Persistence
 
-- Persistence saves and restores window position, size, the
-  [[connection-graph]], each client's launch command (since 2026-07-17), each
-  monitor's camera pan+zoom (since 2026-08-13), and each window's opacity (since
-  2026-08-13) across restarts, so the
-  [[infinite-canvas]], its connections, the apps themselves, and the exact
-  view survive a session ending — see "Session resurrection" and "Camera
-  persistence" below. Own translation unit, `code/src/persistence.c` /
-  `code/include/persistence.h`.
+- Persistence saves and restores window position, size, each client's launch
+  command (since 2026-07-17), each monitor's camera pan+zoom (since 2026-08-13),
+  and each window's opacity (since 2026-08-13) across restarts, so the
+  [[infinite-canvas]], the apps themselves, and the exact view survive a session
+  ending — see "Session resurrection" and "Camera persistence" below. Own
+  translation unit, `code/src/persistence.c` / `code/include/persistence.h`.
+  **The [[connection-graph]] used to be saved/restored too (`connections` array,
+  `SavedConnection`, reconnect-on-load); removed 2026-08-13 with the graph
+  (layout Phase 1 — [[layout-impl]]). Rail order + overlay attachments return to
+  the save file in Phase 6.**
 - State file: `~/.local/share/kalin-wm/canvas_state.json`, hand-rolled flat
   JSON (own writer + a small non-nesting-safe parser — objects inside the
-  top-level `clients`/`connections`/`cameras` arrays must stay flat, no nested
+  top-level `clients`/`cameras` arrays must stay flat, no nested
   objects/arrays, or the parser's `{`/`}` scan breaks).
 
 ## Identity: appid + title is not unique
@@ -34,14 +36,12 @@
   the live window now had.
 - `persistence_register_client(void *client)` is the single entry point,
   called once per managed client from `mapnotify()` right after `c->mon` is
-  set: assigns the instance, applies any matching saved geometry/size/crop/
-  fullscreen/ontop state, and reconnects any saved [[connection-graph]] edge
-  to whichever partner has *already* registered this run (order-independent
-  — whichever of the two maps second is the one that completes the edge,
-  since both sides check the same loaded-connections list on their own
-  registration). Returns whether a saved position was applied, so
-  `mapnotify()`'s placement fallback (spawn-adjacent, or monitor-center for
-  the first window) knows whether to run at all.
+  set: assigns the instance and applies any matching saved geometry/size/crop/
+  fullscreen/ontop/opacity state. (It used to also reconnect saved
+  [[connection-graph]] edges here — removed 2026-08-13 with the graph.) Returns
+  whether a saved position was applied, so `mapnotify()`'s placement fallback
+  (spawn-adjacent, or cursor/monitor-center for the first window) knows whether
+  to run at all.
 - `persistence_unregister_client()` (called from `unmapnotify()`) removes
   the bookkeeping entry so a later save doesn't describe a stale pointer.
 
@@ -148,8 +148,8 @@
   camera by construction already frames the restored windows, so it's a no-op.
   See [[follow-mode]].
 - **Save freshness:** a camera pan/zoom on its own does **not** trigger a save
-  (`persistence_save()` fires on window/geometry/connection events and on
-  quit, not on camera motion). The camera is captured by whatever save fires
+  (`persistence_save()` fires on window/geometry events and on quit, not on
+  camera motion). The camera is captured by whatever save fires
   next — in practice frequent, and always on a clean quit. Verified end-to-end
   on a live nested build: pan to (640,360,1.5) → quit → file holds
   `cameras:[{WL-1,640,360,1.5}]` → reboot → `viewport WL-1 640 360 1.50`.
@@ -168,23 +168,23 @@
      "crop_saved_base": 1, "isfullscreen": 0, "isontop": 0,
      "opacity": 1.0000, "cmd": "foot -e kalin-term"}
   ],
-  "connections": [
-    {"a_appid": "foot", "a_title": "foot", "a_instance": 0,
-     "b_appid": "foot", "b_title": "foot", "b_instance": 1}
-  ],
   "cameras": [
     {"output": "LVDS-1", "x": 640.00, "y": 360.00, "zoom": 1.5000}
   ]
 }
 ```
 
+(A `"connections"` array once sat between `clients` and `cameras`; removed
+2026-08-13 with the [[connection-graph]] — [[layout-impl]]. Rail order +
+overlay attachments return here in Phase 6.)
+
 - Client `title` in the save file is the **registered snapshot** (whatever
   the client's title was at map time), not a fresh query at save time —
-  `save_client_cb()` must use the same identity the connections array uses,
-  or the two arrays key inconsistently and connection restoration silently
-  fails to match (a second real bug hit during this rework: title changes
-  between registration and save time made the client entries use one title
-  and the connection entries use another).
+  `save_client_cb()` uses the registered identity so it stays the stable key
+  everything else in the file is matched against. (This was a real bug during
+  the instance-keying rework: title changes between registration and save time
+  made client entries key inconsistently and restoration silently failed to
+  match.)
 - `persistence_save()` runs on drag-release, on `fitwidth()`/`fitheight()`,
   and at various other geometry-changing points (each calls it directly,
   not on a timer) — see the [[ledger]] for the call sites added as each

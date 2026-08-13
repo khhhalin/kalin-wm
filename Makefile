@@ -39,7 +39,7 @@ LDFLAGS  = $(WLR_LIBS) $(WL_LIBS) $(SD_LIBS) $(GL_LIBS) -lm
 # modules under code/src/modules/{crop,layout,ui,viewport,input}/ directly.
 # commit_size.c is compiled as its own translation unit. The other listed files
 # (util/crash_report/persistence) are independent translation units.
-SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/input/gestures.c code/src/modules/foreign_toplevel.c code/src/modules/protocols/toplevel_export.c code/src/modules/protocols/toplevel_icon.c code/src/modules/protocols/system_bell.c code/include/protocols/hyprland-toplevel-export-v1-protocol-code.c code/include/protocols/wlr-foreign-toplevel-management-unstable-v1-protocol-code.c code/src/modules/viewport/viewport_ops.c code/src/modules/viewport/overview.c code/src/modules/layout/arrange_sched.c code/src/modules/layout/window_size_history.c code/src/modules/layout/connection_graph.c code/src/modules/layout/directional_focus.c code/src/modules/layout/client_anim.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/screenshot/screenshot_ui.c code/src/modules/ipc.c code/src/modules/backlight.c code/src/modules/capture.c code/src/modules/shaders/shaders.c code/src/modules/session_lock.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
+SRCS = code/src/dwl.c code/src/util.c code/src/modules/input/commit_size.c code/src/modules/input/resize_actions.c code/src/modules/input/keyboard.c code/src/modules/input/gestures.c code/src/modules/foreign_toplevel.c code/src/modules/protocols/toplevel_export.c code/src/modules/protocols/toplevel_icon.c code/src/modules/protocols/system_bell.c code/include/protocols/hyprland-toplevel-export-v1-protocol-code.c code/include/protocols/wlr-foreign-toplevel-management-unstable-v1-protocol-code.c code/src/modules/viewport/viewport_ops.c code/src/modules/viewport/overview.c code/src/modules/layout/arrange_sched.c code/src/modules/layout/window_size_history.c code/src/modules/layout/directional_focus.c code/src/modules/layout/client_anim.c code/src/modules/ui/wallpaper.c code/src/modules/crop/crop_mode.c code/src/modules/screenshot/screenshot_ui.c code/src/modules/ipc.c code/src/modules/backlight.c code/src/modules/capture.c code/src/modules/shaders/shaders.c code/src/modules/session_lock.c code/src/modules/binds/bind_actions.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_engine.c code/src/crash_report.c code/src/persistence.c
 
 OBJS = $(addprefix $(BUILD_DIR)/,$(SRCS:.c=.o))
 DEPS = $(OBJS:.o=.d)
@@ -133,7 +133,7 @@ uninstall:
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f kalin-wm
-	rm -f tests/test_client_lifecycle tests/test_binds tests/test_growth_overlap tests/test_connection_graph tests/test_viewport_ops tests/test_window_shader_math tests/*.gcda tests/*.gcno tests/*.gcov
+	rm -f tests/test_client_lifecycle tests/test_binds tests/test_growth_overlap tests/test_viewport_ops tests/test_window_shader_math tests/*.gcda tests/*.gcno tests/*.gcov
 
 distclean: clean
 	rm -f code/config/config.h
@@ -151,8 +151,6 @@ test-unit:
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_client_lifecycle code/tests/test_client_lifecycle.c -lm && tests/test_client_lifecycle
 	@echo "=== Running Growth-Overlap Tests ==="
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_growth_overlap code/tests/test_growth_overlap.c -lm && tests/test_growth_overlap
-	@echo "=== Running Connection-Graph Tests ==="
-	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_connection_graph code/tests/test_connection_graph.c -lm && tests/test_connection_graph
 	@echo "=== Running Viewport-Ops Tests ==="
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_viewport_ops code/tests/test_viewport_ops.c -lm && tests/test_viewport_ops
 	@echo "=== Running Bind DSL Tests ==="

@@ -88,11 +88,6 @@ keypress(struct wl_listener *listener, void *data)
 			}
 		} else if (super_held) {
 			super_held = 0;
-			/* A pending menu-armed connection (Super+L) only makes sense
-			 * while Super is still down — releasing it without clicking a
-			 * target cancels rather than leaving it silently armed for a
-			 * later, unrelated click. */
-			connect_pick_cancel();
 			ipc_broadcast_state();
 		}
 	}

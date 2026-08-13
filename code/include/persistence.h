@@ -56,18 +56,6 @@ typedef struct {
 	char cmd[512];
 } SavedClientState;
 
-/* One saved connection-graph edge (Client.neighbor[]), identified by each
- * endpoint's (appid,title,instance) key rather than a runtime id — ids are
- * reassigned every run, so they can't survive a restart. */
-typedef struct {
-	char a_appid[128];
-	char a_title[128];
-	int a_instance;
-	char b_appid[128];
-	char b_title[128];
-	int b_instance;
-} SavedConnection;
-
 typedef struct {
 	int version;
 	time_t timestamp;
@@ -80,7 +68,7 @@ typedef void (*PersistenceClientFn)(const SavedClientState *state, void *data);
 /* Initialize persistence system */
 void persistence_init(void);
 
-/* Save current canvas state (client geometry + connection graph) to disk */
+/* Save current canvas state (client geometry + cameras) to disk */
 int persistence_save(void);
 
 /* Load canvas state from disk */

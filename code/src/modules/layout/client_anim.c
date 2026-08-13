@@ -10,8 +10,7 @@
  * shared via kalin.h, so included directly here; each TU that needs them
  * gets its own copy, same as every other static const in config.h). Both
  * clients_anim_step() and client_set_target_geom() are public API other
- * modules call too (connection_graph.c's swap_neighbor_dir(),
- * modules/viewport code) — declared in kalin.h. */
+ * modules call too (modules/viewport code) — declared in kalin.h. */
 #include "kalin.h"
 #include "client_inline.h"
 #include "config.h"

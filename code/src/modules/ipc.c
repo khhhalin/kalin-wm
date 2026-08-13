@@ -36,8 +36,6 @@
  *       follow-toggle     toggle camera-follows-focus
  *       ontop-toggle      pin/unpin the focused window "always on top"
  *                         (reflected back as "ontop" under "focused")
-  *       sever <a> <b>     cut the connection between clients <a> and <b>
- *                         (see "connections" below)
  *       focus <id>        focus the client with this stable id (from
  *                         "clients"), unminimizing it and centering the
  *                         camera on it — the taskbar-click action on an
@@ -180,24 +178,19 @@ ipc_build_state(char *buf, size_t len)
 {
 	Client *f = selmon ? focustop(selmon) : NULL;
 	Client *c;
-	Client *pending = connect_pick_pending();
 	Monitor *m;
 	struct wlr_output_mode *mode;
 	char title[512];
 	char appid[256];
-	char conns[2048];
 	char clientsbuf[4096];
 	size_t clients_len = 0;
 	int clients_first = 1;
-	char pendbuf[160];
 	char dockhoverbuf[288];
 	char outputs[4096];
 	char cams[1024];
 	size_t cams_len = 0;
 	int cams_first = 1;
 	char brightnessbuf[64];
-	size_t conns_len = 0;
-	int conns_first = 1;
 	size_t outputs_len = 0;
 	int outputs_first = 1;
 	int bl_value, bl_max;
@@ -215,56 +208,9 @@ ipc_build_state(char *buf, size_t len)
 	ipc_json_escape(f ? client_get_title(f) : "", title, sizeof(title));
 	ipc_json_escape(f ? client_get_appid(f) : "", appid, sizeof(appid));
 
-	/* Connection graph (up to 8 directional neighbor slots per window), in
-	 * the same world->screen rect shape as "rect" above. Always included
-	 * (not gated on super_held here) so the shell doesn't need a second
-	 * round-trip to learn the graph shape — it gates line *visibility* on
-	 * its own super_held-equivalent signal. Compositor draws nothing;
-	 * quickshell renders the lines and handles clicks on them, telling us
-	 * which edge to cut via "sever <a_id> <b_id>". Each edge lives on both
-	 * endpoints' neighbor[] arrays; only emit it from the lower-id side so
-	 * it isn't broadcast twice. */
-	conns[0] = '\0';
-	wl_list_for_each(c, &clients, link) {
-		int i;
-		for (i = 0; i < 8; i++) {
-			Client *nb = c->neighbor[i];
-			int arx, ary, arw, arh, brx, bry, brw, brh, n;
-			if (!nb || nb->id < c->id)
-				continue;
-			arx = WORLD_TO_SCREEN_X(c->mon, c->geom.x);
-			ary = WORLD_TO_SCREEN_Y(c->mon, c->geom.y);
-			arw = (int)(c->geom.width * MON_ZOOM_SAFE(c->mon));
-			arh = (int)(c->geom.height * MON_ZOOM_SAFE(c->mon));
-			brx = WORLD_TO_SCREEN_X(nb->mon, nb->geom.x);
-			bry = WORLD_TO_SCREEN_Y(nb->mon, nb->geom.y);
-			brw = (int)(nb->geom.width * MON_ZOOM_SAFE(nb->mon));
-			brh = (int)(nb->geom.height * MON_ZOOM_SAFE(nb->mon));
-			n = snprintf(conns + conns_len, sizeof(conns) - conns_len,
-				"%s{\"a\":%u,\"b\":%u,"
-				"\"a_rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-				"\"b_rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}}",
-				conns_first ? "" : ",",
-				c->id, nb->id,
-				arx, ary, arw, arh, brx, bry, brw, brh);
-			if (n < 0 || (size_t)n >= sizeof(conns) - conns_len) {
-				/* out of room; drop remaining entries — and erase the
-				 * partial entry snprintf already wrote past conns_len,
-				 * which would otherwise be emitted by the final %s and
-				 * corrupt the JSON (found live: a truncated mode object
-				 * made every state line unparseable for the shell) */
-				conns[conns_len] = '\0';
-				goto conns_full;
-			}
-			conns_len += (size_t)n;
-			conns_first = 0;
-		}
-	}
-conns_full:
-
-	/* Taskbar feed: every mapped, non-panel toplevel. Same truncation
-	 * discipline as the connections loop above — a partial entry must be
-	 * erased or the final %s emits broken JSON. Panels (ispanel) are shell
+	/* Taskbar feed: every mapped, non-panel toplevel. Truncation discipline:
+	 * a partial entry must be erased or the final %s emits broken JSON.
+	 * Panels (ispanel) are shell
 	 * chrome and never taskbar entries, matching their exclusion from
 	 * foreign-toplevel. */
 	clientsbuf[0] = '\0';
@@ -290,26 +236,6 @@ conns_full:
 		clients_first = 0;
 	}
 clients_full:
-
-	/* Live line for a menu-armed pending connect (Super+L, see
-	 * connect_pick_arm() / connection_graph.c): the source window's screen
-	 * rect plus the cursor's current screen position, so ConnectionLines.qml
-	 * can draw a rubber-band from one to the other while it's armed. null
-	 * when nothing's pending, same convention "connections" doesn't need
-	 * since it's always an array — this one genuinely has an absent state. */
-	if (pending) {
-		int prx = WORLD_TO_SCREEN_X(pending->mon, pending->geom.x);
-		int pry = WORLD_TO_SCREEN_Y(pending->mon, pending->geom.y);
-		int prw = (int)(pending->geom.width * MON_ZOOM_SAFE(pending->mon));
-		int prh = (int)(pending->geom.height * MON_ZOOM_SAFE(pending->mon));
-		snprintf(pendbuf, sizeof(pendbuf),
-			"{\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-			"\"cursor\":{\"x\":%d,\"y\":%d}}",
-			prx, pry, prw, prh,
-			(int)cursor->x, (int)cursor->y);
-	} else {
-		snprintf(pendbuf, sizeof(pendbuf), "null");
-	}
 
 	/* Which docked client (see setdocked()) the cursor is currently over, if
 	 * any — lets a shell panel auto-hide when the cursor leaves a real,
@@ -357,7 +283,7 @@ clients_full:
 				mode->width, mode->height, mode->refresh / 1000.0f);
 			if (n < 0 || (size_t)n >= sizeof(modesbuf) - modes_len) {
 				/* out of room; drop remaining modes — erase the partial
-				 * entry or the final %s emits broken JSON (see conns) */
+				 * entry or the final %s emits broken JSON (see the clients loop) */
 				modesbuf[modes_len] = '\0';
 				break;
 			}
@@ -376,7 +302,7 @@ clients_full:
 			modesbuf);
 		if (n < 0 || (size_t)n >= sizeof(outputs) - outputs_len) {
 			/* out of room; drop remaining outputs — erase the partial
-			 * entry or the final %s emits broken JSON (see conns) */
+			 * entry or the final %s emits broken JSON (see the clients loop) */
 			outputs[outputs_len] = '\0';
 			break;
 		}
@@ -422,9 +348,7 @@ clients_full:
 		"\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
 		"\"focused\":{\"appid\":\"%s\",\"title\":\"%s\","
 		"\"fullscreen\":%s,\"ontop\":%s,\"overlap\":%s,\"yellow\":%.3f},"
-		"\"connections\":[%s],"
 		"\"clients\":[%s],"
-		"\"pending_connect\":%s,"
 		"\"dock_hover\":%s,"
 		"\"outputs\":[%s],"
 		"\"brightness\":%s}\n",
@@ -445,7 +369,7 @@ clients_full:
 		(f && f->isontop) ? "true" : "false",
 		(f && f->allow_overlap) ? "true" : "false",
 		f ? f->paper_yellow : 0.0f,
-		conns, clientsbuf, pendbuf, dockhoverbuf, outputs, brightnessbuf);
+		clientsbuf, dockhoverbuf, outputs, brightnessbuf);
 	if ((written < 0 || (size_t)written >= len) && len >= 2) {
 		/* Truncation cut off the trailing '\n'; restore the frame
 		 * terminator so one oversized state costs the reader one bad
@@ -558,12 +482,6 @@ ipc_exec_command(struct ipc_client *cl, char *line)
 	} else if (strcmp(cmd, "ontop-toggle") == 0) {
 		Arg a = {0};
 		toggleontop(&a);
-	} else if (strcmp(cmd, "sever") == 0) {
-		char *sa = strtok_r(NULL, " \t\r", &save);
-		char *sb = strtok_r(NULL, " \t\r", &save);
-		uint32_t id_a = sa ? (uint32_t)strtoul(sa, NULL, 10) : 0;
-		uint32_t id_b = sb ? (uint32_t)strtoul(sb, NULL, 10) : 0;
-		sever_connection(id_a, id_b);
 	} else if (strcmp(cmd, "focus") == 0) {
 		/* Taskbar click: focus by stable id (see "clients" above).
 		 * Unminimize first — focusing a hidden client is a no-op the user
