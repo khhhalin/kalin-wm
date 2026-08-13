@@ -371,6 +371,9 @@ loaded_state_from_object(const char *obj)
 	state->crop_saved_base = json_find_int(obj, "crop_saved_base", 0);
 	state->isfullscreen = json_find_int(obj, "isfullscreen", 0);
 	state->isontop = json_find_int(obj, "isontop", 0);
+	/* Fallback 1.0 (opaque): a pre-opacity save file has no field, and a
+	 * restored 0 would render a window fully invisible. */
+	state->opacity = json_find_float(obj, "opacity", 1.0f);
 	json_find_string(obj, "cmd", state->cmd, sizeof(state->cmd));
 }
 
@@ -720,6 +723,15 @@ persistence_register_client(void *client_ptr)
 		c->crop.saved_base = state->crop_saved_base;
 		c->isfullscreen = state->isfullscreen;
 		c->isontop = state->isontop;
+		/* Restore the saved alpha. Set the field directly (not setopacity(),
+		 * which is dwl.c-internal): commitnotify()'s applyopacity() reapplies
+		 * c->opacity to every freshly-committed buffer, and opacity is never
+		 * driven by the client, so it sticks from the window's first frame.
+		 * Clamp to the documented 0.1..1.0 in case of a hand-edited file. */
+		if (state->opacity > 0.0f) {
+			float o = state->opacity;
+			c->opacity = o < 0.1f ? 0.1f : (o > 1.0f ? 1.0f : o);
+		}
 		/* Nothing else applies c->geom to the scene node for this path
 		 * (the spawn-placement branches this replaces each call resize()
 		 * themselves) — without this, a restored position/size would sit
@@ -862,6 +874,7 @@ save_client_cb(const SavedClientState *unused, void *data)
 		c->crop.base_w, c->crop.base_h, c->crop.saved_base);
 	fprintf(ctx->fp, ",\"isfullscreen\":%d,\"isontop\":%d",
 		c->isfullscreen, c->isontop);
+	fprintf(ctx->fp, ",\"opacity\":%.4f", c->opacity);
 	/* Checked at save time, not capture time: a panel's backing client maps
 	 * (and registers) *before* DockedPanel docks it, so ispanel is only
 	 * trustworthy here. An empty cmd means "layout-only, never respawn" —

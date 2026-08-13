@@ -39,6 +39,8 @@ typedef struct {
 	int crop_saved_base;
 	int isfullscreen;
 	int isontop;
+	float opacity;              /* Per-window alpha (Client.opacity, 0.1..1.0);
+	                               1.0 = opaque, the default for pre-opacity saves. */
 	/* Shell command that relaunches this client, captured at map time from
 	 * /proc/<pid>/cmdline (pid via wl_client_get_credentials()) — every
 	 * spawn already runs inside the persistent "kalin-apps" tmux session,

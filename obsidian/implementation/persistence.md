@@ -1,8 +1,9 @@
 # Persistence
 
 - Persistence saves and restores window position, size, the
-  [[connection-graph]], each client's launch command (since 2026-07-17), and
-  each monitor's camera pan+zoom (since 2026-08-13) across restarts, so the
+  [[connection-graph]], each client's launch command (since 2026-07-17), each
+  monitor's camera pan+zoom (since 2026-08-13), and each window's opacity (since
+  2026-08-13) across restarts, so the
   [[infinite-canvas]], its connections, the apps themselves, and the exact
   view survive a session ending — see "Session resurrection" and "Camera
   persistence" below. Own translation unit, `code/src/persistence.c` /
@@ -165,7 +166,7 @@
      "geom_set": 1, "crop_active": 0, "crop_x": 0, "crop_y": 0,
      "crop_w": 0, "crop_h": 0, "crop_base_w": 702, "crop_base_h": 500,
      "crop_saved_base": 1, "isfullscreen": 0, "isontop": 0,
-     "cmd": "foot -e kalin-term"}
+     "opacity": 1.0000, "cmd": "foot -e kalin-term"}
   ],
   "connections": [
     {"a_appid": "foot", "a_title": "foot", "a_instance": 0,
