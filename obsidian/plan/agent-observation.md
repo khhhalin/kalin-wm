@@ -27,6 +27,13 @@ Full input synthesis (`click`/`type`/`key` via `wlr_seat_*`) is a *later, separa
 concern — deliberately deferred. This note is only the observe-without-disturbing
 primitive.
 
+> **Update (2026-08-13): the deferred input half is now BUILT.** `click`, `key`, and
+> `type` ship as IPC commands driving `wlr_seat_*` (no external virtual-input
+> protocol) — see [[ipc-socket]] for the command/reply contract, the xkb
+> reverse-map (L0/L1-Shift/L2-AltGr), the security capability, and the
+> headless-vs-wayland-backend verification caveat. The "Deferred" section below is
+> kept for historical context but `click`/`key`/`type` are no longer deferred.
+
 ## The one real design crux: hidden ≠ rendered
 
 wlroots sends frame callbacks **only to surfaces visible on some output**. A fully
