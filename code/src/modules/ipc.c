@@ -98,6 +98,23 @@
  *                         see backlight.c for why this goes through
  *                         logind's SetBrightness D-Bus method rather than a
  *                         direct sysfs write.
+ *       click [x y] [btn] synthetic pointer click via wlr_seat_* (agent input
+ *                         hook — see the security note at ipc_synth_keysym).
+ *                         With x y (layout pixels, same as warp) it warps there
+ *                         first so pointer-enter lands on that surface; without,
+ *                         it clicks the current cursor position. btn is
+ *                         left/right/middle or a raw evdev code (default
+ *                         BTN_LEFT). Replies {"type":"click","ok":true}.
+ *       key <keysym>      synthesize one keypress on the CURRENTLY
+ *                         keyboard-focused window (does NOT auto-focus — send
+ *                         `focus <id>` first). <keysym> is an xkb keysym name
+ *                         (Return, Escape, a) or 0x… hex. Replies one JSON line.
+ *       type <utf8>       type a string into the keyboard-focused window, one
+ *                         codepoint at a time (\n->Return, \t->Tab); the arg is
+ *                         the rest of the line verbatim (spaces kept). Replies
+ *                         {"type":"type","ok":true,"typed":N,"skipped":M} —
+ *                         codepoints the keymap can't produce are skipped, never
+ *                         mistyped. See ipc_keysym_to_evdev() for the reverse-map.
  *       screenshot-window <id:N|app-id:X> [WxH] [path]
  *                         capture ONE window to a PNG (capture_window()).
  *                         Renders the client's scene subtree in isolation, so it
@@ -121,6 +138,7 @@
 #include <sys/un.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 
 #define IPC_MAX_CLIENTS 16
 /* Bumped from 4096 to fit the "outputs" array (each output's full mode
@@ -435,6 +453,121 @@ ipc_broadcast_state(void)
 	}
 }
 
+/* ---- Agent input synthesis (click / key / type) -------------------------
+ *
+ * These three commands let a socket-holder drive the live seat with synthetic
+ * pointer and keyboard input via wlr_seat_* — the same job wtype/ydotool do,
+ * without pulling in an external virtual-input protocol. Like the "warp"
+ * test/automation hook above they exist for agent-driven verification: a
+ * headless/nested run has no real input device, so this is how an agent clicks
+ * a UI element or types into a window it just spawned.
+ *
+ * SECURITY: any client that can open this socket gets full synthetic
+ * pointer+keyboard input into ANY window (a keylogger's write side, roughly).
+ * Acceptable here because kalin-wm is a personal single-user compositor and the
+ * socket already lives in $XDG_RUNTIME_DIR (0700, user-only); do not widen its
+ * permissions without reconsidering this. Same trust boundary the "warp" and
+ * "spawn"-adjacent commands already assume. */
+
+/* Monotonic-ms timestamp in the same units real event->time_msec uses, so
+ * synthetic events sit on the same clock as hardware ones (see dwl.c). */
+static uint32_t
+ipc_now_ms(void)
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000);
+}
+
+/* Reverse-map a keysym to the (evdev keycode, xkb level) that produces it under
+ * the active keymap — the crux of key/type. xkb only maps keycode+level ->
+ * keysym forward, so we scan every keycode/level (layout 0) for a hit. Level ->
+ * needed modifier follows the common ISO layout: L0 none, L1 Shift, L2 AltGr
+ * (ISO_Level3_Shift); higher levels are rare and left unhandled (reported as
+ * "no mapping" so the caller skips rather than mis-types). Returns the evdev
+ * keycode (xkb keycode - 8, since wlr_seat_keyboard_notify_key wants evdev; see
+ * keyboard.c) via *evdev_out and the level via *level_out; 0 on no mapping. */
+static int
+ipc_keysym_to_evdev(struct xkb_keymap *keymap, xkb_keysym_t target,
+		uint32_t *evdev_out, xkb_level_index_t *level_out)
+{
+	xkb_keycode_t min = xkb_keymap_min_keycode(keymap);
+	xkb_keycode_t max = xkb_keymap_max_keycode(keymap);
+	xkb_keycode_t kc;
+
+	for (kc = min; kc <= max; kc++) {
+		xkb_level_index_t nlevels =
+				xkb_keymap_num_levels_for_key(keymap, kc, 0);
+		xkb_level_index_t lvl;
+		for (lvl = 0; lvl < nlevels; lvl++) {
+			const xkb_keysym_t *syms;
+			int n = xkb_keymap_key_get_syms_by_level(keymap, kc, 0, lvl, &syms);
+			int i;
+			for (i = 0; i < n; i++) {
+				if (syms[i] != target)
+					continue;
+				if (kc < 8) /* can't be an evdev keycode; skip degenerate map */
+					continue;
+				*evdev_out = (uint32_t)kc - 8;
+				*level_out = lvl;
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+/* Synthesize a full press+release of one keysym on the keyboard-focused
+ * surface, holding whatever modifier the keysym's level requires.
+ *
+ * A raw modifier *key* event alone does NOT change what glyph the client
+ * derives — a Wayland client tracks the effective modifier mask from the seat's
+ * separate `modifiers` event, not by re-running xkb over key presses. So we send
+ * the modifier as a mask via wlr_seat_keyboard_notify_modifiers() bracketing the
+ * key (a bare notify_key with the Shift keycode types the unshifted glyph — seen
+ * live: `>` came out `.`). Returns 0 and logs for any keysym the active keymap
+ * can't produce (so type() skips it rather than emitting the wrong glyph). */
+static int
+ipc_synth_keysym(xkb_keysym_t sym)
+{
+	struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
+	struct wlr_keyboard_modifiers mods = {0}, nomods = {0};
+	uint32_t evdev, t;
+	xkb_level_index_t lvl;
+
+	if (!kb || !kb->keymap) {
+		wlr_log(WLR_DEBUG, "ipc: key/type: no keyboard/keymap on seat");
+		return 0;
+	}
+	if (!ipc_keysym_to_evdev(kb->keymap, sym, &evdev, &lvl)) {
+		wlr_log(WLR_DEBUG, "ipc: key/type: keymap cannot produce keysym 0x%x, skipping",
+				sym);
+		return 0;
+	}
+	/* L0 = unmodified, L1 = Shift, L2 = AltGr (ISO_Level3_Shift, i.e. Mod5).
+	 * These are the depressed-modifier bits a client folds into its own xkb
+	 * state; higher levels are rare and left unhandled (report + skip). */
+	if (lvl == 1)
+		mods.depressed = WLR_MODIFIER_SHIFT;
+	else if (lvl == 2)
+		mods.depressed = WLR_MODIFIER_MOD5;
+	else if (lvl != 0) {
+		wlr_log(WLR_DEBUG, "ipc: key/type: keysym 0x%x needs level %u (unhandled), skipping",
+				sym, lvl);
+		return 0;
+	}
+
+	wlr_seat_set_keyboard(seat, kb);
+	t = ipc_now_ms();
+	if (mods.depressed)
+		wlr_seat_keyboard_notify_modifiers(seat, &mods);
+	wlr_seat_keyboard_notify_key(seat, t, evdev, WL_KEYBOARD_KEY_STATE_PRESSED);
+	wlr_seat_keyboard_notify_key(seat, t, evdev, WL_KEYBOARD_KEY_STATE_RELEASED);
+	if (mods.depressed)
+		wlr_seat_keyboard_notify_modifiers(seat, &nomods);
+	return 1;
+}
+
 static void
 ipc_exec_command(struct ipc_client *cl, char *line)
 {
@@ -626,6 +759,123 @@ ipc_exec_command(struct ipc_client *cl, char *line)
 		else
 			wlr_log(WLR_DEBUG, "ipc: minimize: missing client or args ('%s')",
 					appid ? appid : "(none)");
+	} else if (strcmp(cmd, "click") == 0) {
+		/* click [x y] [btn] — synthetic pointer click. With x y, warp there
+		 * first (reusing warp's path) so pointer-enter lands on that surface;
+		 * without, click wherever the cursor already is. btn: left/right/middle
+		 * or a raw evdev button code; default BTN_LEFT. Replies one JSON line.
+		 * See the security note on ipc_synth_keysym above. */
+		char *a1 = strtok_r(NULL, " \t\r", &save);
+		char *a2 = strtok_r(NULL, " \t\r", &save);
+		char *a3 = strtok_r(NULL, " \t\r", &save);
+		char *btnarg = NULL;
+		uint32_t button = BTN_LEFT, t;
+		char reply[64];
+
+		/* If the first two tokens parse as numbers, treat them as x y and take
+		 * the third (if any) as the button; otherwise the first token is the
+		 * button and there is no warp. */
+		if (a1 && a2) {
+			char *ex = NULL, *ey = NULL;
+			double x = strtod(a1, &ex), y = strtod(a2, &ey);
+			if (ex != a1 && *ex == '\0' && ey != a2 && *ey == '\0') {
+				wlr_cursor_warp(cursor, NULL, x, y);
+				/* Non-zero time: run motionnotify's focus/enter update so
+				 * pointer focus lands on the surface under (x,y) — same as warp. */
+				motionnotify(1, NULL, 0, 0, 0, 0);
+				btnarg = a3;
+			} else {
+				btnarg = a1;
+			}
+		} else if (a1) {
+			btnarg = a1;
+		}
+		if (btnarg) {
+			if (strcmp(btnarg, "left") == 0) button = BTN_LEFT;
+			else if (strcmp(btnarg, "right") == 0) button = BTN_RIGHT;
+			else if (strcmp(btnarg, "middle") == 0) button = BTN_MIDDLE;
+			else button = (uint32_t)strtoul(btnarg, NULL, 0);
+		}
+		t = ipc_now_ms();
+		wlr_seat_pointer_notify_button(seat, t, button, WL_POINTER_BUTTON_STATE_PRESSED);
+		wlr_seat_pointer_notify_frame(seat);
+		wlr_seat_pointer_notify_button(seat, t, button, WL_POINTER_BUTTON_STATE_RELEASED);
+		wlr_seat_pointer_notify_frame(seat);
+		snprintf(reply, sizeof(reply), "{\"type\":\"click\",\"ok\":true}\n");
+		ipc_client_send(cl, reply);
+	} else if (strcmp(cmd, "key") == 0) {
+		/* key <keysym> — synthesize one keypress on the CURRENTLY
+		 * keyboard-focused window (does NOT auto-focus: `focus <id>` first if
+		 * needed). <keysym> is an xkb keysym name (Return, Escape, a) or 0x…
+		 * hex. Replies one JSON line. */
+		char *sk = strtok_r(NULL, " \t\r", &save);
+		xkb_keysym_t sym = XKB_KEY_NoSymbol;
+		char reply[80];
+
+		if (sk) {
+			if (strncmp(sk, "0x", 2) == 0 || strncmp(sk, "0X", 2) == 0)
+				sym = (xkb_keysym_t)strtoul(sk, NULL, 16);
+			else
+				sym = xkb_keysym_from_name(sk, XKB_KEYSYM_NO_FLAGS);
+		}
+		if (sym == XKB_KEY_NoSymbol)
+			snprintf(reply, sizeof(reply),
+					"{\"type\":\"key\",\"ok\":false,\"err\":\"unknown keysym\"}\n");
+		else if (ipc_synth_keysym(sym))
+			snprintf(reply, sizeof(reply), "{\"type\":\"key\",\"ok\":true}\n");
+		else
+			snprintf(reply, sizeof(reply),
+					"{\"type\":\"key\",\"ok\":false,\"err\":\"no keyboard or unmappable\"}\n");
+		ipc_client_send(cl, reply);
+	} else if (strcmp(cmd, "type") == 0) {
+		/* type <utf8> — type a string into the keyboard-focused window, one
+		 * codepoint at a time through the same reverse-map as `key`. Order
+		 * preserved; \n -> Return, \t -> Tab. The argument is the rest of the
+		 * line verbatim (spaces kept), so it is NOT strtok'd. Replies with the
+		 * count typed vs skipped (unmappable codepoints are logged + skipped). */
+		char *text = save; /* remainder of the line after "type " */
+		int typed = 0, skipped = 0;
+		char reply[96];
+
+		if (text) {
+			/* strtok_r left `save` pointing past the first delimiter run; a
+			 * leading single space is the command separator and already
+			 * consumed, but any further leading whitespace is real content. */
+			while (*text) {
+				/* Decode one UTF-8 codepoint (minimal, tolerant: a malformed
+				 * byte is passed through as Latin-1 so we never desync). */
+				unsigned char b0 = (unsigned char)text[0];
+				uint32_t cp;
+				int adv;
+				xkb_keysym_t sym;
+				if (b0 < 0x80) { cp = b0; adv = 1; }
+				else if ((b0 & 0xE0) == 0xC0 && (text[1] & 0xC0) == 0x80) {
+					cp = ((b0 & 0x1F) << 6) | (text[1] & 0x3F); adv = 2;
+				} else if ((b0 & 0xF0) == 0xE0 && (text[1] & 0xC0) == 0x80
+						&& (text[2] & 0xC0) == 0x80) {
+					cp = ((b0 & 0x0F) << 12) | ((text[1] & 0x3F) << 6)
+							| (text[2] & 0x3F); adv = 3;
+				} else if ((b0 & 0xF8) == 0xF0 && (text[1] & 0xC0) == 0x80
+						&& (text[2] & 0xC0) == 0x80 && (text[3] & 0xC0) == 0x80) {
+					cp = ((b0 & 0x07) << 18) | ((text[1] & 0x3F) << 12)
+							| ((text[2] & 0x3F) << 6) | (text[3] & 0x3F); adv = 4;
+				} else { cp = b0; adv = 1; }
+				text += adv;
+
+				if (cp == '\n') sym = XKB_KEY_Return;
+				else if (cp == '\t') sym = XKB_KEY_Tab;
+				else sym = xkb_utf32_to_keysym(cp);
+
+				if (sym != XKB_KEY_NoSymbol && ipc_synth_keysym(sym))
+					typed++;
+				else
+					skipped++;
+			}
+		}
+		snprintf(reply, sizeof(reply),
+				"{\"type\":\"type\",\"ok\":true,\"typed\":%d,\"skipped\":%d}\n",
+				typed, skipped);
+		ipc_client_send(cl, reply);
 	} else {
 		wlr_log(WLR_DEBUG, "ipc: unknown command '%s'", cmd);
 	}
