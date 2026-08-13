@@ -157,6 +157,8 @@ test-unit:
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_rail code/tests/test_rail.c -lm && tests/test_rail
 	@echo "=== Running Float-under-cursor Tests ==="
 	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_float code/tests/test_float.c -lm && tests/test_float
+	@echo "=== Running Attached-Overlay Tests ==="
+	@gcc -std=c99 -Wall -Wextra -Wshadow -O1 -g -o tests/test_overlay code/tests/test_overlay.c -lm && tests/test_overlay
 	@echo "=== Running Bind DSL Tests ==="
 	@gcc -Wall -Wextra -Wshadow -O1 -g -Icode/include -Icode/config -o tests/test_binds \
 		code/tests/test_binds.c code/src/modules/binds/bind_parser.c code/src/modules/binds/bind_actions.c \

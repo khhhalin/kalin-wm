@@ -666,6 +666,36 @@ ipc_exec_command(struct ipc_client *cl, char *line)
 		} else {
 			wlr_log(WLR_DEBUG, "ipc: float-next: missing appid");
 		}
+	} else if (strcmp(cmd, "overlay-pin") == 0) {
+		/* overlay-pin <child-id> <host-id> [dx dy]: attach child as an overlay
+		 * of host at world-space offset (dx,dy), followed on every host move
+		 * (layout Phase 5). Both are stable Client ids (the "clients" feed).
+		 * With dx/dy omitted, capture the child's CURRENT offset from the host
+		 * so it pins where it already sits. Direct (no arm-then-click) so a
+		 * smoke/script can drive it deterministically. */
+		char *scid = strtok_r(NULL, " \t\r", &save);
+		char *shid = strtok_r(NULL, " \t\r", &save);
+		char *sdx = strtok_r(NULL, " \t\r", &save);
+		char *sdy = strtok_r(NULL, " \t\r", &save);
+		Client *child = scid ? client_find_by_id((uint32_t)strtoul(scid, NULL, 10)) : NULL;
+		Client *host = shid ? client_find_by_id((uint32_t)strtoul(shid, NULL, 10)) : NULL;
+		if (child && host) {
+			int dx, dy;
+			if (sdx && sdy) {
+				dx = atoi(sdx);
+				dy = atoi(sdy);
+			} else {
+				dx = child->geom.x - host->geom.x;
+				dy = child->geom.y - host->geom.y;
+			}
+			if (!overlay_pin(child, host, dx, dy))
+				wlr_log(WLR_DEBUG, "ipc: overlay-pin: refused (self/chain pin)");
+			else
+				wlr_log(WLR_DEBUG, "ipc: overlay-pin: child %s -> host %s off (%d,%d)",
+						scid, shid, dx, dy);
+		} else {
+			wlr_log(WLR_DEBUG, "ipc: overlay-pin: bad child/host id");
+		}
 	} else if (strcmp(cmd, "dock") == 0) {
 		char *appid = strtok_r(NULL, " \t\r", &save);
 		char *sx = strtok_r(NULL, " \t\r", &save);

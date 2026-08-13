@@ -50,8 +50,14 @@ Window management:
   consumer (`resolve_growth_overlap`) went with the [[connection-graph]]; the flag
   still toggles + broadcasts but does nothing until the Phase 3 rail grow-push
   ([[layout-impl]]).
-- `Super+L` — **unbound as of 2026-08-13** (was link-pick / manual connect; removed
-  with the [[connection-graph]]). Reserved for the Phase 5 overlay-pin.
+- `Super+L` — **attached-overlay pin** (`overlay-pin`, `ACT_OVERLAY_PIN`,
+  [[float-overlay]], layout Phase 5 DONE 2026-08-13): arm the focused window as an
+  overlay child, then click the window to pin it to as its host (the child then
+  tracks that host on every move). Freed from link-pick when the [[connection-graph]]
+  was removed. In `default_binds.h`; **the user's live `binds.conf` doesn't yet
+  bind it** — a deploy follow-up (the bind-engine coverage check `die()`s on a
+  known-but-uncovered action, so that file needs a `bind Super+l -> overlay-pin`
+  or `unbind overlay-pin` line before this ships to the real session).
 - `Super+N` — toggle minimized
 - `Super+I` — toggle paper mode: composite the focused window through `shaders/paper.frag` (warm reading tint) via the [[shaders|paper-shader-core]] per-window API. Flag lives on `Client.paper_mode`; driven per-frame by `client_apply_paper()` in `rendermon()`, which reinjects a shaded overlay above the surface. Toggling on seeds `Client.paper_yellow` to `paper_yellow_default` (0.7). Also settable per-appid with a `paper` field on a `rules[]` entry (`applyrules()`). Uniform defaults (`paper_strength`/`paper_color`/`paper_ink`/`paper_preserve` — the yellow=1 endpoint — plus `paper_yellow_default`/`paper_aged`) are in `config.def.h`. GPU-verified working on GLES2 (see [[shaders]]).
 - `Super+Y` / `Super+Shift+Y` — ramp the focused window's papyrus knob (`Client.paper_yellow`, 0..1) by ±0.1 (`paper-yellow` / `ACT_PAPER_YELLOW`, repeatable). 0 = crisp warm page, 1 = aged saturated tan; `client_apply_paper()` maps it through `ws_paper_from_yellow()` (eased strength + page warming). Ramping to 0 turns paper mode off. Broadcast to the shell as `focused.yellow` for the `WindowActions` papyrus gauge.

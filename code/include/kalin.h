@@ -369,6 +369,21 @@ struct Client {
      * rail_head (in dwl.c) anchors the leftmost member. Replaces the removed
      * 8-octant neighbor[] graph — one dimension, one default rail. */
     Client *rail_prev, *rail_next;
+
+    /* Attached overlay: a directed child->host pin + world-space offset (the
+     * "attached overlay" bucket from layout-rethink.md, Phase 5). A child with
+     * overlay_host != NULL tracks that host: child.geom.{x,y} = host.geom.{x,y}
+     * + overlay_off. The follow is one hook at the end of resize() — it covers
+     * every host-move source (drag, rail-swap, gap-close, grow-push, setmon,
+     * restore). Directed only (never the reverse); a host may have several
+     * children; a child is never its own host. Crop and per-window opacity
+     * already apply off the child's own geom/opacity, so once the geom tracks
+     * the host they work with no extra code (the Discord-on-Minecraft case).
+     * An overlay child is off the rail and excluded from directional focus.
+     * NULL'd on the host's close (unmapnotify) so the child becomes a free
+     * float rather than dangling. */
+    Client *overlay_host;
+    int overlay_off_x, overlay_off_y;
 };
 
 /**
@@ -731,6 +746,8 @@ void setmaximized(Client *c, int maximized);
 void setminimized(Client *c, int minimized);
 void setdocked(Client *c, int docked, struct wlr_box rect);
 Client *client_find_by_appid(const char *appid);
+Client *client_find_by_id(uint32_t id);
+int overlay_pin(Client *child, Client *host, int dx, int dy);
 void dockprep_register(const char *appid, struct wlr_box rect);
 int dockprep_consume(const char *appid, struct wlr_box *out);
 void floatprep_register(const char *appid);

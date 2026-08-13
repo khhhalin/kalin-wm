@@ -84,6 +84,10 @@ cone_search_focus(float angle, float cone_width)
 		 * they're shell chrome pinned to a fixed screen rect. */
 		if (c->ispanel)
 			continue;
+		/* An attached-overlay child (layout Phase 5) is decoration pinned to a
+		 * host, not an independent navigation target — skip it, like a panel. */
+		if (c->overlay_host)
+			continue;
 
 		window_center(c, &c_cx, &c_cy);
 
