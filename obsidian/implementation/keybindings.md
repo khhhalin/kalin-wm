@@ -24,11 +24,14 @@
   covered too (enforced by `test_shipped_default_parses`), so a fresh
   install never boots with a silently-incomplete default either.
 
-Window management ([[connection-graph]]):
-- `Super+Arrows` — [[directional-focus]] (geometric cone search, unrelated to the connection graph)
-- `Super+Ctrl+Arrows` — swap the focused window with its connection-graph neighbor in that direction
+Window management:
+- `Super+Arrows` — [[directional-focus]] (geometric cone search)
+- `Super+Ctrl+Arrows` — **unbound as of 2026-08-13** (was swap-with-neighbor; the
+  [[connection-graph]] it drove was removed — [[layout-impl]]). Reserved for the
+  Phase 2 rail 1D-swap.
 - `Super+J` / `Super+K` — cycle focus through the window stack
-- `Super+Q` — close focused window (closing the middle of a line splices the two remaining neighbors together and closes the gap — see [[connection-graph]])
+- `Super+Q` — close focused window (as of 2026-08-13 just leaves a hole where it
+  was; gap-close returns rail-based in Phase 2 — [[layout-impl]])
 - `Super+[` / `Super+]` (`bracketleft`/`bracketright`) and `Super+equal`/`Super+minus` — narrow / widen focused window
 - `Super+Shift+{` / `Super+Shift+}` (`braceleft`/`braceright`) and `Super+Shift+plus`/`Super+Shift+underscore` — shorten / lengthen focused window
 - `Super+F` — fit width: stretch to the monitor's usable width, growing/shrinking evenly on both sides so the horizontal center stays put (does *not* reset world position — see the [[ledger]] for the bug where it used to). Also re-centers the camera horizontally on the window (`viewport_center_on_x()`), leaving vertical pan untouched.
@@ -36,15 +39,22 @@ Window management ([[connection-graph]]):
 - `Super+M` — toggle maximized (fills `mon->w`, keeps border/bar, unlike fullscreen)
 - `Super+E` — toggle fullscreen
 - `Super+Shift+T` — toggle always-on-top
-- `Super+Shift+O` — toggle overlap (let the focused window overlap its connection-graph neighbors instead of pushing them)
-- `Super+L` — link-pick: arm the focused window as a pending connection source; the next click on another window links them (see [[connection-graph]])
+- `Super+Shift+O` — toggle overlap flag. **Dormant** as of 2026-08-13: its
+  consumer (`resolve_growth_overlap`) went with the [[connection-graph]]; the flag
+  still toggles + broadcasts but does nothing until the Phase 3 rail grow-push
+  ([[layout-impl]]).
+- `Super+L` — **unbound as of 2026-08-13** (was link-pick / manual connect; removed
+  with the [[connection-graph]]). Reserved for the Phase 5 overlay-pin.
 - `Super+N` — toggle minimized
 - `Super+I` — toggle paper mode: composite the focused window through `shaders/paper.frag` (warm reading tint) via the [[shaders|paper-shader-core]] per-window API. Flag lives on `Client.paper_mode`; driven per-frame by `client_apply_paper()` in `rendermon()`, which reinjects a shaded overlay above the surface. Toggling on seeds `Client.paper_yellow` to `paper_yellow_default` (0.7). Also settable per-appid with a `paper` field on a `rules[]` entry (`applyrules()`). Uniform defaults (`paper_strength`/`paper_color`/`paper_ink`/`paper_preserve` — the yellow=1 endpoint — plus `paper_yellow_default`/`paper_aged`) are in `config.def.h`. GPU-verified working on GLES2 (see [[shaders]]).
 - `Super+Y` / `Super+Shift+Y` — ramp the focused window's papyrus knob (`Client.paper_yellow`, 0..1) by ±0.1 (`paper-yellow` / `ACT_PAPER_YELLOW`, repeatable). 0 = crisp warm page, 1 = aged saturated tan; `client_apply_paper()` maps it through `ws_paper_from_yellow()` (eased strength + page warming). Ramping to 0 turns paper mode off. Broadcast to the shell as `focused.yellow` for the `WindowActions` papyrus gauge.
 - `Super+D` / `Super+Shift+D` — dim / brighten focused window (per-window opacity)
 - `Super+grave` — toggle scratchpad `foot --app-id=kalin-scratchpad`
-- `Super+BTN_LEFT` (drag) — move window (drags its whole connected component — see [[connection-graph]])
-- `Super+Ctrl+BTN_LEFT` (drag on a window) — solo move: move just that window, leaving its connections intact but *not* dragging the rest of the component along (see [[connection-graph]]). On empty canvas this is camera pan instead — see below.
+- `Super+BTN_LEFT` (drag) — move window. As of 2026-08-13 moves **only the grabbed
+  window** (group-drag went with the [[connection-graph]] removal — [[layout-impl]]).
+- `Super+Ctrl+BTN_LEFT` (drag on a window) — same single-window move as `Super+BTN_LEFT`
+  now (the two modes `CurMove`/`CurMoveSolo` differ only in the empty-canvas
+  fallback). On empty canvas this is camera pan instead — see below.
 - `Super+BTN_RIGHT` / `Super+Ctrl+BTN_RIGHT` (drag) — resize window, grabbing whichever corner is nearest the cursor (not always bottom-right); the opposite corner stays anchored
 
 Camera ([[viewport]]):
@@ -61,7 +71,7 @@ Camera ([[viewport]]):
 
 Monitors:
 - `Super+comma` / `Super+period` — focus monitor left / right
-- `Super+Shift+less` / `Super+Shift+greater` — send focused window to monitor left / right ([[multi-camera]] Phase 2, `tagmon()`): teleports it to the center of what that monitor's camera currently shows and severs cross-camera [[connection-graph]] edges; camera-bypassed docked/fullscreen/maximized windows just switch holder without the teleport
+- `Super+Shift+less` / `Super+Shift+greater` — send focused window to monitor left / right ([[multi-camera]] Phase 2, `tagmon()`): teleports it to the center of what that monitor's camera currently shows; camera-bypassed docked/fullscreen/maximized windows just switch holder without the teleport (the cross-camera edge-severing this used to also do went with the [[connection-graph]] removal 2026-08-13)
 
 Launching ([[spawn]]): the app commands are the kalin-tools wrapper family
 (`~/environment/kalin-tools` — one persistent tmux session per app, viewed

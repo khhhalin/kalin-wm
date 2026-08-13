@@ -39,7 +39,9 @@ and dependencies in [[parallel-tracks]].
 - **[[layout-rethink]]** — replace the [[connection-graph]] with a **hybrid scrolling
   rail** on the free canvas: rail (keyboard) + float-under-cursor (menu) + attached
   overlay (crop + opacity + follow-host) + agent-hidden. Third iteration of the core
-  layout model — keeper-level, **model decided 2026-08-13**, implementation not yet planned.
+  layout model — keeper-level, model decided 2026-08-13. **In progress** (see
+  [[layout-impl]]): Phase 0 (persist opacity) + **Phase 1 (connection-graph removed)**
+  DONE 2026-08-13; rail/float/overlay/persistence in Phases 2–6.
 - **Native bar** — wlr-layer-shell bar to replace the quickshell-hosted TUI bar (zero
   camera shift + instant start). *Parked* on stack (C / Rust / OCaml). See [[parallel-tracks]].
 - **Camera persistence** shipped 2026-08-13 (per-monitor pan+zoom across restarts) —
@@ -169,9 +171,9 @@ implementation note. Trimmed from full narrative 2026-07-15.
   (Host `nixos-rebuild` that puts `kalin-bar-tui` on PATH — **status unverified** as of 2026-07-15.)
 - [[quickshell-shell]] ported to the kalin-wm backend (`CompositorService`/[[foreign-toplevel]]).
 - [[nixos-session]] starts shell + terminal via the `kalin-wm-session` wrapper.
-- [[connection-graph]] replaced [[column-layout]]/[[anchored-window]] (free positioning + spawn-adjacency graph).
+- [[connection-graph]] replaced [[column-layout]]/[[anchored-window]] (free positioning + spawn-adjacency graph). **REMOVED 2026-08-13** (layout Phase 1) — superseded by [[layout-rethink]]'s rail model; see [[layout-impl]].
 - [[window-menu]] (hold Super, `WindowActions.qml`).
-- [[connection-graph]] forgiving drag-to-cut severing + menu-armed manual connect (`Super+L`).
+- [[connection-graph]] forgiving drag-to-cut severing + menu-armed manual connect (`Super+L`). **REMOVED 2026-08-13** with the graph (Phase 1).
 - Trackpad [[gestures]] — 3-finger swipe pan (momentum coast) + pinch zoom.
 - [[persistence]] rework — multi-instance identity keying, graph save/restore, `mkdir -p` fix.
 - Resize grabs the nearest corner; `Super+Ctrl+BTN_LEFT` solo move — see [[connection-graph]].
@@ -217,9 +219,12 @@ implementation note. Trimmed from full narrative 2026-07-15.
   revisit when v1.0 work clears. Full design in [[podman-persistence]].
 - **Auto-pan when dragging a window past the viewport edge** (driftwm-inspired) —
   would extend `motionnotify()`'s `CurMove` branch. Investigated, not yet
-  implemented. Its sibling half (gesture pan + momentum coast + pinch zoom, and
-  spring-glide for group-drag / `swap_neighbor_dir()`) already shipped — see
-  [[gestures]] and [[connection-graph]]. Edge-drag auto-pan is the one piece left.
+  implemented. Its sibling half (gesture pan + momentum coast + pinch zoom)
+  already shipped — see [[gestures]]. (The spring-glide group-drag /
+  `swap_neighbor_dir()` this once also cited went with the [[connection-graph]]
+  removal 2026-08-13; the spring anim itself survives in `client_anim.c` and the
+  rail's 1D swap will reuse it — see [[layout-impl]].) Edge-drag auto-pan is the
+  one piece left.
 
 ## Zoom-scale overhaul — targeted fixes landed 2026-08-11, rework still planned
 

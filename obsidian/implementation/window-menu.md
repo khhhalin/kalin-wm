@@ -19,9 +19,9 @@ the [[ledger]] for the history of this note being stale before).
   both early-return while `menu_shown` is true (`code/src/dwl.c`) — switching
   focus out from under an open menu used to reposition it (new anchor
   window) and re-pan the camera ([[follow-mode]]) at the same time, which
-  read as chaotic rather than useful. `swap-dir` (`Super+Ctrl+Arrow`, moves a
-  window's *position*, not focus) and plain click-to-focus are unaffected —
-  only the two focus-*switching* binds are gated.
+  read as chaotic rather than useful. Plain click-to-focus is unaffected — only
+  the two focus-*switching* binds are gated. (`swap-dir` was also cited here as
+  position-not-focus; it was removed 2026-08-13 with the [[connection-graph]].)
 
 ## Layout: arc vs. dock
 
@@ -51,23 +51,27 @@ neutral button treatment when on:
 - **Close** (`Q`) — momentary, no state.
 - **Fullscreen** (`E`) — toggle, state = `KalinViewport.focusedFullscreen`.
 - **Crop** (`C`) — toggle, state = `KalinViewport.cropActive`.
-- **Overlap** (`⇧O`, `toggle-overlap` / `ACT_TOGGLE_OVERLAP`) — toggle. When
-  on, the focused window is exempt from `resolve_growth_overlap()`'s
-  connection-graph push-out (see [[connection-graph]]): it can grow or be
-  positioned over another window instead of shoving it aside. Backed by a
-  new per-`Client` `allow_overlap` flag; state mirrored over IPC as
-  `"focused":{"overlap":bool}`.
-- **Swap** (`Ctrl+Arrows`, `swap-dir`) — momentary directional action, no
-  state; renamed from the old "Move" label, which described a `move-column`
-  action that no longer exists (see [[column-layout]]).
-- **Link** (`L`, `link-pick` / `ACT_LINK_PICK`, added 2026-07-10) — toggle,
-  state = `KalinViewport.pendingConnect`. Arms the focused window as a
-  pending [[connection-graph]] source; a live rubber-band line (same dotted/
-  sparkle rendering as a real connection) follows the cursor from that
-  window until the next click on a different window completes the link, or
-  Super is released / empty canvas is clicked, which cancels it. See
-  [[connection-graph]]'s "Manual create/sever" section for the full
-  mechanism and why it's key-armed rather than a literal QML drag handle.
+- **Overlap** (`⇧O`, `toggle-overlap` / `ACT_TOGGLE_OVERLAP`) — toggle, still
+  wired. **Dormant** as of 2026-08-13: its consumer `resolve_growth_overlap()`
+  went with the [[connection-graph]] removal, so the flag toggles + broadcasts
+  (`"focused":{"overlap":bool}`) but has no effect until the Phase 3 rail
+  grow-push ([[layout-impl]]). Backed by the per-`Client` `allow_overlap` flag.
+- **Swap** (`Ctrl+Arrows`, `swap-dir`) — **compositor action removed 2026-08-13**
+  with the [[connection-graph]] (`swap-dir`/`ACT_SWAP_DIR` no longer exist). The
+  Phase 2 rail 1D-swap re-adds a swap on the same chord. *(The shell button is a
+  cross-repo follow-up — see below.)*
+- **Link** (`L`, `link-pick` / `ACT_LINK_PICK`) — **compositor action removed
+  2026-08-13** with the [[connection-graph]]. The chord is reserved for the
+  Phase 5 overlay-pin. *(The shell button is a cross-repo follow-up — see below.)*
+
+> [!warning] Cross-repo follow-up (2026-08-13, layout Phase 1)
+> This menu is `WindowActions.qml` in `~/environment/kalin-shell` (a separate
+> quickshell repo), which was **not** edited in Phase 1. Its **Swap** and
+> **Link** buttons still send the now-removed `swap-dir`/`link-pick` IPC
+> commands (no-ops the compositor ignores), and its `ConnectionLines.qml` /
+> `LineGeometry.qml` read the removed `connections`/`pending_connect` state
+> fields. The shell must drop the Link/Swap buttons and the connection-line
+> overlay to stop erroring on the absent fields.
 
 **Removed 2026-07-09**: the old "Tile/Float" toggle. It read
 `KalinViewport.focusedFloating`, a field the compositor stopped sending once

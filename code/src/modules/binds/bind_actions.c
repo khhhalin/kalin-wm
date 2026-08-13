@@ -26,7 +26,6 @@ static const struct { const char *name; int id; } action_names[] = {
     { "viewport.follow-new",  ACT_VIEWPORT_FOLLOW_NEW },
     { "viewport.pan-grab",    ACT_VIEWPORT_PAN_GRAB },
     { "focus",                ACT_FOCUS_DIR },
-    { "swap-dir",             ACT_SWAP_DIR },
     { "focus-stack",          ACT_FOCUS_STACK },
     { "focus-monitor",        ACT_FOCUS_MONITOR },
     { "move-monitor",         ACT_MOVE_MONITOR },
@@ -49,7 +48,6 @@ static const struct { const char *name; int id; } action_names[] = {
     { "toggle-scratchpad",    ACT_TOGGLE_SCRATCHPAD },
     { "toggle-ontop",         ACT_TOGGLE_ONTOP },
     { "toggle-overlap",       ACT_TOGGLE_OVERLAP },
-    { "link-pick",            ACT_LINK_PICK },
     { "toggle-paper",         ACT_TOGGLE_PAPER },
     { "paper-yellow",         ACT_PAPER_YELLOW },
     { "mode",                 ACT_MODE },
@@ -249,7 +247,6 @@ bind_action_parse_arg(int action_id, int argc, char **argv,
         out->arg.i = v;
         return 0;
     case ACT_FOCUS_DIR:
-    case ACT_SWAP_DIR:
         v = -1;
         if (argc == 1) {
             if (strcmp(argv[0], "left") == 0) v = 0;

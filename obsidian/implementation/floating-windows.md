@@ -26,9 +26,10 @@
   - **Auto-focuses** it (`focusclient(c, 1)`) — a modal prompt (sudo/zenity, a
     file chooser) must be actionable immediately, unlike ordinary spawned
     windows which deliberately don't steal focus.
-  - **Skips** the spawn cascade, the [[connection-graph]] link, and
-    camera-follow (`viewport_center_on`) — a screen-space overlay is already
-    where the user is looking.
+  - **Skips** the spawn-placement cascade and camera-follow
+    (`viewport_center_on`) — a screen-space overlay is already where the user
+    is looking. (It also skipped the [[connection-graph]] link, which no longer
+    exists as of 2026-08-13 — [[layout-impl]].)
 
 ## Status
 

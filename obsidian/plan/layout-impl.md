@@ -1,8 +1,8 @@
 # Layout implementation plan — rail + overlay-attach
 
-**Status: PLAN, awaiting sign-off (2026-08-13). No code yet.** Implements the decided
-model in [[layout-rethink]]. Code-grounded (file:line from a planning pass). See
-[[parallel-tracks]].
+**Status: IN PROGRESS. Phase 0 + Phase 1 DONE (2026-08-13); Phases 2–6 pending.**
+Implements the decided model in [[layout-rethink]]. Code-grounded (file:line from a
+planning pass; line numbers drift as phases land). See [[parallel-tracks]].
 
 ## Findings that shrink the scope
 
@@ -45,13 +45,29 @@ swap needed.
   apply (set `c->opacity` directly, clamped 0.1..1.0; `commitnotify`'s `applyopacity` reapplies).
   Build clean, test 25/25, SAVE round-trip verified on a live nested build. Note: `setopacity()`
   turned out to be dwl.c-internal, so the field is set directly rather than via that call.
-- **Phase 1 — Remove the connection-graph** (biggest, riskiest diff — touches `unmapnotify`/
-  `motionnotify` hot paths). Pure-deletion callers first (Super+L manual link, click/drag-sever,
-  IPC `connections` broadcast + `sever`, group-drag `motionnotify:2400-2416`), then entangled
-  ones with temporary direct placement. Delete `connection_graph.c`, `neighbor[8]`, `enum Octant`,
-  `save_connections`/reconnect. **Cross-repo:** also delete `ConnectionLines.qml`/`LineGeometry.qml`/
-  WindowActions "Link" in `~/environment/kalin-shell` (compositor build stays green without it, but
-  the shell errors on the absent `connections` field until updated — coordinate).
+- **Phase 1 — Remove the connection-graph** — **DONE 2026-08-13** (branch
+  `layout-phase1-remove-graph`). Deleted `connection_graph.c` + its unit test,
+  `Client.neighbor[8]`, `enum Octant`, the `CurCut` cursor mode, every caller
+  (Super+L link-pick, click/drag-sever, cross-monitor sever, group-drag,
+  `unmapnotify` splice/gap-close, `commitnotify`/`fitwidth`/`fitheight`
+  growth-push, the mapnotify insert-splice), the IPC `connections` broadcast +
+  `pending_connect` field + `sever` command, and connection persistence
+  (`save_connections`/reconnect, `SavedConnection`). Keyboard spawn now just
+  places right-of-parent at the same y (no rail yet); close leaves a hole;
+  drag moves only the grabbed window. `allow_overlap` (`Super+Shift+o`) kept as
+  a dormant flag (toggles + broadcasts, does nothing until Phase 3);
+  directional-focus untouched and still works. **`ACT_SWAP_DIR`/`swap-dir`
+  removed cleanly** (enum entry, string table, parser case, bind_invoke case,
+  and the four `Super+Ctrl+Arrow` default binds) — freeing that chord for the
+  Phase 2 rail 1D-swap; `Super+L`/`link-pick` likewise removed, freeing it for
+  the Phase 5 overlay-pin. Build clean (only the pre-existing
+  `default_binds.h` overlength-strings warning), tests 25/25 + shader-math OK,
+  nested smoke-boot verified. **Cross-repo follow-up STILL OPEN:**
+  `~/environment/kalin-shell` (separate quickshell repo) still has
+  `ConnectionLines.qml`/`LineGeometry.qml`/WindowActions "Link" reading the
+  now-absent `connections`/`pending_connect` IPC fields — compositor build is
+  green without it, but the shell errors on those missing fields until they're
+  removed there (was NOT touched, per Phase 1 scope).
 - **Phase 2 — Rail** (order + placement + scroll + gap-close + 1D swap). Add `rail_prev/next` +
   `rail_head`; `mapnotify` inserts keyboard-spawns after focus, shifts successors right;
   `unmapnotify` splices + shifts left (gap-close); `swap_neighbor_dir` → `rail_swap_dir` (1D,

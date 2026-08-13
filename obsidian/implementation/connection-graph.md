@@ -1,7 +1,32 @@
 # Connection graph
 
-- **Current model, replacing the old [[column-layout]]/[[anchored-window]]
-  split entirely.** Every window is free-positioned: it has one persistent
+> [!warning] REMOVED (2026-08-13, layout Phase 1 — branch `layout-phase1-remove-graph`)
+> The connection graph is **gone from the code**. Its entire module
+> (`connection_graph.c`), the `Client.neighbor[8]` field, `enum Octant`, the
+> `CurCut` cursor mode, every graph operation (connect/sever/splice/close-gap/
+> group-drag/directional-swap/growth-push), the `Super+L` link-pick and
+> `Super+Ctrl+Arrow` swap binds, the IPC `connections` broadcast +
+> `pending_connect` field + `sever` command, and connection persistence
+> (`save_connections`/reconnect, `SavedConnection`) were all deleted. Windows
+> now spawn simply to the right of the focused parent at the same y; closing a
+> window leaves a hole (no gap-close); dragging moves only the grabbed window.
+> Replaced by the **rail model** — see [[layout-rethink]] and [[layout-impl]]:
+> the rail (order + gap-close + 1D swap) lands in Phase 2, grow-push in Phase 3,
+> and the one surviving relational concept (targeted overlay-attach, replacing
+> group-drag) in Phase 5. `allow_overlap` (`Super+Shift+o`) survives as a
+> **dormant flag** — it toggles and broadcasts but does nothing until Phase 3.
+> The description below is retained as the historical as-built record of what
+> was removed; **it no longer describes live architecture.**
+>
+> **Cross-repo follow-up still open:** `~/environment/kalin-shell` (quickshell,
+> a separate repo) still has `ConnectionLines.qml`, `LineGeometry.qml`, and the
+> WindowActions "Link" button reading the now-absent IPC `connections`/
+> `pending_connect` fields. The compositor build is green without it, but the
+> shell will error on the missing fields until those are removed there.
+
+- **Historical model (removed 2026-08-13), replaced the old
+  [[column-layout]]/[[anchored-window]] split entirely.** Every window is
+  free-positioned: it had one persistent
   absolute [[world-coordinates|world position]] (`Client.geom.x/y/width/
   height`) that nothing auto-repositions except the user (drag) or one of the
   graph operations below. There is no tiled/floating dichotomy and no column

@@ -59,11 +59,10 @@ typedef enum {
     ACT_VIEWPORT_FOLLOW_NEW,/* none */
     ACT_VIEWPORT_PAN_GRAB, /* none: hold to drag-pan the camera (background only) */
     ACT_FOCUS_DIR,         /* i: DIR_* 0..3 */
-    ACT_SWAP_DIR,          /* i: DIR_* 0..3 — swap with connection-graph neighbor */
     ACT_FOCUS_STACK,       /* i: -1/+1 */
     ACT_FOCUS_MONITOR,     /* i: 0=left 1=right */
     ACT_MOVE_MONITOR,      /* i: 0=left 1=right — teleport to that monitor's
-                            * camera center, severing cross-camera edges */
+                            * camera center */
     ACT_TOGGLE_FULLSCREEN, /* none */
     ACT_TOGGLE_MAXIMIZED,  /* none: fill mon->w, keep border/bar, unlike fullscreen */
     ACT_FIT_WIDTH,         /* none: stretch to monitor width, keep height/y */
@@ -82,10 +81,9 @@ typedef enum {
     ACT_TOGGLE_MINIMIZED,  /* none */
     ACT_TOGGLE_SCRATCHPAD, /* strv: spawn a floating scratchpad terminal, or hide/show it */
     ACT_TOGGLE_ONTOP,      /* none: pin/unpin a window above all others */
-    ACT_TOGGLE_OVERLAP,    /* none: let a window overlap its connection-graph neighbors */
-    ACT_LINK_PICK,         /* none: arm the focused window as a pending connection
-                             * source; the next click on another window links them
-                             * (see connect_pick_arm(), connection_graph.c) */
+    ACT_TOGGLE_OVERLAP,    /* none: toggle the "grow over neighbors" flag. Dormant
+                             * since the connection graph was removed; a rail-based
+                             * grow-push re-reads it in layout rethink Phase 3. */
     ACT_TOGGLE_PAPER,      /* none: toggle paper-mode reading tint on the focused
                              * window (see client_apply_paper(), obsidian/plan/shaders.md) */
     ACT_PAPER_YELLOW,      /* f: ramp the focused window's papyrus knob (0..1) by

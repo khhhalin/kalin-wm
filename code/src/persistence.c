@@ -19,11 +19,6 @@ typedef struct LoadedStateNode {
 	struct LoadedStateNode *next;
 } LoadedStateNode;
 
-typedef struct LoadedConnNode {
-	SavedConnection conn;
-	struct LoadedConnNode *next;
-} LoadedConnNode;
-
 /* One saved per-output camera (pan + zoom), keyed by output name. Unlike
  * client geometry this is a whole-monitor property, so it's stored per output
  * rather than per client — see save_cameras() and persistence_camera_for_output(). */
@@ -34,8 +29,7 @@ typedef struct LoadedCameraNode {
 } LoadedCameraNode;
 
 /* Every managed client that has called persistence_register_client() this
- * run, so save time can describe it (appid/title/instance) and so later
- * registrations can resolve a saved connection edge against it. */
+ * run, so save time can describe it (appid/title/instance). */
 typedef struct RegisteredClient {
 	char appid[128];
 	char title[128];
@@ -61,7 +55,6 @@ typedef struct InstanceCounter {
 } InstanceCounter;
 
 static LoadedStateNode *loaded_states;
-static LoadedConnNode *loaded_connections;
 static LoadedCameraNode *loaded_cameras;
 static RegisteredClient *registered_clients;
 static InstanceCounter *instance_counters;
@@ -118,27 +111,6 @@ loaded_state_push(void)
 	LoadedStateNode *node = ecalloc(1, sizeof(*node));
 	node->next = loaded_states;
 	loaded_states = node;
-	return node;
-}
-
-static void
-loaded_conn_free_all(void)
-{
-	LoadedConnNode *node, *next;
-
-	for (node = loaded_connections; node; node = next) {
-		next = node->next;
-		free(node);
-	}
-	loaded_connections = NULL;
-}
-
-static LoadedConnNode *
-loaded_conn_push(void)
-{
-	LoadedConnNode *node = ecalloc(1, sizeof(*node));
-	node->next = loaded_connections;
-	loaded_connections = node;
 	return node;
 }
 
@@ -223,18 +195,6 @@ next_instance_for(const char *appid, const char *title)
 	node->next = instance_counters;
 	instance_counters = node;
 	return 0;
-}
-
-static RegisteredClient *
-registered_find_by_key(const char *appid, const char *title, int instance)
-{
-	const char *key = identity_key(appid, title);
-	RegisteredClient *r;
-
-	for (r = registered_clients; r; r = r->next)
-		if (r->instance == instance && strcmp(identity_key(r->appid, r->title), key) == 0)
-			return r;
-	return NULL;
 }
 
 static RegisteredClient *
@@ -378,21 +338,6 @@ loaded_state_from_object(const char *obj)
 }
 
 static void
-loaded_conn_from_object(const char *obj)
-{
-	LoadedConnNode *node = loaded_conn_push();
-	SavedConnection *conn = &node->conn;
-
-	memset(conn, 0, sizeof(*conn));
-	json_find_string(obj, "a_appid", conn->a_appid, sizeof(conn->a_appid));
-	json_find_string(obj, "a_title", conn->a_title, sizeof(conn->a_title));
-	conn->a_instance = json_find_int(obj, "a_instance", 0);
-	json_find_string(obj, "b_appid", conn->b_appid, sizeof(conn->b_appid));
-	json_find_string(obj, "b_title", conn->b_title, sizeof(conn->b_title));
-	conn->b_instance = json_find_int(obj, "b_instance", 0);
-}
-
-static void
 loaded_camera_from_object(const char *obj)
 {
 	LoadedCameraNode *node = loaded_camera_push();
@@ -430,8 +375,7 @@ find_matching_close_bracket(char *open_bracket)
  * per_object(text) for each — bounded by the array's own matching ']' so
  * this doesn't run on past it into whatever JSON array comes next (the
  * original version of this parser had no such bound and would have silently
- * also parsed "connections" objects as client states once that array was
- * added below it). */
+ * parsed a following array's objects as client states too). */
 static void
 parse_json_array(char *buf, const char *key, void (*per_object)(const char *))
 {
@@ -467,7 +411,6 @@ persistence_load_internal(void)
 	char *buf;
 
 	loaded_state_free_all();
-	loaded_conn_free_all();
 	loaded_camera_free_all();
 	fp = fopen(persistence_path(), "r");
 	if (!fp)
@@ -491,7 +434,6 @@ persistence_load_internal(void)
 	fclose(fp);
 
 	parse_json_array(buf, "\"clients\"", loaded_state_from_object);
-	parse_json_array(buf, "\"connections\"", loaded_conn_from_object);
 	parse_json_array(buf, "\"cameras\"", loaded_camera_from_object);
 	free(buf);
 }
@@ -676,7 +618,6 @@ persistence_register_client(void *client_ptr)
 	int instance;
 	RegisteredClient *reg;
 	const SavedClientState *state;
-	LoadedConnNode *ln;
 	int applied_geom = 0;
 
 	if (!c)
@@ -737,30 +678,6 @@ persistence_register_client(void *client_ptr)
 		 * themselves) — without this, a restored position/size would sit
 		 * in c->geom but never actually move the window on screen. */
 		resize(c, c->geom, 0);
-	}
-
-	/* Reconnect any saved edge naming this client, to whichever partner
-	 * has already been registered this run (order-independent: whichever
-	 * of the two maps second is the one that completes the edge).
-	 * connect_clients() no-ops safely if a slot's already taken, so this
-	 * is safe to attempt even if geometry doesn't perfectly agree with the
-	 * octant it implies. */
-	{
-		const char *self_key = identity_key(reg->appid, reg->title);
-
-		for (ln = loaded_connections; ln; ln = ln->next) {
-			SavedConnection *conn = &ln->conn;
-			RegisteredClient *other = NULL;
-
-			if (conn->a_instance == instance
-					&& strcmp(identity_key(conn->a_appid, conn->a_title), self_key) == 0)
-				other = registered_find_by_key(conn->b_appid, conn->b_title, conn->b_instance);
-			else if (conn->b_instance == instance
-					&& strcmp(identity_key(conn->b_appid, conn->b_title), self_key) == 0)
-				other = registered_find_by_key(conn->a_appid, conn->a_title, conn->a_instance);
-			if (other)
-				connect_clients(c, (Client *)other->client);
-		}
 	}
 
 	return applied_geom;
@@ -843,10 +760,8 @@ save_client_cb(const SavedClientState *unused, void *data)
 	 * Deliberately use the REGISTERED (appid,title) snapshot, not a fresh
 	 * client_get_appid()/client_get_title() query: many apps (e.g. a
 	 * terminal before its shell renames the window) change their title
-	 * shortly after mapping, and save_connections() below identifies
-	 * clients by their registered snapshot too — querying fresh here
-	 * would key the "clients" and "connections" arrays inconsistently,
-	 * silently breaking connection restoration on the next load. */
+	 * shortly after mapping, so the registered snapshot is the stable
+	 * identity key everything else in the save file is matched against. */
 	reg = registered_find_by_client(c);
 	appid = reg ? reg->appid : client_get_appid(c);
 	title = reg ? reg->title : client_get_title(c);
@@ -883,48 +798,6 @@ save_client_cb(const SavedClientState *unused, void *data)
 	fputs(",\"cmd\":", ctx->fp);
 	json_escape(ctx->fp, (reg && !c->ispanel) ? reg->cmd : "");
 	fputs("}", ctx->fp);
-}
-
-/* Save every live connection-graph edge, identified by each endpoint's
- * (appid,title,instance) key rather than its runtime id (ids aren't stable
- * across restarts). Dedups the same way the IPC broadcast does: only emit
- * from the lower-id side, since a<->b and b<->a are the same undirected
- * edge. */
-static void
-save_connections(FILE *fp)
-{
-	Client *c;
-	int first = 1;
-
-	fputs(",\n  \"connections\":[\n", fp);
-	wl_list_for_each(c, &clients, link) {
-		RegisteredClient *ra = registered_find_by_client(c);
-		int i;
-
-		if (!ra)
-			continue;
-		for (i = 0; i < 8; i++) {
-			Client *n = c->neighbor[i];
-			RegisteredClient *rb;
-
-			if (!n || n->id <= c->id)
-				continue;
-			rb = registered_find_by_client(n);
-			if (!rb)
-				continue;
-			if (!first)
-				fputs(",\n", fp);
-			first = 0;
-			fputs("    {", fp);
-			fputs("\"a_appid\":", fp); json_escape(fp, ra->appid);
-			fputs(",\"a_title\":", fp); json_escape(fp, ra->title);
-			fprintf(fp, ",\"a_instance\":%d", ra->instance);
-			fputs(",\"b_appid\":", fp); json_escape(fp, rb->appid);
-			fputs(",\"b_title\":", fp); json_escape(fp, rb->title);
-			fprintf(fp, ",\"b_instance\":%d}", rb->instance);
-		}
-	}
-	fputs("\n  ]\n", fp);
 }
 
 /* Save each monitor's camera (settled pan + zoom, not the animation target),
@@ -968,7 +841,6 @@ persistence_save(void)
 	fputs(",\n  \"clients\":[\n", tmp);
 	persistence_for_each_client(save_client_cb, &ctx);
 	fputs("\n  ]", tmp);
-	save_connections(tmp);
 	save_cameras(tmp);
 	fputs("}\n", tmp);
 	if (fflush(tmp) != 0 || fsync(fileno(tmp)) != 0) {
@@ -1113,7 +985,6 @@ void
 persistence_cleanup(void)
 {
 	loaded_state_free_all();
-	loaded_conn_free_all();
 	loaded_camera_free_all();
 	registered_clients_free_all();
 	instance_counters_free_all();

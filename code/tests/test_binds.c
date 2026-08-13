@@ -372,7 +372,7 @@ test_unbind_directive(void)
     ASSERT(e != NULL);
     if (!e) { fprintf(stderr, "    parse err: %s\n", err); return; }
     ASSERT(e->unbound[ACT_TOGGLE_OVERLAP] == 1);
-    ASSERT(e->unbound[ACT_LINK_PICK] == 0);
+    ASSERT(e->unbound[ACT_TOGGLE_ONTOP] == 0);
     bind_engine_free(e);
 }
 

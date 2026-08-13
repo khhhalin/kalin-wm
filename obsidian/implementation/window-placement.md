@@ -7,9 +7,11 @@ described in [[spawn]] and [[connection-graph]]:
 
 1. A persisted position from a previous run of this exact app instance — see [[persistence]].
 2. To the right of the spawn-parent (whichever window was focused right
-   before this one was created), spliced into an existing line if the
-   parent already has an East neighbor — see [[connection-graph]].
-3. Monitor center, for the very first window with no parent and no saved state.
+   before this one was created), at the same y — a plain placement as of
+   2026-08-13 (the insert-into-a-line splice went with the [[connection-graph]]
+   removal; the rail re-adds order in Phase 2 — [[layout-impl]]).
+3. Under the cursor when there's no spawn-parent but the cursor is on this
+   monitor; otherwise monitor center, for the very first window.
 
 The rest of this note describes the old design, kept for history:
 

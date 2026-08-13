@@ -42,9 +42,12 @@
   window and closing the overview — the whole point of opening it is to rearrange
   windows while seeing all of them at once, which a jump-on-click would have made
   impossible. A *plain* click (no Super) still jumps, as before.
-- The connection-graph lines (`ConnectionLines.qml`, [[quickshell-shell]]) are shown
-  whenever overview is open, in addition to their existing "Super held" condition —
-  see the `"overview"` field in [[ipc-socket]].
+- The `"overview"` IPC field was originally added so the shell's connection-graph
+  lines (`ConnectionLines.qml`, [[quickshell-shell]]) could show whenever overview
+  is open, not just while Super is held. The [[connection-graph]] and its
+  `connections` broadcast were **removed 2026-08-13** ([[layout-impl]]); the field
+  itself stays (still useful state), and dropping the shell overlay that consumed
+  it is a cross-repo follow-up — see [[ipc-socket]].
 
 ## Known issue — Zen flickers on entry/exit (root-caused 2026-08-10)
 
