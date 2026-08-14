@@ -1268,10 +1268,28 @@ createlayersurface(struct wl_listener *listener, void *data)
 	struct wlr_surface *surface = layer_surface->surface;
 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->pending.layer]];
 
-	if (!layer_surface->output
-			&& !(layer_surface->output = selmon ? selmon->wlr_output : NULL)) {
-		wlr_layer_surface_v1_destroy(layer_surface);
-		return;
+	/* A client that didn't pick an output (e.g. a bar created with
+	 * ~output:None) gets one here. Inherited dwl used only selmon and
+	 * *destroyed* the surface (→ a `closed` event, the client exits) when
+	 * selmon was momentarily NULL — which killed output-agnostic layer
+	 * clients unpredictably (an OCaml layer-shell bar spike hit this). Fall
+	 * back to the first live monitor instead; only destroy when there is
+	 * genuinely no monitor at all. */
+	if (!layer_surface->output) {
+		Monitor *pick = selmon;
+		if (!pick && !wl_list_empty(&mons))
+			pick = wl_container_of(mons.next, pick, link);
+		if (!pick) {
+			wlr_log(WLR_INFO, "layer surface '%s': no monitor available, closing",
+				layer_surface->namespace ? layer_surface->namespace : "(null)");
+			wlr_layer_surface_v1_destroy(layer_surface);
+			return;
+		}
+		if (!selmon)
+			wlr_log(WLR_DEBUG, "layer surface '%s': selmon NULL, fell back to '%s'",
+				layer_surface->namespace ? layer_surface->namespace : "(null)",
+				pick->wlr_output->name);
+		layer_surface->output = pick->wlr_output;
 	}
 
 	m = layer_surface->output ? layer_surface->output->data : NULL;
