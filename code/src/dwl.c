@@ -1139,6 +1139,20 @@ commitnotify(struct wl_listener *listener, void *data)
 		 * below), keyed off c->geom's new width rather than that flag. */
 		(void)client_accept_requested_size(c);
 
+	/* A commit can rebuild the surface's subsurface tree (e.g. a CSD client
+	 * like Zen reallocating its buffers after a fractional-scale change on the
+	 * way back from an overview zoom), and wlr_scene drops the frame clip from
+	 * the freshly-created nodes. client_apply_crop_clip() (via resize() below)
+	 * would otherwise skip re-issuing it: the *computed* clip is unchanged
+	 * (c->geom didn't move), so its clip_cached guard — there to avoid the
+	 * per-frame re-issue that once spiked commit rate into a GPU hang — matches
+	 * the stale cache and no-ops, leaving the CSD shadow margin unclipped (a
+	 * black gap band, content offset past the frame; see Bug 4 in
+	 * zoom-scale-overhaul.md). Invalidate the cache here so the re-clip actually
+	 * lands on the new tree. Bounded to once per commit — not a per-frame loop,
+	 * and set_clip doesn't itself commit — so it can't reintroduce that hang. */
+	c->crop.clip_cached = false;
+
 	resize(c, c->geom, 0);
 
 	/* Growing pushes the rail (layout rethink Phase 3): if this committed a
