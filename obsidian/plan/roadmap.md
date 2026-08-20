@@ -228,6 +228,13 @@ implementation note. Trimmed from full narrative 2026-07-15.
   removal 2026-08-13; the spring anim itself survives in `client_anim.c` and the
   rail's 1D swap will reuse it — see [[layout-impl]].) Edge-drag auto-pan is the
   one piece left.
+- **FSR upscaling for [[zoom]]-in** (researched 2026-08-20, from gamescope). Zoom-in
+  magnifies a window's native buffer with plain bilinear → soft. gamescope's FSR
+  (EASU+RCAS) is algorithm-portable GLSL that fixes exactly this. Tier 1 = an RCAS
+  sharpen pass in the [[shaders]] output pass, gated on zoom>1 (near drop-in); Tier 2 =
+  per-window native-res EASU (more plumbing). Everything else in gamescope is either
+  wlroots' already (fullscreen scanout, VRR/HDR) or bound to its single-app+KMS model.
+  Full map + phased proposal in [[gamescope-upscaling]].
 
 ## Zoom-scale overhaul — targeted fixes landed 2026-08-11, rework still planned
 

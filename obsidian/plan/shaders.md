@@ -79,6 +79,7 @@ Not all per-window effects need the window rendered to an offscreen texture:
 | Paper mode | window (composite) | **white→warm-yellow reading tint**; per-window toggle (bind) or appid rule (e.g. browser reader). Color remap: near-white → paper, preserve darks/hue |
 | Blur-behind | window (needs bg) | costliest; opt-in, cached |
 | Color-grade / CRT / vignette | camera/output | whole [[viewport]] |
+| FSR sharpen / upscale | camera/output (RCAS) + per-window (EASU) | sharpen [[zoom]]-in vs bilinear; gate on zoom>1 — see [[gamescope-upscaling]] |
 
 ## Config model (external `.frag`, startup-loaded — per decision)
 
