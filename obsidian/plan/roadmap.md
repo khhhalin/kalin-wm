@@ -240,8 +240,13 @@ implementation note. Trimmed from full narrative 2026-07-15.
   intact. Full root-cause, why it's fragile, and the proposed rework (cache native
   geometry, apply scale on commit not per frame, collapse the three systems, gate the
   settle-time re-render, revert the debug patch first) live in **[[zoom-scale-overhaul]]**.
-- **Investigate + plan only so far** — no code changed; the debug patch is still in the
-  working tree. This is the concrete rework of [[zoom]]'s parked rendering half.
+- **Targeted fixes landed; broad rework still planned.** Bugs (1)/(3) fixed 2026-08-11
+  (debug patch reverted, window-internals resize). **Bug (2) — the Zen settle-time black
+  gap — is RESOLVED on real hardware 2026-08-20** (commit 6b334a8: re-issue the frame clip
+  in `commitnotify()` after Zen's post-settle buffer realloc; d36e9b4's settle-only resync
+  was insufficient). Deployed live (`82c0ahp0`), verified by independent assessor — see
+  [[zoom-scale-overhaul]] "Bug 4 — RESOLVED". Still open: the deeper rework (cache native
+  geometry, apply scale on commit not per-frame, collapse the three systems).
 
 ## Known minor bugs
 
