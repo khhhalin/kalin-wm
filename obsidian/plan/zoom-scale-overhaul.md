@@ -172,3 +172,37 @@ not pushed), the rest still open:
   NOT redirect the driver to the qslog virtio port (single-writer, qs owns it) — inherit the
   compositor stdout. The harness edits were reverted to keep test-vm clean; re-apply from git history
   or this recipe to regression-test.
+
+## Bug 4 — RESOLVED on real hardware (2026-08-20)
+
+- **d36e9b4 was insufficient for real Zen.** Reproduced live on the deployed d36e9b4 build (rmrc3wfq):
+  focus Zen → `zoom 0.3` → `zoom-reset` → refocus → `screenshot` over the live IPC socket. Post-cycle
+  the Zen toolbar/content sat ~28px lower with a black gap band above it and the frame left at y=0 —
+  the exact Bug-4 signature, at rest, on the shipped "fixed" build. The VM Firefox harness could **not**
+  reproduce this residual class (both broken and d36e9b4 builds showed a clean top): kalin-wm zoom is
+  *buffer*-scale (`dest_size`), so the VM client never sees a scale change and never reallocates, and
+  vanilla Firefox's CSD differs from Zen's — the residual gap is Zen-CSD-specific, as this note always
+  suspected. **Lesson: this class is only discriminable on real Zen; the VM/Firefox harness cannot see it.**
+- **Residual root cause (pinned in code):** a CSD client like Zen reallocates its buffers *after* the
+  camera settles (fractional-scale change on the way back from overview); wlr_scene drops the frame
+  clip from the rebuilt subsurface tree. `client_apply_crop_clip()` then **skips** re-issuing it — the
+  *computed* clip is unchanged (`c->geom` didn't move), so its `clip_cached` guard (there to avoid the
+  per-frame re-issue that once spiked commit rate into a GPU hang) matches the stale cache and no-ops.
+  The CSD shadow margin shows unclipped → the offset + black gap, stuck until a manual resize moves geom.
+- **FIX (commit 6b334a8, merged to main):** invalidate `c->crop.clip_cached = false` in
+  `commitnotify()` before the per-commit `resize()`, so `client_apply_crop_clip()` actually re-issues
+  the clip onto the freshly-rebuilt subsurface tree. Bounded to once per commit (not a per-frame loop;
+  `set_clip` doesn't itself commit) so it cannot reintroduce the GPU-hang the cache guards against.
+  Builds clean, `make test-unit` 25/25.
+- **Verification (real hardware, independent sonnet assessor): FIX CONFIRMED.** Deployed via
+  `nixos-rebuild switch` (home-config kalin-wm path input re-pinned to main@6b334a8 → store
+  `82c0ahp0…-kalin-wm`). On the live session: focus Zen → 1 and 3 overview cycles → screenshot; the
+  Zen toolbar stays flush at the top with no black band and no content shift, identical to baseline,
+  where the d36e9b4 build had the obvious band. Assessor verdict **ABSENT** against the known-broken
+  reference. **Bug 4 closed.**
+- **Note on nested testing (dead end):** a nested kalin-wm running real Zen *does* reproduce the bug
+  (baseline showed the content offset), so it is a valid discriminator — BUT launching a second Zen on
+  a machine already running Zen shares process state across instances even with `--no-remote`, and its
+  teardown kills the user's live Zen. Nested-with-Zen is hostile to a live session that already runs
+  Zen; prefer a live deploy + the reversible live-repro (focus/overview/screenshot, then refocus to
+  restore the exact viewport) for this class.
