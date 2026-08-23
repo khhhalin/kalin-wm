@@ -286,6 +286,21 @@ static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void client_apply_crop_clip(Client *c);
 static void client_apply_zoom_frame(Client *c);
+/* Unified zoom-application path (zoom-scale rework step A): the three formerly
+ * separate stages — screen-space frame/border/ring, content buffer dest_size +
+ * subsurface offsets, and the crop/frame clip — behind one entry point with one
+ * canonical order and one read of the monitor zoom. Callers pass the subset they
+ * need (they historically applied different subsets: rendermon() re-applies only
+ * SCALE|CLIP every frame since a surface commit doesn't reset frame/position,
+ * viewport_camera_tick() only FRAME on a camera move, resize() all three). This
+ * is also the single point a later dirty-gate (step B) can hang off. */
+enum zoom_parts {
+	ZOOM_FRAME = 1 << 0, /* client_apply_zoom_frame:  frame/border/focus-ring, screen-space */
+	ZOOM_SCALE = 1 << 1, /* client_set_buffer_scale:  content dest_size + subsurface offsets */
+	ZOOM_CLIP  = 1 << 2, /* client_apply_crop_clip:   crop / frame clip rect */
+	ZOOM_ALL   = ZOOM_FRAME | ZOOM_SCALE | ZOOM_CLIP,
+};
+static void client_apply_zoom(Client *c, unsigned parts);
 void resize(Client *c, struct wlr_box geo, int interact);
 void client_set_target_geom(Client *c, struct wlr_box geo);
 static void run(char *startup_cmd);
@@ -669,7 +684,7 @@ viewport_camera_tick(Monitor *m)
 		 * rendermon()'s per-frame order). */
 		if (c->mon != m || c->animating || !c->scene)
 			continue;
-		client_apply_zoom_frame(c);
+		client_apply_zoom(c, ZOOM_FRAME);
 	}
 
 	/* World content slides under a stationary screen-space cursor while
@@ -2698,11 +2713,12 @@ rendermon(struct wl_listener *listener, void *data)
 	 * *content* scales with the camera, not just the frame. */
 	wl_list_for_each(c, &clients, link) {
 		if (client_is_rendered_on_mon(c, m)) {
-			client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
-			/* Same reset-on-commit problem as buffer scale above: a cropped
-			 * client's clip must be reapplied every frame or it reverts to the
-			 * full, uncropped surface as soon as the client commits again. */
-			client_apply_crop_clip(c);
+			/* Content scale + crop clip are both reset by wlr_scene on the
+			 * client's next commit (dest_size back to native, clip back to the
+			 * full surface), so both must be reapplied here every frame. Frame /
+			 * border position is NOT reset by a commit, so it stays out of this
+			 * path — viewport_camera_tick() applies it on camera moves. */
+			client_apply_zoom(c, ZOOM_SCALE | ZOOM_CLIP);
 			/* Paper mode: re-shade the window and reinject the overlay after
 			 * the buffer scale/clip for this frame are settled. Gated so plain
 			 * windows pay nothing. */
@@ -2843,6 +2859,25 @@ client_apply_crop_clip(Client *c)
 	}
 }
 
+/* See enum zoom_parts above for the why. Canonical order: frame -> content scale
+ * -> clip. All three derive from c->geom and the monitor's current zoom, so the
+ * MON_ZOOM_SAFE read here is the single source of truth the three stages used to
+ * each re-read. (Scale/clip order is interchangeable — resize() and rendermon()
+ * historically ran them in opposite orders with identical results.) The per-stage
+ * NULL/scene guards live in the stage functions; callers already pass a valid c. */
+static void
+client_apply_zoom(Client *c, unsigned parts)
+{
+	if (!c)
+		return;
+	if (parts & ZOOM_FRAME)
+		client_apply_zoom_frame(c);
+	if (parts & ZOOM_SCALE)
+		client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
+	if (parts & ZOOM_CLIP)
+		client_apply_crop_clip(c);
+}
+
 void
 resize(Client *c, struct wlr_box geo, int interact)
 {
@@ -2912,7 +2947,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 	 * client_apply_zoom_frame(). The client itself always stays configured at
 	 * its native logical size (cfg_w/cfg_h below) — only the displayed frame
 	 * and the buffer's dest_size (client_set_buffer_scale()) scale with zoom. */
-	client_apply_zoom_frame(c);
+	client_apply_zoom(c, ZOOM_FRAME);
 
 	/* True crop keeps the client configured at its base (uncropped) size —
 	 * only the displayed region is restricted, via client_apply_crop_clip(). */
@@ -2930,10 +2965,10 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, cfg_w, cfg_h);
-	client_apply_crop_clip(c);
 
-	/* Scale the displayed buffer to match the zoomed frame. */
-	client_set_buffer_scale(c, MON_ZOOM_SAFE(c->mon));
+	/* Scale the displayed buffer to match the zoomed frame, then reapply the
+	 * crop/frame clip (order interchangeable — see client_apply_zoom). */
+	client_apply_zoom(c, ZOOM_SCALE | ZOOM_CLIP);
 
 	/* Attached-overlay follow (layout Phase 5): every window position flows
 	 * through resize(), so this single hook makes any overlay child track its
