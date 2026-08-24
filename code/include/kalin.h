@@ -337,6 +337,15 @@ struct Client {
                                   * client_apply_paper(); ramped by the
                                   * paper-yellow keybind, broadcast to the shell
                                   * as focused.yellow for the papyrus gauge. */
+    bool zoom_dirty;            /* Zoom-scale step B: set when this client's
+                                  * content buffer-scale + clip need reapplying
+                                  * (a surface commit reset wlr_scene's dst_size,
+                                  * or geometry changed). rendermon() reapplies
+                                  * the SCALE|CLIP zoom stages only for dirty
+                                  * clients (or while its camera animates) rather
+                                  * than every on-screen client every frame; set
+                                  * generously — over-setting only costs a redundant
+                                  * reapply, under-setting leaves stale scale. */
     uint32_t resize;            /* Configure serial of pending resize */
     int persist_size_pending;   /* Set when persistence_register_client()
                                   * restores a saved width/height on a

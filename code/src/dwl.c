@@ -1168,6 +1168,12 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * and set_clip doesn't itself commit — so it can't reintroduce that hang. */
 	c->crop.clip_cached = false;
 
+	/* wlr_scene resets this surface's dest_size to native on this very commit,
+	 * *after* our commit listener runs, clobbering the buffer-scale resize()
+	 * applies just below — so rendermon() must reapply it next frame. Mark the
+	 * client dirty for that gated reapply (zoom-scale step B). */
+	c->zoom_dirty = true;
+
 	resize(c, c->geom, 0);
 
 	/* Growing pushes the rail (layout rethink Phase 3): if this committed a
@@ -2709,16 +2715,24 @@ rendermon(struct wl_listener *listener, void *data)
 
 	/* wlr_scene_surface resets each buffer's dest_size to the surface's native
 	 * size on every surface commit, which clobbers the zoom applied in resize().
-	 * Re-apply it here — after commits, just before rendering — so window
-	 * *content* scales with the camera, not just the frame. */
+	 * Re-apply the content scale + clip here — after commits, just before
+	 * rendering — so window *content* scales with the camera, not just the frame.
+	 *
+	 * Zoom-scale step B: this only needs to run for a client whose scale/clip
+	 * could have moved since it was last applied — i.e. it committed (commit set
+	 * c->zoom_dirty, since wlr_scene clobbered dest_size) or its camera is
+	 * animating (zoom changing every frame). At rest (no commit, static zoom)
+	 * dest_size is untouched — wlr_scene only resets it on a commit — so the
+	 * reapply is pure waste and is skipped. The settle frame is covered
+	 * separately by resize() in viewport_step_cam(). Frame/border position is
+	 * NOT reset by a commit, so it stays out of this path — viewport_camera_tick()
+	 * applies it on camera moves. */
 	wl_list_for_each(c, &clients, link) {
 		if (client_is_rendered_on_mon(c, m)) {
-			/* Content scale + crop clip are both reset by wlr_scene on the
-			 * client's next commit (dest_size back to native, clip back to the
-			 * full surface), so both must be reapplied here every frame. Frame /
-			 * border position is NOT reset by a commit, so it stays out of this
-			 * path — viewport_camera_tick() applies it on camera moves. */
-			client_apply_zoom(c, ZOOM_SCALE | ZOOM_CLIP);
+			if (c->zoom_dirty || (c->mon && c->mon->cam.animating)) {
+				client_apply_zoom(c, ZOOM_SCALE | ZOOM_CLIP);
+				c->zoom_dirty = false;
+			}
 			/* Paper mode: re-shade the window and reinject the overlay after
 			 * the buffer scale/clip for this frame are settled. Gated so plain
 			 * windows pay nothing. */
