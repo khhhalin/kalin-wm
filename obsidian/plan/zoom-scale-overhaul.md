@@ -115,6 +115,28 @@ not pushed), the rest still open:
 - **Still open (steps 3-5):** apply scale on commit rather than per frame, collapse the
   three scale systems into one path, gate/debounce the settle-time re-render.
 
+## Step A (collapse, = step 4) — DONE + verified real hardware (2026-08-24)
+
+- **Commit 6a1e492.** The three per-frame stages (`client_apply_zoom_frame` frame/border,
+  `client_set_buffer_scale` content dst_size + subsurface offsets, `client_apply_crop_clip`
+  clip) now route through one dispatcher `client_apply_zoom(c, parts)` with a canonical order
+  (frame → scale → clip) and a single `MON_ZOOM_SAFE` read. All four call sites pass the subset
+  they historically applied — `rendermon()` `ZOOM_SCALE|ZOOM_CLIP` (reset-on-commit reapply),
+  `viewport_camera_tick()` `ZOOM_FRAME` (camera-move), `resize()` `ZOOM_FRAME` then
+  `ZOOM_SCALE|ZOOM_CLIP` around `client_set_size()`. The three stage functions are internally
+  untouched. **Zero-behavior-change intent.** One normalization: `resize()` now applies
+  scale-then-clip (was clip-then-scale); `rendermon()` already used scale-then-clip in
+  production, confirming the order is interchangeable.
+- **Verified real hardware (independent sonnet assessor).** Deployed via `nixos-rebuild switch`
+  → `r8nk1m9b`; note `nixos-rebuild switch` does **not** restart `ly`, so activating the new
+  compositor needed `systemctl restart display-manager` (a plain relogin relaunches the old
+  session from the still-running DM). Live repro: focus Zen → 1 and 3 overview cycles →
+  screenshot; toolbar flush at top, no black gap, no drift, page renders clean — **no Bug-4
+  regression, zoom rendering intact.** Builds clean, `make test-unit` green.
+- **Still open:** step 3 (gate the unified path on a per-client dirty flag, so it re-applies only
+  after a commit or a camera change instead of every client every frame) — **step B, awaiting
+  sign-off.** Step 5 (gate settle DPI) remains dead-code per the note above.
+
 ## Bug 4 — Zen outline stale after overview settle (reported 2026-08-12, root-cause partial)
 
 - **Symptom (user):** after an overview zoom out/in, a Zen window's border/focus-ring is
