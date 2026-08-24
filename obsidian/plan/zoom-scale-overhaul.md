@@ -1,9 +1,10 @@
 # Zoom-scale overhaul
 
-- **Status: planned (root-caused 2026-08-10, not yet started).** A design note
-  for reworking the per-frame zoom-scale machinery — the single mechanism
-  behind three current, related bugs. Investigate + plan only so far; no code
-  has changed (the leftover debug patch in `dwl.c`, below, is still in the tree).
+- **Status: COMPLETE (root-caused 2026-08-10, landed + verified real hardware 2026-08-24).**
+  A design note for reworking the per-frame zoom-scale machinery — the single mechanism
+  behind three related bugs plus the later Bug 4. All actionable steps shipped; see
+  "Overhaul status: COMPLETE" at the bottom. The narrative below is kept as the original
+  root-cause record (line numbers in it are pre-rework and now stale).
 - Intent note (keeper's). As-built pieces it touches: [[buffer-scaling]],
   [[zoom]], [[overview-mode]], [[screenshot-ui]], [[viewport]].
 
@@ -133,9 +134,37 @@ not pushed), the rest still open:
   session from the still-running DM). Live repro: focus Zen → 1 and 3 overview cycles →
   screenshot; toolbar flush at top, no black gap, no drift, page renders clean — **no Bug-4
   regression, zoom rendering intact.** Builds clean, `make test-unit` green.
-- **Still open:** step 3 (gate the unified path on a per-client dirty flag, so it re-applies only
-  after a commit or a camera change instead of every client every frame) — **step B, awaiting
-  sign-off.** Step 5 (gate settle DPI) remains dead-code per the note above.
+## Step B (event-gate, = step 3) — DONE + verified real hardware (2026-08-24)
+
+- **Commit 518d31f.** The unified `client_apply_zoom(SCALE|CLIP)` reapply in `rendermon()` no
+  longer runs for every on-screen client every frame. New `Client.zoom_dirty`, set in
+  `commitnotify()` (the commit that clobbers `dest_size` runs its wlr_scene reset *after* our
+  listener, so the reapply waits for next frame), gates the reapply:
+  `if (c->zoom_dirty || (c->mon && c->mon->cam.animating))` then clears the flag. Animating covers
+  zoom changing every frame; the settle frame is already a full per-client `resize()` in
+  `viewport_step_cam()`; at rest (no commit, static zoom) `dest_size` is untouched so the reapply
+  is pure waste and is skipped. Set generously — over-setting only costs a redundant reapply,
+  under-setting would leave stale scale.
+- **Verified real hardware (independent sonnet assessor).** Deployed `z4v0q27k` (again needed a
+  `systemctl restart display-manager` after the switch — see step A note). Live IPC repro: (1)
+  zoom-in — content magnifies at 1.15 (scale reapplies under the gate, not stuck at 1×); (2)
+  overview out-to-0.3-and-back — Zen returns to a clean, correctly-sized, gap-free 1.0 render, no
+  stale scale; (3) no compositor errors during zoom (journal clean but for the pre-existing benign
+  "cannot read shaders/*.frag" — the output shader pass is disabled, unrelated). Builds clean,
+  `make test-unit` green. **Assessor: SCALED + gap ABSENT, zoom rendering intact.** Note: IPC
+  `zoom >1` anchors the camera at a point and walks the window off the framed region (black
+  margins) — a camera-framing property, not a scale bug; confirmed by the 1.15 shot rendering
+  content magnified and correct.
+
+## Overhaul status: COMPLETE (2026-08-24)
+
+All actionable steps landed and verified on real hardware: step 1 (revert debug patch), step 2
+(cache native subsurface geometry), Bug 4 (re-issue clip on commit), step 4/A (collapse three
+stages behind `client_apply_zoom`), step 3/B (event-gate the per-frame reapply). Step 5 (gate the
+settle-time DPI re-render) stays intentionally undone — dead-code, since `client_set_scale()`
+already no-ops on an unchanged scale and overview clamps the target back to native. The per-frame
+zoom-scale machinery is now one path, single-source-of-truth on native geometry, applied on
+events rather than unconditionally every frame.
 
 ## Bug 4 — Zen outline stale after overview settle (reported 2026-08-12, root-cause partial)
 

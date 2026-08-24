@@ -236,7 +236,7 @@ implementation note. Trimmed from full narrative 2026-07-15.
   wlroots' already (fullscreen scanout, VRR/HDR) or bound to its single-app+KMS model.
   Full map + phased proposal in [[gamescope-upscaling]].
 
-## Zoom-scale overhaul — targeted fixes landed 2026-08-11, rework still planned
+## Zoom-scale overhaul — COMPLETE (2026-08-24, verified real hardware)
 
 - **Three related bugs, one root cause** in the per-frame zoom-scale machinery
   (`client_scale_buffers()` + `client_apply_zoom_frame()` + `client_apply_zoom_scale()`
@@ -247,13 +247,17 @@ implementation note. Trimmed from full narrative 2026-07-15.
   intact. Full root-cause, why it's fragile, and the proposed rework (cache native
   geometry, apply scale on commit not per frame, collapse the three systems, gate the
   settle-time re-render, revert the debug patch first) live in **[[zoom-scale-overhaul]]**.
-- **Targeted fixes landed; broad rework still planned.** Bugs (1)/(3) fixed 2026-08-11
-  (debug patch reverted, window-internals resize). **Bug (2) — the Zen settle-time black
-  gap — is RESOLVED on real hardware 2026-08-20** (commit 6b334a8: re-issue the frame clip
-  in `commitnotify()` after Zen's post-settle buffer realloc; d36e9b4's settle-only resync
-  was insufficient). Deployed live (`82c0ahp0`), verified by independent assessor — see
-  [[zoom-scale-overhaul]] "Bug 4 — RESOLVED". Still open: the deeper rework (cache native
-  geometry, apply scale on commit not per-frame, collapse the three systems).
+- **DONE — all actionable steps landed + verified real hardware.** Bugs (1)/(3) fixed
+  2026-08-11 (debug patch reverted, window-internals resize via cached native subsurface
+  geometry). **Bug (2) — Zen settle-time black gap — RESOLVED 2026-08-20** (6b334a8:
+  re-issue the frame clip in `commitnotify()` after Zen's post-settle buffer realloc;
+  d36e9b4's settle-only resync was insufficient). **Broad rework DONE 2026-08-24:** step A
+  (6a1e492) collapsed the three stages behind one `client_apply_zoom(c, parts)` dispatcher
+  (single canonical order + single zoom read); step B (518d31f) event-gates that reapply on a
+  per-client `zoom_dirty` flag (commit ∨ camera animating) instead of every client every
+  frame. Both verified live by independent assessor (zoom-in scales, overview returns gap-free,
+  no stale scale). Step 5 (gate settle DPI) intentionally undone — dead-code. Full detail in
+  [[zoom-scale-overhaul]] "Overhaul status: COMPLETE".
 
 ## Known minor bugs
 
